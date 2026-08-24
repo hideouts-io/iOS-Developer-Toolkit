@@ -16,6 +16,12 @@ reports/
 ios-case-*/
 ufade-acquisitions/
 UFADE Acquisitions/
+location-logs/
+Location Logs/
+iOS Developer Toolkit Location Logs/
+Live Logs/
+Generated Routes/
+location-events.jsonl
 *.backup/
 *.crash
 *.ips

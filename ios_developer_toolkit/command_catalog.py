@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -180,6 +181,8 @@ def validate_coordinate(value: str, label: str, minimum: float, maximum: float) 
         coordinate = float(value)
     except ValueError as error:
         raise CommandCatalogError(f"{label} must be a decimal number") from error
+    if not math.isfinite(coordinate):
+        raise CommandCatalogError(f"{label} must be a finite decimal number")
     if coordinate < minimum or coordinate > maximum:
         raise CommandCatalogError(f"{label} must be between {minimum:g} and {maximum:g}")
     return value
@@ -238,6 +241,7 @@ def manpage_entries() -> tuple[ManPageEntry, ...]:
         ("developer", "dvt", "sysmon", "process", "monitor"),
         ("developer", "dvt", "core-profile-session"),
         ("developer", "dvt", "simulate-location"),
+        ("developer", "simulate-location"),
         ("developer", "dvt", "condition"),
         ("developer", "core-device"),
         ("developer", "core-device", "display"),

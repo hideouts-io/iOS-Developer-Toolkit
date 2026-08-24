@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -34,6 +36,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -72,6 +75,30 @@ from ios_developer_toolkit.ipa_inspector import (
     parse_inspection_json,
     validate_bundle_identifier,
 )
+from ios_developer_toolkit.location_lab import (
+    Coordinates,
+    GPXInspection,
+    LocationEvidenceEvent,
+    LocationLabError,
+    SavedLocation,
+    add_saved_location,
+    append_evidence_event,
+    build_route,
+    clear_location_arguments,
+    inspect_gpx,
+    load_saved_locations,
+    move_coordinates,
+    parse_route_waypoints,
+    parse_ios_major,
+    play_location_arguments,
+    remove_saved_location,
+    save_saved_locations,
+    saved_locations_path,
+    set_location_arguments,
+    utc_now,
+    validate_coordinates,
+)
+from ios_developer_toolkit.live_logs import LiveLogError, LiveLogWindow, log_stream_specs, stream_spec
 from ios_developer_toolkit.models import DeviceDataError, IOSDevice, parse_devices_json
 from ios_developer_toolkit.runtime import device_environment, pymobiledevice3_executable
 from ios_developer_toolkit.ufade_connector import (
@@ -121,17 +148,25 @@ class DeviceScanner(QObject):
         self._process: QProcess | None = None
         self._stdout = bytearray()
         self._stderr = bytearray()
+        self._stopping = False
 
     def start(self) -> None:
+        self._stopping = False
         self.scan()
         self._timer.start()
 
     def stop(self) -> None:
+        self._stopping = True
         self._timer.stop()
         if self._process is not None and self._process.state() != QProcess.ProcessState.NotRunning:
             self._process.terminate()
+            if not self._process.waitForFinished(3000):
+                self._process.kill()
+                self._process.waitForFinished(1000)
 
     def scan(self) -> None:
+        if self._stopping:
+            return
         if self._process is not None and self._process.state() != QProcess.ProcessState.NotRunning:
             return
         self._stdout.clear()
@@ -156,6 +191,8 @@ class DeviceScanner(QObject):
 
     def _finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         del exit_status
+        if self._stopping:
+            return
         if exit_code != 0:
             message = self._stderr.decode("utf-8", errors="replace").strip()
             self.scan_error.emit(message or f"Device scan failed with exit code {exit_code}")
@@ -236,6 +273,28 @@ class MainWindow(QMainWindow):
         self._backup_encryption_state: bool | None = None
         self._last_backup_path: Path | None = None
         self._ufade_installation: UFADEInstallation | None = None
+        self._location_process: QProcess | None = None
+        self._location_operation = ""
+        self._location_arguments: tuple[str, ...] = ()
+        self._location_buffer = bytearray()
+        self._location_started_at = ""
+        self._location_device_identifier: str | None = None
+        self._location_device_name = ""
+        self._location_device_version = ""
+        self._location_coordinates: Coordinates | None = None
+        self._selected_location_gpx: GPXInspection | None = None
+        self._location_operation_gpx: GPXInspection | None = None
+        self._location_clear_after_stop = False
+        self._location_may_be_simulated = False
+        self._location_log_path: Path | None = None
+        self._live_log_windows: set[LiveLogWindow] = set()
+        self._saved_locations_path = saved_locations_path(Path.home())
+        self._saved_locations: tuple[SavedLocation, ...] = ()
+        self._saved_locations_error: str | None = None
+        try:
+            self._saved_locations = load_saved_locations(self._saved_locations_path)
+        except LocationLabError as error:
+            self._saved_locations_error = str(error)
         self._console_process: QProcess | None = None
         self._presets = command_presets()
         self._current_preset: CommandPreset | None = None
@@ -326,6 +385,8 @@ class MainWindow(QMainWindow):
         pages = (
             ("Home", self._build_home_page()),
             ("Device & DDI", self._build_overview_tab()),
+            ("Location Lab", self._build_location_lab_page()),
+            ("Live Logs", self._build_live_logs_page()),
             ("Command Center", self._build_command_center_page()),
             ("Installed Apps", self._build_installed_apps_tab()),
             ("Backup", self._build_backup_tab()),
@@ -375,9 +436,10 @@ class MainWindow(QMainWindow):
         workflow_grid = QGridLayout()
         cards = (
             ("1", "Connect && prepare", "Trust the device, enable Developer Mode, and mount the correct personalized DDI.", "Device & DDI"),
-            ("2", "Run guided commands", "Choose a category and preset; the GUI validates any required fields and shows the exact command.", "Command Center"),
-            ("3", "Collect && preserve", "Create a bounded evidence case, encrypted backup, app inventory, PCAP, logs, and crash-report set.", "Evidence Capture"),
-            ("4", "Learn advanced services", "Browse current help for DVT, CoreDevice, RemoteXPC, Web Inspector, restore, profiles, and more.", "Man Pages"),
+            ("2", "Test location", "Set a fixed coordinate or replay a validated GPX route, then explicitly clear the simulated state.", "Location Lab"),
+            ("3", "Run guided commands", "Choose a category and preset; the GUI validates any required fields and shows the exact command.", "Command Center"),
+            ("4", "Collect && preserve", "Create a bounded evidence case, encrypted backup, app inventory, PCAP, logs, and crash-report set.", "Evidence Capture"),
+            ("5", "Learn advanced services", "Browse current help for DVT, CoreDevice, RemoteXPC, Web Inspector, restore, profiles, and more.", "Man Pages"),
         )
         for position, (number, title, body, destination) in enumerate(cards):
             card = QGroupBox(f"{number}. {title}")
@@ -418,6 +480,40 @@ class MainWindow(QMainWindow):
             self.navigate_to_page(name)
 
         return navigate
+
+    def _open_log_presets(self) -> None:
+        self.command_category_combo.setCurrentText("Logging & Capture")
+        self.command_search_field.clear()
+        self.navigate_to_page("Command Center")
+
+    def open_live_log_window(self, identifier: str) -> None:
+        device = self.selected_device()
+        if device is None:
+            self._show_no_device()
+            return
+        try:
+            specification = stream_spec(identifier)
+            window = LiveLogWindow(
+                self._pmd3,
+                specification,
+                device.identifier,
+                device.name,
+                dict(device_environment(device.identifier)),
+                application_icon_path(),
+            )
+        except LiveLogError as error:
+            QMessageBox.critical(self, "Could Not Open Live Log", str(error))
+            return
+        window.closed.connect(self._live_log_window_closed)
+        self._live_log_windows.add(window)
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _live_log_window_closed(self, window_object: object) -> None:
+        if not isinstance(window_object, LiveLogWindow):
+            raise TypeError(f"Expected a LiveLogWindow close signal, received {type(window_object).__name__}")
+        self._live_log_windows.discard(window_object)
 
     def _build_overview_tab(self) -> QWidget:
         tab = QWidget()
@@ -496,6 +592,317 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.action_output, 1)
         self._ddi_source_changed()
         return tab
+
+    def _build_location_lab_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+
+        heading = QLabel("Location Lab")
+        heading.setObjectName("pageTitle")
+        heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
+        layout.addWidget(heading)
+        explanation = QLabel(
+            "Run Apple developer-service location simulation with the selected device, validated coordinates, "
+            "locally inspected GPX tracks, explicit cleanup, and a structured evidence log. No map, search, route, "
+            "or coordinate data is sent to an external mapping provider."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        status_group = QGroupBox("Toolkit-known state")
+        status_layout = QGridLayout(status_group)
+        self.location_state_value = QLabel(
+            "No simulated location is tracked by this toolkit. External changes cannot be detected automatically."
+        )
+        self.location_state_value.setObjectName("locationStateValue")
+        self.location_state_value.setWordWrap(True)
+        status_layout.addWidget(QLabel("State"), 0, 0)
+        status_layout.addWidget(self.location_state_value, 0, 1, 1, 3)
+        self.location_target_value = QLabel("Selected device will be used")
+        self.location_target_value.setObjectName("locationTargetValue")
+        self.location_target_value.setWordWrap(True)
+        status_layout.addWidget(QLabel("Target"), 1, 0)
+        status_layout.addWidget(self.location_target_value, 1, 1, 1, 3)
+        layout.addWidget(status_group)
+
+        workflow = QSplitter(Qt.Orientation.Horizontal)
+        workflow.setObjectName("locationWorkflowSplitter")
+
+        coordinate_group = QGroupBox("Fixed location and saved places")
+        coordinate_layout = QVBoxLayout(coordinate_group)
+        coordinate_form = QFormLayout()
+        saved_row = QHBoxLayout()
+        self.saved_location_combo = QComboBox()
+        self.saved_location_combo.setObjectName("savedLocationPicker")
+        self.saved_location_combo.currentIndexChanged.connect(self._saved_location_selected)
+        saved_row.addWidget(self.saved_location_combo, 1)
+        self.remove_saved_location_button = QPushButton("Remove")
+        self.remove_saved_location_button.setObjectName("removeSavedLocationButton")
+        self.remove_saved_location_button.clicked.connect(self.remove_selected_saved_location)
+        saved_row.addWidget(self.remove_saved_location_button)
+        coordinate_form.addRow("Saved place", saved_row)
+        self.location_latitude_field = QLineEdit("34.0522")
+        self.location_latitude_field.setObjectName("locationLatitude")
+        self.location_latitude_field.setPlaceholderText("-90 to 90")
+        coordinate_form.addRow("Latitude", self.location_latitude_field)
+        self.location_longitude_field = QLineEdit("-118.2437")
+        self.location_longitude_field.setObjectName("locationLongitude")
+        self.location_longitude_field.setPlaceholderText("-180 to 180")
+        coordinate_form.addRow("Longitude", self.location_longitude_field)
+        coordinate_layout.addLayout(coordinate_form)
+        coordinate_buttons = QHBoxLayout()
+        self.save_location_button = QPushButton("Save Current…")
+        self.save_location_button.setObjectName("saveLocationButton")
+        self.save_location_button.clicked.connect(self.save_current_location)
+        coordinate_buttons.addWidget(self.save_location_button)
+        self.set_location_button = QPushButton("Set Simulated Location…")
+        self.set_location_button.setObjectName("setSimulatedLocationButton")
+        self.set_location_button.clicked.connect(self.set_simulated_location)
+        coordinate_buttons.addWidget(self.set_location_button)
+        coordinate_layout.addLayout(coordinate_buttons)
+        nudge_grid = QGridLayout()
+        self.location_nudge_distance = QSpinBox()
+        self.location_nudge_distance.setObjectName("locationNudgeDistance")
+        self.location_nudge_distance.setRange(1, 100000)
+        self.location_nudge_distance.setValue(10)
+        self.location_nudge_distance.setSuffix(" m")
+        nudge_grid.addWidget(QLabel("Nudge coordinate fields"), 0, 0, 1, 2)
+        nudge_grid.addWidget(self.location_nudge_distance, 0, 2, 1, 2)
+        directions = (("N", 0.0), ("NE", 45.0), ("E", 90.0), ("SE", 135.0), ("S", 180.0), ("SW", 225.0), ("W", 270.0), ("NW", 315.0))
+        for position, (label, bearing) in enumerate(directions):
+            button = QPushButton(label)
+            button.setObjectName(f"nudgeLocation{label}Button")
+            button.setToolTip(f"Move the coordinate fields {label} without changing the device")
+            button.clicked.connect(lambda checked=False, selected_bearing=bearing: self.nudge_location_fields(selected_bearing))
+            nudge_grid.addWidget(button, 1 + position // 4, position % 4)
+        coordinate_layout.addLayout(nudge_grid)
+        saved_note = QLabel(
+            f"Saved places stay local in {self._saved_locations_path}. They are never synchronized by this project."
+        )
+        saved_note.setWordWrap(True)
+        coordinate_layout.addWidget(saved_note)
+        coordinate_layout.addStretch()
+        workflow.addWidget(coordinate_group)
+
+        route_group = QGroupBox("GPX route playback")
+        route_layout = QVBoxLayout(route_group)
+        route_row = QHBoxLayout()
+        self.location_gpx_field = QLineEdit()
+        self.location_gpx_field.setObjectName("locationGPXPath")
+        self.location_gpx_field.setReadOnly(True)
+        self.location_gpx_field.setPlaceholderText("Choose a local GPX track")
+        route_row.addWidget(self.location_gpx_field, 1)
+        self.choose_location_gpx_button = QPushButton("Choose GPX…")
+        self.choose_location_gpx_button.setObjectName("chooseLocationGPXButton")
+        self.choose_location_gpx_button.clicked.connect(self.choose_location_gpx)
+        route_row.addWidget(self.choose_location_gpx_button)
+        route_layout.addLayout(route_row)
+        self.location_gpx_summary = QLabel(
+            "The toolkit requires GPX track points, validates every coordinate, and records the file's SHA-256."
+        )
+        self.location_gpx_summary.setObjectName("locationGPXSummary")
+        self.location_gpx_summary.setWordWrap(True)
+        route_layout.addWidget(self.location_gpx_summary)
+        route_options = QFormLayout()
+        self.location_timing_randomness = QSpinBox()
+        self.location_timing_randomness.setObjectName("locationTimingRandomness")
+        self.location_timing_randomness.setRange(0, 60000)
+        self.location_timing_randomness.setValue(0)
+        self.location_timing_randomness.setSuffix(" ms")
+        route_options.addRow("Timing randomness", self.location_timing_randomness)
+        self.location_disable_sleep = QCheckBox("Ignore GPX timing delays")
+        self.location_disable_sleep.setObjectName("locationDisableSleep")
+        route_options.addRow("Fast playback", self.location_disable_sleep)
+        route_layout.addLayout(route_options)
+        self.play_location_gpx_button = QPushButton("Play Validated GPX…")
+        self.play_location_gpx_button.setObjectName("playLocationGPXButton")
+        self.play_location_gpx_button.clicked.connect(self.play_location_gpx)
+        route_layout.addWidget(self.play_location_gpx_button)
+        route_layout.addStretch()
+        workflow.addWidget(route_group)
+        workflow.setSizes([430, 430])
+        workflow.setStretchFactor(0, 1)
+        workflow.setStretchFactor(1, 1)
+        layout.addWidget(workflow)
+
+        builder_group = QGroupBox("Local QA route builder")
+        builder_layout = QHBoxLayout(builder_group)
+        self.location_route_waypoints = QPlainTextEdit()
+        self.location_route_waypoints.setObjectName("locationRouteWaypoints")
+        self.location_route_waypoints.setPlaceholderText(
+            "One latitude,longitude waypoint per line\n34.052200,-118.243700\n34.053000,-118.242000"
+        )
+        self.location_route_waypoints.setMaximumHeight(110)
+        builder_layout.addWidget(self.location_route_waypoints, 2)
+        builder_options = QFormLayout()
+        self.location_route_speed_preset = QComboBox()
+        self.location_route_speed_preset.setObjectName("locationRouteSpeedPreset")
+        for name, value in (("Walk", 5), ("Run", 10), ("Bicycle", 20), ("Urban drive", 40), ("Highway", 100)):
+            self.location_route_speed_preset.addItem(f"{name} — {value} km/h", value)
+        self.location_route_speed_preset.currentIndexChanged.connect(self.apply_location_speed_preset)
+        builder_options.addRow("Speed preset", self.location_route_speed_preset)
+        self.location_route_speed = QSpinBox()
+        self.location_route_speed.setObjectName("locationRouteSpeed")
+        self.location_route_speed.setRange(1, 300)
+        self.location_route_speed.setValue(5)
+        self.location_route_speed.setSuffix(" km/h")
+        builder_options.addRow("Speed", self.location_route_speed)
+        self.location_route_interval = QSpinBox()
+        self.location_route_interval.setObjectName("locationRouteInterval")
+        self.location_route_interval.setRange(1, 60)
+        self.location_route_interval.setValue(1)
+        self.location_route_interval.setSuffix(" s")
+        builder_options.addRow("Point interval", self.location_route_interval)
+        self.location_route_traversals = QSpinBox()
+        self.location_route_traversals.setObjectName("locationRouteTraversals")
+        self.location_route_traversals.setRange(1, 20)
+        self.location_route_traversals.setValue(1)
+        self.location_route_traversals.setToolTip("Additional traversals alternate direction instead of teleporting to the start")
+        builder_options.addRow("Traversals", self.location_route_traversals)
+        builder_layout.addLayout(builder_options, 1)
+        builder_buttons = QVBoxLayout()
+        add_waypoint = QPushButton("Add Current Coordinate")
+        add_waypoint.setObjectName("addCurrentRouteWaypointButton")
+        add_waypoint.clicked.connect(self.add_current_route_waypoint)
+        builder_buttons.addWidget(add_waypoint)
+        build_button = QPushButton("Build, Validate && Load GPX")
+        build_button.setObjectName("buildLocationRouteButton")
+        build_button.clicked.connect(self.build_location_route)
+        builder_buttons.addWidget(build_button)
+        self.location_route_summary = QLabel("Generated routes stay local and use timestamped GPX points.")
+        self.location_route_summary.setObjectName("locationRouteSummary")
+        self.location_route_summary.setWordWrap(True)
+        builder_buttons.addWidget(self.location_route_summary)
+        builder_layout.addLayout(builder_buttons, 2)
+        layout.addWidget(builder_group)
+
+        evidence_group = QGroupBox("Cleanup and evidence log")
+        evidence_layout = QGridLayout(evidence_group)
+        self.location_log_directory_field = QLineEdit(
+            str(Path.home() / "Documents" / "iOS Developer Toolkit Location Logs")
+        )
+        self.location_log_directory_field.setObjectName("locationLogDirectory")
+        evidence_layout.addWidget(QLabel("Log directory"), 0, 0)
+        evidence_layout.addWidget(self.location_log_directory_field, 0, 1)
+        choose_log = QPushButton("Choose…")
+        choose_log.setObjectName("chooseLocationLogDirectoryButton")
+        choose_log.clicked.connect(self.choose_location_log_directory)
+        evidence_layout.addWidget(choose_log, 0, 2)
+        self.open_location_log_button = QPushButton("Open Log Folder")
+        self.open_location_log_button.setObjectName("openLocationLogButton")
+        self.open_location_log_button.clicked.connect(self.open_location_log_directory)
+        evidence_layout.addWidget(self.open_location_log_button, 0, 3)
+        self.stop_clear_location_button = QPushButton("Stop Playback / Set && Clear")
+        self.stop_clear_location_button.setObjectName("stopAndClearLocationButton")
+        self.stop_clear_location_button.clicked.connect(self.stop_location_and_clear)
+        evidence_layout.addWidget(self.stop_clear_location_button, 1, 1)
+        self.clear_location_button = QPushButton("Clear Simulated Location…")
+        self.clear_location_button.setObjectName("clearSimulatedLocationButton")
+        self.clear_location_button.clicked.connect(self.clear_simulated_location)
+        evidence_layout.addWidget(self.clear_location_button, 1, 2)
+        open_help = QPushButton("Open Live Location Help")
+        open_help.setObjectName("openLocationHelpButton")
+        open_help.clicked.connect(self.open_location_help)
+        evidence_layout.addWidget(open_help, 1, 3)
+        layout.addWidget(evidence_group)
+
+        privacy = QLabel(
+            "Location simulation changes device state and may affect participating apps. Coordinates, the device UDID, "
+            "GPX path/hash, commands, timestamps, and results are sensitive and are appended to location-events.jsonl. "
+            "The status above reflects only actions started here; always clear the simulation when testing ends."
+        )
+        privacy.setObjectName("locationPrivacyWarning")
+        privacy.setWordWrap(True)
+        layout.addWidget(privacy)
+
+        self.location_output = QPlainTextEdit()
+        self.location_output.setObjectName("locationOutput")
+        self.location_output.setReadOnly(True)
+        self.location_output.setMaximumBlockCount(4000)
+        self.location_output.setPlaceholderText("Location commands, service output, and evidence-log status appear here.")
+        layout.addWidget(self.location_output, 1)
+        self._populate_saved_locations()
+        self._update_location_controls()
+        page.setMinimumHeight(1050)
+        scroll_area = QScrollArea()
+        scroll_area.setObjectName("locationLabScrollArea")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setWidget(page)
+        return scroll_area
+
+    def _build_live_logs_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(14)
+
+        heading = QLabel("Live Logs")
+        heading.setObjectName("pageTitle")
+        heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
+        layout.addWidget(heading)
+        explanation = QLabel(
+            "Open independent scrolling log windows for the selected device. Each window continuously spools the "
+            "complete raw byte stream to a private local cache while its visible view can be paused, searched, or "
+            "filtered. Closing a window asks you to save or explicitly discard the capture."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        stream_grid = QGridLayout()
+        for position, specification in enumerate(log_stream_specs()):
+            group = QGroupBox(specification.title)
+            group_layout = QVBoxLayout(group)
+            summary = QLabel(specification.summary)
+            summary.setWordWrap(True)
+            group_layout.addWidget(summary, 1)
+            requirement = QLabel(
+                "Needs Developer Mode + mounted DDI/tunnel"
+                if specification.requires_developer_services
+                else "Uses the trusted lockdown connection; no DDI required"
+            )
+            requirement.setObjectName("liveLogRequirement")
+            requirement.setWordWrap(True)
+            group_layout.addWidget(requirement)
+            open_button = QPushButton(f"Pop Out {specification.title}")
+            open_button.setObjectName(f"open{specification.identifier.replace('-', '').title()}LogButton")
+            open_button.clicked.connect(
+                lambda checked=False, identifier=specification.identifier: self.open_live_log_window(identifier)
+            )
+            group_layout.addWidget(open_button)
+            stream_grid.addWidget(group, 0, position)
+        layout.addLayout(stream_grid)
+
+        integrity_group = QGroupBox("Capture integrity")
+        integrity_layout = QVBoxLayout(integrity_group)
+        integrity_text = QLabel(
+            "Pause affects only rendering: device output continues into the raw spool. Filters affect only the current "
+            "view and filtered export. Save Raw copies the complete stream and a metadata sidecar containing the exact "
+            "command, target UDID, timestamps, byte/line counts, exit code, and process error. The view retains the newest "
+            "50,000 decoded lines to stay responsive; the raw spool is not truncated by that limit."
+        )
+        integrity_text.setWordWrap(True)
+        integrity_layout.addWidget(integrity_text)
+        layout.addWidget(integrity_group)
+
+        archive_group = QGroupBox("Stored log archive and deeper analysis")
+        archive_layout = QHBoxLayout(archive_group)
+        archive_note = QLabel(
+            "For retained device logs, use the Syslog → collect preset in Command Center to pull a .logarchive for "
+            "Console.app or the macOS log command. Evidence Capture remains the bounded multi-source workflow."
+        )
+        archive_note.setWordWrap(True)
+        archive_layout.addWidget(archive_note, 1)
+        command_button = QPushButton("Open Log Presets")
+        command_button.setObjectName("openLogPresetsButton")
+        command_button.clicked.connect(self._open_log_presets)
+        archive_layout.addWidget(command_button)
+        evidence_button = QPushButton("Open Evidence Capture")
+        evidence_button.clicked.connect(self._navigation_handler("Evidence Capture"))
+        archive_layout.addWidget(evidence_button)
+        layout.addWidget(archive_group)
+        layout.addStretch()
+        return page
 
     def _build_collection_tab(self) -> QWidget:
         tab = QWidget()
@@ -1154,7 +1561,8 @@ class MainWindow(QMainWindow):
             <h2>What this app does</h2>
             <p>It is a guided macOS workbench for <code>pymobiledevice3</code>: pairing-visible device inspection,
             apps and AFC, backups, diagnostics, logging, packet capture, crash reports, Web Inspector, RemoteXPC,
-            Developer Disk Images, CoreDevice, DVT instrumentation, and evidence-oriented collection.</p>
+            Developer Disk Images, location simulation and GPX testing, CoreDevice, DVT instrumentation, and
+            evidence-oriented collection.</p>
             <p>Command Center minimizes typing with validated presets. Man Pages runs the installed binary's
             <code>--help</code>, so exact syntax and service availability remain version-specific and reviewable.</p>
             <h2>What a personalized DDI is</h2>
@@ -1167,6 +1575,8 @@ class MainWindow(QMainWindow):
               <li>TLS remains encrypted in PCAP. A hostname, owner, or DNS answer is not proof of application purpose.</li>
               <li>A failed or empty command is a coverage gap, not proof that data or activity is absent.</li>
               <li>Mounting a DDI and enabling Developer Mode change device state and create timestamps.</li>
+              <li>Simulated location is a developer-service override, not a GPS hardware change. Clear it after testing;
+              some apps may ignore it or prohibit its use.</li>
               <li>Restore, erase, activation, supervision, reboot, shutdown, and nonce-roll commands can be high impact.
               They are documented in Man Pages but are not promoted as guided presets.</li>
               <li>A command existing in pymobiledevice3 does not guarantee the selected iOS build advertises its Apple service.</li>
@@ -1211,7 +1621,7 @@ class MainWindow(QMainWindow):
             #protocolStackSummary { font-family: Menlo; color: #34435a; }
             #connectionBanner { background: #e9f2ff; border: 1px solid #afcff8; border-radius: 8px; padding: 10px; }
             #collectionPrivacyWarning { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
-            #installedAppsPrivacyWarning, #backupEncryptionWarning { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
+            #installedAppsPrivacyWarning, #backupEncryptionWarning, #locationPrivacyWarning { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
             #appSubtitle { color: #596273; }
             """
         )
@@ -1263,6 +1673,7 @@ class MainWindow(QMainWindow):
         del index
         self._update_device_fields(self.selected_device())
         self.developer_mode_status.setText("Status not checked for this device")
+        self._update_location_controls()
 
     def _update_device_fields(self, device: IOSDevice | None) -> None:
         identifier = device.identifier if device is not None else None
@@ -1284,6 +1695,7 @@ class MainWindow(QMainWindow):
         self._update_apps_controls()
         self._update_backup_controls()
         self._update_command_controls()
+        self._update_location_controls()
         if device is None:
             self.device_name_value.setText("No device")
             self.device_version_value.setText("—")
@@ -1433,6 +1845,627 @@ class MainWindow(QMainWindow):
         del process_error
         if self._action_process is not None:
             self.action_output.appendPlainText(f"\nProcess error: {self._action_process.errorString()}")
+
+    def _populate_saved_locations(self) -> None:
+        self.saved_location_combo.blockSignals(True)
+        self.saved_location_combo.clear()
+        if self._saved_locations_error is not None:
+            self.saved_location_combo.addItem(f"Unavailable: {self._saved_locations_error}")
+            self.saved_location_combo.setEnabled(False)
+        else:
+            self.saved_location_combo.addItem("Choose a saved place…", None)
+            for location in self._saved_locations:
+                self.saved_location_combo.addItem(
+                    f"{location.name} — {location.coordinates.latitude:.6f}, {location.coordinates.longitude:.6f}",
+                    location.name,
+                )
+            self.saved_location_combo.setEnabled(True)
+            self.saved_location_combo.setCurrentIndex(0)
+        self.saved_location_combo.blockSignals(False)
+        self._update_location_controls()
+
+    def _saved_location_selected(self, index: int) -> None:
+        if index <= 0 or self._saved_locations_error is not None:
+            self._update_location_controls()
+            return
+        name = self.saved_location_combo.itemData(index)
+        matching = tuple(location for location in self._saved_locations if location.name == name)
+        if len(matching) != 1:
+            raise LocationLabError(f"Expected one saved location for selection {name!r}, found {len(matching)}")
+        location = matching[0]
+        self.location_latitude_field.setText(format(location.coordinates.latitude, ".12g"))
+        self.location_longitude_field.setText(format(location.coordinates.longitude, ".12g"))
+        self._update_location_controls()
+
+    def save_current_location(self) -> None:
+        if self._saved_locations_error is not None:
+            QMessageBox.critical(self, "Saved Locations Unavailable", self._saved_locations_error)
+            return
+        try:
+            coordinates = validate_coordinates(
+                self.location_latitude_field.text(),
+                self.location_longitude_field.text(),
+            )
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Invalid Coordinates", str(error))
+            return
+        name, accepted = QInputDialog.getText(self, "Save Location", "Location name")
+        if not accepted:
+            return
+        try:
+            updated = add_saved_location(self._saved_locations, name, coordinates)
+            save_saved_locations(self._saved_locations_path, updated)
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Could Not Save Location", str(error))
+            return
+        self._saved_locations = updated
+        self._populate_saved_locations()
+        matching_index = self.saved_location_combo.findData(name.strip())
+        if matching_index >= 0:
+            self.saved_location_combo.setCurrentIndex(matching_index)
+
+    def remove_selected_saved_location(self) -> None:
+        name = self.saved_location_combo.currentData()
+        if not isinstance(name, str):
+            QMessageBox.information(self, "No Saved Location", "Choose a saved location to remove.")
+            return
+        if not self._confirm("Remove Saved Location", f"Remove the local saved location {name!r}?"):
+            return
+        try:
+            updated = remove_saved_location(self._saved_locations, name)
+            save_saved_locations(self._saved_locations_path, updated)
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Could Not Remove Location", str(error))
+            return
+        self._saved_locations = updated
+        self._populate_saved_locations()
+
+    def choose_location_gpx(self) -> None:
+        selected_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose GPX track",
+            str(Path.home()),
+            "GPS Exchange Format (*.gpx)",
+        )
+        if not selected_path:
+            return
+        try:
+            inspection = inspect_gpx(Path(selected_path))
+        except LocationLabError as error:
+            self._selected_location_gpx = None
+            self.location_gpx_field.clear()
+            self.location_gpx_summary.setText(f"GPX validation failed: {error}")
+            self._update_location_controls()
+            QMessageBox.critical(self, "Invalid GPX Track", str(error))
+            return
+        self._selected_location_gpx = inspection
+        self.location_gpx_field.setText(str(inspection.path))
+        self.location_gpx_summary.setText(
+            f"Validated {inspection.track_point_count} track points ({inspection.timed_point_count} timed). "
+            f"Start: {inspection.first_point.latitude:.6f}, {inspection.first_point.longitude:.6f} • "
+            f"End: {inspection.last_point.latitude:.6f}, {inspection.last_point.longitude:.6f} • "
+            f"SHA-256: {inspection.sha256}"
+        )
+        self._update_location_controls()
+
+    def nudge_location_fields(self, bearing_degrees: float) -> None:
+        try:
+            current = validate_coordinates(
+                self.location_latitude_field.text(),
+                self.location_longitude_field.text(),
+            )
+            nudged = move_coordinates(current, bearing_degrees, float(self.location_nudge_distance.value()))
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Could Not Nudge Coordinate", str(error))
+            return
+        self.location_latitude_field.setText(format(nudged.latitude, ".12g"))
+        self.location_longitude_field.setText(format(nudged.longitude, ".12g"))
+
+    def apply_location_speed_preset(self, index: int) -> None:
+        speed = self.location_route_speed_preset.itemData(index)
+        if not isinstance(speed, int):
+            raise LocationLabError(f"Route speed preset must contain an integer, received {speed!r}")
+        self.location_route_speed.setValue(speed)
+
+    def add_current_route_waypoint(self) -> None:
+        try:
+            coordinates = validate_coordinates(
+                self.location_latitude_field.text(),
+                self.location_longitude_field.text(),
+            )
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Invalid Route Waypoint", str(error))
+            return
+        existing = self.location_route_waypoints.toPlainText().rstrip()
+        waypoint = f"{coordinates.latitude:.9f},{coordinates.longitude:.9f}"
+        self.location_route_waypoints.setPlainText(f"{existing}\n{waypoint}".lstrip())
+        self.location_route_waypoints.moveCursor(QTextCursor.MoveOperation.End)
+
+    def build_location_route(self) -> None:
+        try:
+            waypoints = parse_route_waypoints(self.location_route_waypoints.toPlainText())
+            route = build_route(
+                waypoints,
+                float(self.location_route_speed.value()),
+                self.location_route_interval.value(),
+                self.location_route_traversals.value(),
+                datetime.now(timezone.utc),
+            )
+            directory = self.location_log_directory() / "Generated Routes"
+            directory.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+            path = directory / f"qa-route-{timestamp}.gpx"
+            with path.open("x", encoding="utf-8") as output:
+                output.write(route.gpx_document)
+            inspection = inspect_gpx(path)
+        except (LocationLabError, OSError) as error:
+            QMessageBox.critical(self, "Could Not Build Route", str(error))
+            return
+        self._selected_location_gpx = inspection
+        self.location_gpx_field.setText(str(path))
+        self.location_gpx_summary.setText(
+            f"Validated generated GPX: {inspection.track_point_count} timed points • SHA-256: {inspection.sha256}"
+        )
+        self.location_route_summary.setText(
+            f"Loaded {len(route.points):,} points • {route.distance_metres / 1000.0:.3f} km • "
+            f"{route.duration_seconds // 60}m {route.duration_seconds % 60}s • {route.traversal_count} traversal(s)."
+        )
+        self.location_output.appendPlainText(
+            f"Generated and validated local QA route: {path}\n"
+            f"Distance: {route.distance_metres:.1f} m; duration: {route.duration_seconds} s; "
+            f"speed: {route.speed_kmh:g} km/h; SHA-256: {inspection.sha256}"
+        )
+        self._update_location_controls()
+
+    def choose_location_log_directory(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Location Lab evidence directory",
+            self.location_log_directory_field.text(),
+        )
+        if selected:
+            self.location_log_directory_field.setText(selected)
+
+    def location_log_directory(self) -> Path:
+        value = self.location_log_directory_field.text().strip()
+        if not value:
+            raise LocationLabError("Choose a non-empty Location Lab evidence directory")
+        directory = Path(value).expanduser()
+        if not directory.is_absolute():
+            raise LocationLabError(f"Location Lab evidence directory must be an absolute path: {directory}")
+        return directory.resolve()
+
+    def open_location_log_directory(self) -> None:
+        try:
+            directory = self.location_log_directory()
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Invalid Evidence Directory", str(error))
+            return
+        if not directory.is_dir():
+            QMessageBox.information(self, "Evidence Directory Not Found", f"The folder does not exist yet:\n{directory}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
+
+    def _record_location_event(
+        self,
+        operation: str,
+        status: str,
+        device_identifier: str,
+        device_name: str,
+        ios_version: str,
+        arguments: tuple[str, ...],
+        coordinates: Coordinates | None,
+        gpx: GPXInspection | None,
+        exit_code: int | None,
+        detail: str,
+    ) -> None:
+        event = LocationEvidenceEvent(
+            event=operation,
+            status=status,
+            timestamp=utc_now(),
+            device_identifier=device_identifier,
+            device_name=device_name,
+            ios_version=ios_version,
+            command=("pymobiledevice3", *arguments),
+            latitude=coordinates.latitude if coordinates is not None else None,
+            longitude=coordinates.longitude if coordinates is not None else None,
+            gpx_path=str(gpx.path) if gpx is not None else None,
+            gpx_sha256=gpx.sha256 if gpx is not None else None,
+            exit_code=exit_code,
+            detail=detail,
+        )
+        self._location_log_path = append_evidence_event(self.location_log_directory(), event)
+
+    def _start_location_process(
+        self,
+        operation: str,
+        device_identifier: str,
+        device_name: str,
+        ios_version: str,
+        arguments: tuple[str, ...],
+        coordinates: Coordinates | None,
+        gpx: GPXInspection | None,
+    ) -> None:
+        if self._location_process is not None:
+            QMessageBox.warning(self, "Location Operation Running", "Stop and clear the active location operation first.")
+            return
+        try:
+            self._record_location_event(
+                operation,
+                "requested",
+                device_identifier,
+                device_name,
+                ios_version,
+                arguments,
+                coordinates,
+                gpx,
+                None,
+                "User confirmed the device-state change.",
+            )
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Could Not Write Evidence Log", str(error))
+            return
+        self._location_operation = operation
+        self._location_arguments = arguments
+        self._location_buffer.clear()
+        self._location_started_at = utc_now()
+        self._location_device_identifier = device_identifier
+        self._location_device_name = device_name
+        self._location_device_version = ios_version
+        self._location_coordinates = coordinates
+        self._location_operation_gpx = gpx
+        process = QProcess(self)
+        process.setProgram(str(self._pmd3))
+        process.setArguments(list(arguments))
+        process.setWorkingDirectory(str(Path.home()))
+        process.setProcessEnvironment(qprocess_environment(device_environment(device_identifier)))
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        process.started.connect(self._location_started)
+        process.readyReadStandardOutput.connect(self._read_location_output)
+        process.finished.connect(self._location_finished)
+        process.errorOccurred.connect(self._location_error)
+        self._location_process = process
+        self.location_output.appendPlainText(f"\n$ pymobiledevice3 {shlex.join(arguments)}")
+        self.location_state_value.setText(f"Starting {operation} for {device_name}…")
+        self._update_location_controls()
+        process.start()
+
+    def _location_started(self) -> None:
+        operation = self._location_operation
+        if operation in ("set", "play"):
+            self._location_may_be_simulated = True
+        self.location_state_value.setText(
+            f"{operation.title()} request is running for {self._location_device_name}. "
+            "The host process started; device-side location is not independently verified."
+        )
+        self.location_output.appendPlainText(
+            f"[started {self._location_started_at}; target {self._location_device_identifier}]"
+        )
+        try:
+            self._record_location_event(
+                operation,
+                "started",
+                self._location_device_identifier or "",
+                self._location_device_name,
+                self._location_device_version,
+                self._location_arguments,
+                self._location_coordinates,
+                self._location_operation_gpx,
+                None,
+                "The host command process started; device-side effect is not independently verified.",
+            )
+        except LocationLabError as error:
+            self.location_output.appendPlainText(f"Evidence log error: {error}")
+            QMessageBox.critical(self, "Could Not Update Evidence Log", str(error))
+        self._update_location_controls()
+
+    def _read_location_output(self) -> None:
+        if self._location_process is None:
+            return
+        data = bytes(self._location_process.readAllStandardOutput())
+        self._location_buffer.extend(data)
+        self.location_output.moveCursor(QTextCursor.MoveOperation.End)
+        self.location_output.insertPlainText(data.decode("utf-8", errors="replace"))
+
+    def _location_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        del exit_status
+        self._read_location_output()
+        operation = self._location_operation
+        user_stopped = self._location_clear_after_stop and operation in ("set", "play")
+        semantic_failure = output_indicates_failure(bytes(self._location_buffer))
+        succeeded = exit_code == 0 and not semantic_failure
+        if user_stopped:
+            status = "stopped"
+            detail = "The user stopped the active process; an explicit clear follows."
+        elif succeeded:
+            status = "completed"
+            detail = "The command completed without a detected CLI or semantic error."
+        else:
+            status = "failed"
+            detail = "The command failed or emitted device/service error output; clearing remains recommended."
+        self.location_output.appendPlainText(f"\n[location {operation} finished: exit {exit_code}; {status}]")
+        try:
+            self._record_location_event(
+                operation,
+                status,
+                self._location_device_identifier or "",
+                self._location_device_name,
+                self._location_device_version,
+                self._location_arguments,
+                self._location_coordinates,
+                self._location_operation_gpx,
+                exit_code,
+                detail,
+            )
+        except LocationLabError as error:
+            self.location_output.appendPlainText(f"Evidence log error: {error}")
+            QMessageBox.critical(self, "Could Not Finalize Evidence Log", str(error))
+        self._location_process = None
+        if operation == "clear" and succeeded:
+            self._location_may_be_simulated = False
+            self._location_device_identifier = None
+            self._location_device_name = ""
+            self._location_device_version = ""
+            self._location_coordinates = None
+            self._location_operation_gpx = None
+            self.location_state_value.setText(
+                "Clear completed without a detected error. External location state is not independently observable."
+            )
+        elif operation == "clear":
+            self._location_may_be_simulated = True
+            self.location_state_value.setText("Clear failed; the tracked device may still report a simulated location.")
+        elif not user_stopped:
+            self._location_may_be_simulated = True
+            self.location_state_value.setText(
+                f"{operation.title()} process ended; the tracked device may remain simulated until Clear succeeds."
+            )
+        if user_stopped:
+            self._location_clear_after_stop = False
+            QTimer.singleShot(0, self._start_tracked_location_clear)
+        else:
+            self._update_location_controls()
+
+    def _location_error(self, process_error: QProcess.ProcessError) -> None:
+        process = self._location_process
+        if process is None:
+            return
+        message = process.errorString()
+        self.location_output.appendPlainText(f"\nLocation process error: {message}")
+        if process_error != QProcess.ProcessError.FailedToStart:
+            return
+        operation = self._location_operation
+        try:
+            self._record_location_event(
+                operation,
+                "failed-to-start",
+                self._location_device_identifier or "",
+                self._location_device_name,
+                self._location_device_version,
+                self._location_arguments,
+                self._location_coordinates,
+                self._location_operation_gpx,
+                None,
+                message,
+            )
+        except LocationLabError as error:
+            self.location_output.appendPlainText(f"Evidence log error: {error}")
+        if operation in ("set", "play"):
+            self._location_may_be_simulated = False
+            self._location_device_identifier = None
+            self._location_device_name = ""
+            self._location_device_version = ""
+            self._location_coordinates = None
+            self._location_operation_gpx = None
+        self._location_process = None
+        self.location_state_value.setText(f"Location command could not start: {message}")
+        self._update_location_controls()
+
+    def _update_location_controls(self) -> None:
+        if not hasattr(self, "set_location_button"):
+            return
+        device = self.selected_device()
+        running = self._location_process is not None
+        available_for_new_simulation = device is not None and not running and not self._location_may_be_simulated
+        self.set_location_button.setEnabled(available_for_new_simulation)
+        self.play_location_gpx_button.setEnabled(
+            available_for_new_simulation and self._selected_location_gpx is not None
+        )
+        self.clear_location_button.setEnabled(not running and (device is not None or self._location_device_identifier is not None))
+        self.stop_clear_location_button.setEnabled(
+            running and self._location_operation in ("set", "play") and not self._location_clear_after_stop
+        )
+        self.choose_location_gpx_button.setEnabled(not running)
+        self.location_timing_randomness.setEnabled(not running)
+        self.location_disable_sleep.setEnabled(not running)
+        self.location_route_waypoints.setEnabled(not running)
+        self.location_route_speed_preset.setEnabled(not running)
+        self.location_route_speed.setEnabled(not running)
+        self.location_route_interval.setEnabled(not running)
+        self.location_route_traversals.setEnabled(not running)
+        self.location_nudge_distance.setEnabled(not running)
+        saved_available = self._saved_locations_error is None and not running
+        self.save_location_button.setEnabled(saved_available)
+        self.remove_saved_location_button.setEnabled(
+            saved_available and isinstance(self.saved_location_combo.currentData(), str)
+        )
+        if self._location_device_identifier is not None:
+            selected_note = ""
+            if device is not None and device.identifier != self._location_device_identifier:
+                selected_note = f" Selected picker now shows {device.identifier}; cleanup will still target the tracked device."
+            self.location_target_value.setText(
+                f"Tracked target: {self._location_device_name} — iOS {self._location_device_version} "
+                f"({self._location_device_identifier}).{selected_note}"
+            )
+        elif device is not None:
+            self.location_target_value.setText(f"Selected target: {device.display_name()} ({device.identifier})")
+        else:
+            self.location_target_value.setText("No connected target is selected")
+
+    def set_simulated_location(self) -> None:
+        device = self.selected_device()
+        if device is None:
+            self._show_no_device()
+            return
+        if self._location_may_be_simulated:
+            QMessageBox.warning(self, "Clear Existing Simulation", "Clear the tracked simulated location before setting another one.")
+            return
+        try:
+            coordinates = validate_coordinates(
+                self.location_latitude_field.text(),
+                self.location_longitude_field.text(),
+            )
+            arguments = set_location_arguments(device.product_version, coordinates)
+            log_directory = self.location_log_directory()
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Invalid Location Request", str(error))
+            return
+        warning = (
+            f"Set a simulated location on {device.display_name()}?\n\n"
+            f"Latitude: {coordinates.latitude}\nLongitude: {coordinates.longitude}\n"
+            f"Evidence log: {log_directory / 'location-events.jsonl'}\n\n"
+            "This changes device-visible location for participating software. Keep this window open and use Stop & Clear "
+            "when testing ends. The toolkit cannot independently verify what every app reports."
+        )
+        if not self._confirm("Set Simulated Location", warning):
+            return
+        self._start_location_process(
+            "set",
+            device.identifier,
+            device.name,
+            device.product_version,
+            arguments,
+            coordinates,
+            None,
+        )
+
+    def play_location_gpx(self) -> None:
+        device = self.selected_device()
+        inspection = self._selected_location_gpx
+        if device is None:
+            self._show_no_device()
+            return
+        if inspection is None:
+            QMessageBox.information(self, "No Validated GPX", "Choose and validate a GPX track first.")
+            return
+        if self._location_may_be_simulated:
+            QMessageBox.warning(self, "Clear Existing Simulation", "Clear the tracked simulated location before replaying a route.")
+            return
+        try:
+            arguments = play_location_arguments(
+                device.product_version,
+                inspection.path,
+                self.location_timing_randomness.value(),
+                self.location_disable_sleep.isChecked(),
+            )
+            log_directory = self.location_log_directory()
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Invalid GPX Request", str(error))
+            return
+        warning = (
+            f"Replay the validated GPX track on {device.display_name()}?\n\n"
+            f"Track points: {inspection.track_point_count}\nSHA-256: {inspection.sha256}\n"
+            f"Evidence log: {log_directory / 'location-events.jsonl'}\n\n"
+            "GPX timestamps control pacing unless fast playback is selected. Stop & Clear restores normal location "
+            "after the route or when you stop it early."
+        )
+        if not self._confirm("Play GPX Route", warning):
+            return
+        self._start_location_process(
+            "play",
+            device.identifier,
+            device.name,
+            device.product_version,
+            arguments,
+            None,
+            inspection,
+        )
+
+    def clear_simulated_location(self) -> None:
+        if self._location_process is not None:
+            self.stop_location_and_clear()
+            return
+        target = self._tracked_or_selected_location_target()
+        if target is None:
+            self._show_no_device()
+            return
+        identifier, name, version = target
+        try:
+            arguments = clear_location_arguments(version)
+            log_directory = self.location_log_directory()
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Invalid Clear Request", str(error))
+            return
+        warning = (
+            f"Clear simulated location on {name} — iOS {version} ({identifier})?\n\n"
+            f"Evidence log: {log_directory / 'location-events.jsonl'}\n\n"
+            "This requests restoration of normal location sources. A successful command is not an independent reading "
+            "of every app's location state."
+        )
+        if not self._confirm("Clear Simulated Location", warning):
+            return
+        self._start_location_process("clear", identifier, name, version, arguments, None, None)
+
+    def _tracked_or_selected_location_target(self) -> tuple[str, str, str] | None:
+        if self._location_device_identifier is not None:
+            return (
+                self._location_device_identifier,
+                self._location_device_name,
+                self._location_device_version,
+            )
+        device = self.selected_device()
+        if device is None:
+            return None
+        return device.identifier, device.name, device.product_version
+
+    def stop_location_and_clear(self) -> None:
+        process = self._location_process
+        if process is None or self._location_operation not in ("set", "play"):
+            QMessageBox.information(self, "No Active Simulation", "No active set or GPX process is available to stop.")
+            return
+        self._location_clear_after_stop = True
+        self.location_state_value.setText("Stopping the active location process; an explicit clear will follow…")
+        self.location_output.appendPlainText("\nRequesting location process stop before clear…")
+        self._update_location_controls()
+        process.terminate()
+        QTimer.singleShot(5000, self._kill_location_after_stop_timeout)
+
+    def _kill_location_after_stop_timeout(self) -> None:
+        process = self._location_process
+        if process is not None and self._location_clear_after_stop and process.state() != QProcess.ProcessState.NotRunning:
+            self.location_output.appendPlainText("Location process did not terminate in 5 seconds; killing it before clear.")
+            process.kill()
+
+    def _start_tracked_location_clear(self) -> None:
+        target = self._tracked_or_selected_location_target()
+        if target is None:
+            self.location_state_value.setText("The active process stopped, but no target remains available for clear.")
+            self._location_may_be_simulated = True
+            self._update_location_controls()
+            return
+        identifier, name, version = target
+        try:
+            arguments = clear_location_arguments(version)
+        except LocationLabError as error:
+            self.location_state_value.setText(f"Could not build the cleanup command: {error}")
+            self._location_may_be_simulated = True
+            self._update_location_controls()
+            return
+        self._start_location_process("clear", identifier, name, version, arguments, None, None)
+
+    def open_location_help(self) -> None:
+        target = self._tracked_or_selected_location_target()
+        version = target[2] if target is not None else "17"
+        try:
+            path = (
+                ("developer", "dvt", "simulate-location")
+                if parse_ios_major(version) >= 17
+                else ("developer", "simulate-location")
+            )
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Unknown iOS Version", str(error))
+            return
+        self.navigate_to_page("Man Pages")
+        self.select_manpage_path(path)
 
     def choose_output_root(self) -> None:
         selected = QFileDialog.getExistingDirectory(self, "Choose evidence destination", self.output_root.text())
@@ -2748,8 +3781,148 @@ class MainWindow(QMainWindow):
     def _show_no_device(self) -> None:
         QMessageBox.warning(self, "No Device", "Connect, unlock, and trust an iPhone or iPad first.")
 
+    def _prepare_location_for_close(self) -> bool:
+        active = self._location_process is not None
+        if not active and not self._location_may_be_simulated:
+            return True
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle("Location Cleanup Before Closing")
+        message.setText("Location Lab may still be changing the tracked device's reported location.")
+        message.setInformativeText(
+            "Stop the active process and request Clear before closing. Choose Close Without Clearing only when you "
+            "intentionally want the simulated location to remain or the device is unavailable."
+        )
+        clear_button = message.addButton("Stop, Clear && Close", QMessageBox.ButtonRole.AcceptRole)
+        close_button = message.addButton("Close Without Clearing", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_button = message.addButton(QMessageBox.StandardButton.Cancel)
+        message.setDefaultButton(cancel_button)
+        message.exec()
+        clicked = message.clickedButton()
+        if clicked == cancel_button:
+            return False
+        if clicked == close_button:
+            return True
+        if clicked != clear_button:
+            raise RuntimeError("Location cleanup dialog returned an unknown button")
+        return self._clear_location_synchronously_for_close()
+
+    def _clear_location_synchronously_for_close(self) -> bool:
+        target = self._tracked_or_selected_location_target()
+        if target is None:
+            QMessageBox.critical(
+                self,
+                "Could Not Clear Location",
+                "No tracked or selected device is available for the cleanup request.",
+            )
+            return False
+        identifier, name, version = target
+        process = self._location_process
+        if process is not None and process.state() != QProcess.ProcessState.NotRunning:
+            self._location_clear_after_stop = False
+            process.terminate()
+            if not process.waitForFinished(5000):
+                process.kill()
+                process.waitForFinished(3000)
+            self._location_process = None
+        try:
+            arguments = clear_location_arguments(version)
+            self._record_location_event(
+                "clear-on-close",
+                "requested",
+                identifier,
+                name,
+                version,
+                arguments,
+                None,
+                None,
+                None,
+                "The user chose Stop, Clear & Close.",
+            )
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Could Not Prepare Location Cleanup", str(error))
+            return False
+        last_detail = ""
+        final_exit_code: int | None = None
+        for attempt in (1, 2):
+            try:
+                completed = subprocess.run(
+                    [str(self._pmd3), *arguments],
+                    env=device_environment(identifier),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                    timeout=30,
+                )
+            except (OSError, subprocess.SubprocessError) as error:
+                last_detail = f"Cleanup attempt {attempt} could not run: {error}"
+                final_exit_code = None
+            else:
+                final_exit_code = completed.returncode
+                output = completed.stdout.strip()
+                if output:
+                    self.location_output.appendPlainText(f"\n[close cleanup attempt {attempt}]\n{output}")
+                if completed.returncode == 0 and not output_indicates_failure(completed.stdout):
+                    try:
+                        self._record_location_event(
+                            "clear-on-close",
+                            "completed",
+                            identifier,
+                            name,
+                            version,
+                            arguments,
+                            None,
+                            None,
+                            completed.returncode,
+                            f"Location clear completed on attempt {attempt} before application close.",
+                        )
+                    except LocationLabError as error:
+                        QMessageBox.critical(self, "Could Not Finalize Location Evidence", str(error))
+                        return False
+                    self._location_may_be_simulated = False
+                    self._location_device_identifier = None
+                    self.location_state_value.setText("Location clear completed before close.")
+                    return True
+                last_detail = (
+                    f"Cleanup attempt {attempt} exited {completed.returncode}: "
+                    f"{output or 'no diagnostic output'}"
+                )
+            if attempt == 1:
+                self.location_output.appendPlainText(f"\nWarning: {last_detail}\nRetrying location clear once…")
+        try:
+            self._record_location_event(
+                "clear-on-close",
+                "failed",
+                identifier,
+                name,
+                version,
+                arguments,
+                None,
+                None,
+                final_exit_code,
+                last_detail,
+            )
+        except LocationLabError as error:
+            self.location_output.appendPlainText(f"Evidence log error: {error}")
+        QMessageBox.critical(
+            self,
+            "Location Cleanup Failed",
+            f"The toolkit did not confirm a successful clear after two attempts.\n\n{last_detail}\n\n"
+            "The application will remain open. Reconnect the tracked device and use Clear, or explicitly choose "
+            "Close Without Clearing.",
+        )
+        return False
+
     def closeEvent(self, event: QCloseEvent) -> None:
-        self._scanner.stop()
+        if not self._prepare_location_for_close():
+            event.ignore()
+            return
+        for window in tuple(self._live_log_windows):
+            window.close()
+            if window.isVisible():
+                event.ignore()
+                return
         critical_processes = tuple(
             process
             for process in (
@@ -2759,18 +3932,20 @@ class MainWindow(QMainWindow):
                 self._apps_process,
                 self._backup_process,
                 self._console_process,
+                self._location_process,
             )
             if process is not None and process.state() != QProcess.ProcessState.NotRunning
         )
         if critical_processes:
             should_close = self._confirm(
                 "Stop Active Operations?",
-                "A DDI, evidence, app, backup, or Command Center operation is still running. "
+                "A DDI, evidence, app, backup, Location Lab, or Command Center operation is still running. "
                 "Stop it, allow cleanup/finalization, and close the app?",
             )
             if not should_close:
                 event.ignore()
                 return
+        self._scanner.stop()
         for process in critical_processes:
             process.terminate()
             if not process.waitForFinished(10000):

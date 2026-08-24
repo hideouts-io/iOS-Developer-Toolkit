@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ios_developer_toolkit.backup_worker import BackupRequestError, parse_backup_event, parse_backup_request
@@ -26,6 +27,27 @@ from ios_developer_toolkit.ipa_inspector import (
     validate_bundle_identifier,
 )
 from ios_developer_toolkit.local_ddi import parse_attached_image
+from ios_developer_toolkit.location_lab import (
+    Coordinates,
+    LocationLabError,
+    add_saved_location,
+    build_route,
+    clear_location_arguments,
+    inspect_gpx,
+    move_coordinates,
+    parse_route_waypoints,
+    parse_saved_locations,
+    play_location_arguments,
+    set_location_arguments,
+    validate_coordinates,
+)
+from ios_developer_toolkit.live_logs import (
+    LiveLogError,
+    compile_line_filter,
+    create_spool_paths,
+    line_matches,
+    stream_spec,
+)
 from ios_developer_toolkit.models import DeviceDataError, parse_devices_json
 from ios_developer_toolkit.ufade_connector import (
     UFADEValidationError,
@@ -98,6 +120,11 @@ class GuidedCommandCatalogTests(unittest.TestCase):
             render_preset_arguments(preset_by_identifier("apps-query"), {"bundle_id": "../../unsafe"})
         with self.assertRaises(CommandCatalogError):
             render_preset_arguments(preset_by_identifier("open-url"), {"url": "file:///etc/passwd"})
+        with self.assertRaises(CommandCatalogError):
+            render_preset_arguments(
+                preset_by_identifier("location-set"),
+                {"latitude": "nan", "longitude": "0"},
+            )
 
     def test_manpages_cover_every_top_level_group_from_attached_inventory(self) -> None:
         paths = {entry.command_path for entry in manpage_entries()}
@@ -153,6 +180,122 @@ class LocalDDITests(unittest.TestCase):
         attached = parse_attached_image(payload)
         self.assertEqual(attached.device_entry, "/dev/disk99s1")
         self.assertEqual(attached.mount_point, Path("/Volumes/Test DDI"))
+
+
+class LocationLabTests(unittest.TestCase):
+    def test_builds_version_specific_location_commands(self) -> None:
+        coordinates = Coordinates(latitude=34.0522, longitude=-118.2437)
+        self.assertEqual(
+            set_location_arguments("26.3.1", coordinates),
+            ("developer", "dvt", "simulate-location", "set", "--", "34.0522", "-118.2437"),
+        )
+        self.assertEqual(
+            clear_location_arguments("16.7.12"),
+            ("developer", "simulate-location", "clear"),
+        )
+        self.assertEqual(
+            play_location_arguments("16.7.12", Path("/tmp/route.gpx"), 250, True),
+            (
+                "developer",
+                "simulate-location",
+                "play",
+                str(Path("/tmp/route.gpx").resolve()),
+                "250",
+                "--disable-sleep",
+            ),
+        )
+
+    def test_rejects_nonfinite_and_out_of_range_coordinates(self) -> None:
+        for latitude, longitude in (("nan", "0"), ("91", "0"), ("0", "-181")):
+            with self.subTest(latitude=latitude, longitude=longitude):
+                with self.assertRaises(LocationLabError):
+                    validate_coordinates(latitude, longitude)
+
+    def test_inspects_track_points_and_hashes_gpx(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            route = Path(temporary_directory) / "route.gpx"
+            route.write_text(
+                """<?xml version="1.0" encoding="UTF-8"?>
+                <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+                  <trk><trkseg>
+                    <trkpt lat="34.0522" lon="-118.2437"><time>2026-08-23T12:00:00Z</time></trkpt>
+                    <trkpt lat="34.0523" lon="-118.2436" />
+                  </trkseg></trk>
+                </gpx>
+                """,
+                encoding="utf-8",
+            )
+            inspection = inspect_gpx(route)
+            self.assertEqual(inspection.track_point_count, 2)
+            self.assertEqual(inspection.timed_point_count, 1)
+            self.assertEqual(inspection.first_point, Coordinates(34.0522, -118.2437))
+            self.assertEqual(len(inspection.sha256), 64)
+
+    def test_rejects_gpx_without_track_points(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            route = Path(temporary_directory) / "waypoints.gpx"
+            route.write_text('<gpx version="1.1"><wpt lat="1" lon="2" /></gpx>', encoding="utf-8")
+            with self.assertRaises(LocationLabError):
+                inspect_gpx(route)
+
+    def test_saved_location_schema_is_strict_and_names_are_unique(self) -> None:
+        locations = parse_saved_locations(
+            '{"version": 1, "locations": [{"name": "Lab", "latitude": 1.5, "longitude": 2.5}]}'
+        )
+        self.assertEqual(locations[0].name, "Lab")
+        with self.assertRaises(LocationLabError):
+            add_saved_location(locations, "lab", Coordinates(3.0, 4.0))
+        with self.assertRaises(LocationLabError):
+            parse_saved_locations('{"version": 1, "locations": [{"name": "Broken", "latitude": "1"}]}')
+
+    def test_builds_bounded_timestamped_ping_pong_route(self) -> None:
+        waypoints = parse_route_waypoints("34.0522,-118.2437\n34.0523,-118.2436")
+        route = build_route(waypoints, 5.0, 2, 2, datetime(2026, 8, 24, tzinfo=timezone.utc))
+        self.assertGreater(len(route.points), 2)
+        self.assertAlmostEqual(route.points[0].latitude, route.points[-1].latitude, places=9)
+        self.assertAlmostEqual(route.points[0].longitude, route.points[-1].longitude, places=9)
+        self.assertIn("2026-08-24T00:00:00Z", route.gpx_document)
+        self.assertEqual(route.gpx_document.count("<trkpt"), len(route.points))
+
+    def test_nudges_coordinates_without_changing_input(self) -> None:
+        origin = Coordinates(34.0522, -118.2437)
+        moved = move_coordinates(origin, 90.0, 100.0)
+        self.assertEqual(origin, Coordinates(34.0522, -118.2437))
+        self.assertAlmostEqual(moved.latitude, origin.latitude, places=4)
+        self.assertGreater(moved.longitude, origin.longitude)
+
+    def test_rejects_unbounded_generated_route(self) -> None:
+        with self.assertRaises(LocationLabError):
+            build_route(
+                (Coordinates(0.0, 0.0), Coordinates(0.0, 179.0)),
+                1.0,
+                1,
+                20,
+                datetime(2026, 8, 24, tzinfo=timezone.utc),
+            )
+
+
+class LiveLogTests(unittest.TestCase):
+    def test_stream_catalog_uses_distinct_current_pymobiledevice3_services(self) -> None:
+        self.assertEqual(stream_spec("unified").arguments, ("syslog", "live", "--format", "json", "--label"))
+        self.assertEqual(stream_spec("classic").arguments, ("syslog", "live-old"))
+        self.assertTrue(stream_spec("dvt-oslog").requires_developer_services)
+
+    def test_literal_and_regex_filters_are_explicit(self) -> None:
+        literal = compile_line_filter("process[1]", False, False)
+        self.assertTrue(line_matches("PROCESS[1] started", literal))
+        self.assertFalse(line_matches("process1 started", literal))
+        regex = compile_line_filter(r"error\s+\d+", True, False)
+        self.assertTrue(line_matches("Error 42", regex))
+        with self.assertRaises(LiveLogError):
+            compile_line_filter("[", True, True)
+
+    def test_spool_paths_are_sanitized_and_keep_structured_extension(self) -> None:
+        raw, metadata = create_spool_paths(Path("/tmp/logs"), stream_spec("unified"), "device/../../unsafe")
+        self.assertEqual(raw.parent, Path("/tmp/logs").resolve())
+        self.assertEqual(raw.suffix, ".jsonl")
+        self.assertNotIn("/../", str(raw))
+        self.assertEqual(metadata.suffixes, [".meta", ".json"])
 
 
 class IPAInspectionTests(unittest.TestCase):
