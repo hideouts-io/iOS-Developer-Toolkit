@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ios-developer-toolkit"
 version = "0.1.0"
-description = "Safety-focused macOS GUI for iOS Developer Disk Images and diagnostic collection"
+description = "Safety-focused pymobiledevice3 GUI, Developer Disk Image mounter, and iOS evidence workbench"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
@@ -17,7 +17,11 @@ dependencies = [
 ios-developer-toolkit = "ios_developer_toolkit.app:main"
 ios-developer-collect = "ios_developer_toolkit.collector:main"
 ios-local-ddi = "ios_developer_toolkit.local_ddi:main"
+ios-ipa-inspect = "ios_developer_toolkit.ipa_inspector:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ios_developer_toolkit*"]
+
+[tool.setuptools.package-data]
+ios_developer_toolkit = ["assets/*.png"]

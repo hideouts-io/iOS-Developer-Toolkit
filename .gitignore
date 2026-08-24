@@ -5,3 +5,27 @@ dist/
 *.egg-info/
 __pycache__/
 *.pyc
+.DS_Store
+
+# Private or generated device data
+backups/
+captures/
+cases/
+exports/
+reports/
+ios-case-*/
+*.backup/
+*.crash
+*.ips
+*.log
+*.pcap
+*.pcapng
+
+# Packages, profiles, and developer-image payloads
+*.cer
+*.dmg
+*.ipa
+*.mobileconfig
+*.trustcache
+BuildManifest.plist
+DeveloperDiskImage.dmg.signature

@@ -5,13 +5,15 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>iOS Developer Toolkit</string>
+	<string>iOS Device Workbench</string>
   <key>CFBundleExecutable</key>
+  <string>iOSDeveloperToolkit</string>
+  <key>CFBundleIconFile</key>
   <string>iOSDeveloperToolkit</string>
   <key>CFBundleIdentifier</key>
   <string>local.security.ios-developer-toolkit</string>
   <key>CFBundleName</key>
-  <string>iOS Developer Toolkit</string>
+	<string>iOS Device Workbench</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
