@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONTENTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_DIR="$(cd "$CONTENTS_DIR/../../.." && pwd)"
+
+exec "$PROJECT_DIR/.venv/bin/python" -m ios_developer_toolkit

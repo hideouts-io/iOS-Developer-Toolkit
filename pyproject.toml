@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ios-developer-toolkit"
+version = "0.1.0"
+description = "Safety-focused macOS GUI for iOS Developer Disk Images and diagnostic collection"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "PySide6==6.11.2",
+    "pymobiledevice3==10.11.0",
+]
+
+[project.scripts]
+ios-developer-toolkit = "ios_developer_toolkit.app:main"
+ios-developer-collect = "ios_developer_toolkit.collector:main"
+ios-local-ddi = "ios_developer_toolkit.local_ddi:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ios_developer_toolkit*"]
