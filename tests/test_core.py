@@ -27,6 +27,11 @@ from ios_developer_toolkit.ipa_inspector import (
 )
 from ios_developer_toolkit.local_ddi import parse_attached_image
 from ios_developer_toolkit.models import DeviceDataError, parse_devices_json
+from ios_developer_toolkit.ufade_connector import (
+    UFADEValidationError,
+    parse_python_version,
+    validate_ufade_checkout,
+)
 from ios_developer_toolkit.validation import output_indicates_failure
 
 
@@ -282,6 +287,36 @@ class BackupWorkerParsingTests(unittest.TestCase):
         )
         self.assertEqual(event.percent, 42)
         self.assertIsNone(event.encrypted)
+
+
+class UFADEConnectorTests(unittest.TestCase):
+    def test_validates_external_gpl_checkout_and_reads_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            checkout = Path(temporary_directory)
+            (checkout / "ufade.py").write_text('u_version = "1.0.4"\n', encoding="utf-8")
+            (checkout / "LICENSE").write_text(
+                "GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n",
+                encoding="utf-8",
+            )
+            (checkout / "requirements.txt").write_text("pymobiledevice3==7.8.3\n", encoding="utf-8")
+            resolved_checkout, script, version = validate_ufade_checkout(checkout)
+            self.assertEqual(resolved_checkout, checkout.resolve())
+            self.assertEqual(script, checkout.resolve() / "ufade.py")
+            self.assertEqual(version, "1.0.4")
+
+    def test_rejects_checkout_without_expected_license(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            checkout = Path(temporary_directory)
+            (checkout / "ufade.py").write_text('u_version = "1.0.4"\n', encoding="utf-8")
+            (checkout / "LICENSE").write_text("MIT License\n", encoding="utf-8")
+            (checkout / "requirements.txt").write_text("pymobiledevice3==7.8.3\n", encoding="utf-8")
+            with self.assertRaises(UFADEValidationError):
+                validate_ufade_checkout(checkout)
+
+    def test_parses_exact_python_version_triplet(self) -> None:
+        self.assertEqual(parse_python_version("3.11.9"), (3, 11, 9))
+        with self.assertRaises(UFADEValidationError):
+            parse_python_version("Python 3.11.9")
 
 
 if __name__ == "__main__":

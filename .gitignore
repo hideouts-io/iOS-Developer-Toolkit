@@ -14,12 +14,16 @@ cases/
 exports/
 reports/
 ios-case-*/
+ufade-acquisitions/
+UFADE Acquisitions/
 *.backup/
 *.crash
 *.ips
 *.log
 *.pcap
 *.pcapng
+*.ufd
+*.ufdr
 
 # Packages, profiles, and developer-image payloads
 *.cer

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -38,6 +39,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -72,6 +74,12 @@ from ios_developer_toolkit.ipa_inspector import (
 )
 from ios_developer_toolkit.models import DeviceDataError, IOSDevice, parse_devices_json
 from ios_developer_toolkit.runtime import device_environment, pymobiledevice3_executable
+from ios_developer_toolkit.ufade_connector import (
+    UFADE_REPOSITORY_URL,
+    UFADEInstallation,
+    UFADEValidationError,
+    inspect_ufade_installation,
+)
 from ios_developer_toolkit.validation import output_indicates_failure
 
 
@@ -227,6 +235,7 @@ class MainWindow(QMainWindow):
         self._backup_stderr = bytearray()
         self._backup_encryption_state: bool | None = None
         self._last_backup_path: Path | None = None
+        self._ufade_installation: UFADEInstallation | None = None
         self._console_process: QProcess | None = None
         self._presets = command_presets()
         self._current_preset: CommandPreset | None = None
@@ -726,6 +735,31 @@ class MainWindow(QMainWindow):
         return tab
 
     def _build_backup_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+
+        heading = QLabel("Backup providers")
+        heading.setObjectName("pageTitle")
+        heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
+        layout.addWidget(heading)
+        explanation = QLabel(
+            "Choose the built-in MobileBackup2 workflow or launch a separately installed UFADE forensic acquisition. "
+            "The providers use isolated runtimes and do not share passwords or dependencies."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        provider_tabs = QTabWidget()
+        provider_tabs.setObjectName("backupProviderTabs")
+        provider_tabs.addTab(self._build_mobilebackup_page(), "MobileBackup2")
+        provider_tabs.addTab(self._build_ufade_backup_page(), "UFADE External")
+        provider_tabs.setTabToolTip(0, "Toolkit-managed full or incremental iTunes-style backup")
+        provider_tabs.setTabToolTip(1, "Launch an independently installed UFADE acquisition environment")
+        layout.addWidget(provider_tabs, 1)
+        return page
+
+    def _build_mobilebackup_page(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setSpacing(12)
@@ -811,6 +845,116 @@ class MainWindow(QMainWindow):
         self._backup_encryption_choice_changed(self.require_encryption_checkbox.isChecked())
         self._update_backup_controls()
         return tab
+
+    def _build_ufade_backup_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+
+        overview = QLabel(
+            "UFADE (Universal Forensic Apple Device Extractor) is an independent GPL-3.0 application. "
+            "This toolkit validates and launches a user-managed UFADE checkout; it does not vendor, import, modify, "
+            "or redistribute UFADE and does not read UFADE passwords or acquisition output."
+        )
+        overview.setObjectName("ufadeProviderExplanation")
+        overview.setWordWrap(True)
+        layout.addWidget(overview)
+
+        types_group = QGroupBox("Acquisition types selected inside UFADE")
+        types_layout = QVBoxLayout(types_group)
+        types = QLabel(
+            "• Logical — iTunes-style MobileBackup2 acquisition.\n"
+            "• Logical+ — backup plus AFC media, shared app folders, crash reports, and optional Unified Logs.\n"
+            "• Logical+ UFD — advanced logical ZIP with a UFD descriptor for compatible forensic tooling.\n"
+            "• PRFS — decrypted, filesystem-shaped logical archive assembled from service-visible data.\n"
+            "• Full filesystem — only for a device that is already jailbroken; UFADE does not provide a bypass."
+        )
+        types.setWordWrap(True)
+        types_layout.addWidget(types)
+        layout.addWidget(types_group)
+
+        setup_group = QGroupBox("Separate UFADE installation")
+        setup_layout = QFormLayout(setup_group)
+
+        checkout_row = QHBoxLayout()
+        self.ufade_checkout_field = QLineEdit()
+        self.ufade_checkout_field.setObjectName("ufadeCheckout")
+        self.ufade_checkout_field.setPlaceholderText("Absolute path to a cloned prosch88/UFADE checkout")
+        self.ufade_checkout_field.textChanged.connect(self._invalidate_ufade_validation)
+        checkout_row.addWidget(self.ufade_checkout_field, 1)
+        choose_checkout = QPushButton("Choose…")
+        choose_checkout.setObjectName("chooseUFADECheckoutButton")
+        choose_checkout.clicked.connect(self.choose_ufade_checkout)
+        checkout_row.addWidget(choose_checkout)
+        setup_layout.addRow("UFADE checkout", checkout_row)
+
+        python_row = QHBoxLayout()
+        self.ufade_python_field = QLineEdit()
+        self.ufade_python_field.setObjectName("ufadePythonExecutable")
+        self.ufade_python_field.setPlaceholderText("UFADE's separate Python 3.11 virtual-environment executable")
+        self.ufade_python_field.textChanged.connect(self._invalidate_ufade_validation)
+        python_row.addWidget(self.ufade_python_field, 1)
+        choose_python = QPushButton("Choose…")
+        choose_python.setObjectName("chooseUFADEPythonButton")
+        choose_python.clicked.connect(self.choose_ufade_python)
+        python_row.addWidget(choose_python)
+        setup_layout.addRow("Python 3.11", python_row)
+
+        output_row = QHBoxLayout()
+        self.ufade_output_field = QLineEdit(str(Path.home() / "Documents" / "UFADE Acquisitions"))
+        self.ufade_output_field.setObjectName("ufadeOutputDirectory")
+        output_row.addWidget(self.ufade_output_field, 1)
+        choose_output = QPushButton("Choose…")
+        choose_output.setObjectName("chooseUFADEOutputButton")
+        choose_output.clicked.connect(self.choose_ufade_output_directory)
+        output_row.addWidget(choose_output)
+        self.open_ufade_output_button = QPushButton("Open Folder")
+        self.open_ufade_output_button.setObjectName("openUFADEOutputButton")
+        self.open_ufade_output_button.clicked.connect(self.open_ufade_output_directory)
+        output_row.addWidget(self.open_ufade_output_button)
+        setup_layout.addRow("Working/output folder", output_row)
+
+        self.ufade_validation_status = QLabel("UFADE installation has not been validated")
+        self.ufade_validation_status.setObjectName("ufadeValidationStatus")
+        self.ufade_validation_status.setWordWrap(True)
+        setup_layout.addRow("Status", self.ufade_validation_status)
+        layout.addWidget(setup_group)
+
+        controls = QHBoxLayout()
+        validate_button = QPushButton("Validate Installation")
+        validate_button.setObjectName("validateUFADEButton")
+        validate_button.clicked.connect(self.validate_ufade_from_ui)
+        controls.addWidget(validate_button)
+        setup_button = QPushButton("Copy Setup Commands")
+        setup_button.setObjectName("copyUFADESetupButton")
+        setup_button.clicked.connect(self.copy_ufade_setup_commands)
+        controls.addWidget(setup_button)
+        repository_button = QPushButton("Open UFADE Repository")
+        repository_button.setObjectName("openUFADERepositoryButton")
+        repository_button.clicked.connect(self.open_ufade_repository)
+        controls.addWidget(repository_button)
+        self.launch_ufade_button = QPushButton("Launch UFADE…")
+        self.launch_ufade_button.setObjectName("launchUFADEButton")
+        self.launch_ufade_button.clicked.connect(self.launch_ufade)
+        controls.addWidget(self.launch_ufade_button)
+        controls.addStretch()
+        layout.addLayout(controls)
+
+        warning = QLabel(
+            "UFADE runs as a separate process with its own UI, dependency versions, device selection, password handling, "
+            "stop controls, and output formats. Keep only the intended device connected and review UFADE's own prompts."
+        )
+        warning.setObjectName("ufadeBoundaryWarning")
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+
+        self.ufade_output = QPlainTextEdit()
+        self.ufade_output.setObjectName("ufadeProviderOutput")
+        self.ufade_output.setReadOnly(True)
+        self.ufade_output.setMaximumBlockCount(1000)
+        layout.addWidget(self.ufade_output, 1)
+        self._update_backup_controls()
+        return page
 
     def _build_command_center_page(self) -> QWidget:
         page = QWidget()
@@ -1960,6 +2104,8 @@ class MainWindow(QMainWindow):
         self.require_encryption_checkbox.setEnabled(not running)
         self.backup_destination_field.setEnabled(not running)
         self.open_backup_button.setEnabled(not running)
+        if hasattr(self, "launch_ufade_button"):
+            self.launch_ufade_button.setEnabled(device_available and not running)
         self._backup_encryption_choice_changed(self.require_encryption_checkbox.isChecked())
 
     def stop_backup(self) -> None:
@@ -1980,6 +2126,167 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Backup Folder Not Found", f"The folder does not exist yet:\n{target}")
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+
+    def _invalidate_ufade_validation(self, value: str) -> None:
+        del value
+        self._ufade_installation = None
+        self.ufade_validation_status.setText("UFADE installation has not been validated")
+
+    def choose_ufade_checkout(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose cloned UFADE checkout",
+            self.ufade_checkout_field.text(),
+        )
+        if selected:
+            self.ufade_checkout_field.setText(selected)
+
+    def choose_ufade_python(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose UFADE Python 3.11 executable",
+            self.ufade_python_field.text(),
+            "Executable (*)",
+        )
+        if selected:
+            self.ufade_python_field.setText(selected)
+
+    def choose_ufade_output_directory(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose UFADE working and output directory",
+            self.ufade_output_field.text(),
+        )
+        if selected:
+            self.ufade_output_field.setText(selected)
+
+    def ufade_checkout(self) -> Path:
+        value = self.ufade_checkout_field.text().strip()
+        if not value:
+            raise UFADEValidationError("Choose the root of a cloned UFADE checkout")
+        return Path(value).expanduser()
+
+    def ufade_python(self) -> Path:
+        value = self.ufade_python_field.text().strip()
+        if not value:
+            raise UFADEValidationError("Choose the Python executable from UFADE's separate Python 3.11 environment")
+        return Path(value).expanduser()
+
+    def ufade_output_directory(self) -> Path:
+        value = self.ufade_output_field.text().strip()
+        if not value:
+            raise UFADEValidationError("Choose a non-empty UFADE working and output directory")
+        destination = Path(value).expanduser()
+        if not destination.is_absolute():
+            raise UFADEValidationError(f"UFADE output directory must be an absolute path: {destination}")
+        return destination.resolve()
+
+    def validate_ufade_from_ui(self) -> UFADEInstallation | None:
+        self.ufade_validation_status.setText("Validating UFADE checkout, Python 3.11, and runtime imports…")
+        QApplication.processEvents()
+        try:
+            installation = inspect_ufade_installation(self.ufade_checkout(), self.ufade_python())
+            self.ufade_output_directory()
+        except (UFADEValidationError, OSError, subprocess.SubprocessError) as error:
+            self._ufade_installation = None
+            self.ufade_validation_status.setText(f"Validation failed: {error}")
+            self.ufade_output.appendPlainText(f"UFADE validation failed: {error}")
+            return None
+        self._ufade_installation = installation
+        message = (
+            f"Validated UFADE {installation.ufade_version} with Python {installation.python_version}. "
+            "The GPL application will remain a separate process."
+        )
+        self.ufade_validation_status.setText(message)
+        self.ufade_output.appendPlainText(message)
+        return installation
+
+    def copy_ufade_setup_commands(self) -> None:
+        commands = "\n".join(
+            (
+                "brew install python@3.11 python-tk@3.11",
+                "git clone https://github.com/prosch88/UFADE.git",
+                "cd UFADE",
+                "python3.11 -m venv venv",
+                "venv/bin/python -m pip install -r requirements.txt",
+            )
+        )
+        QApplication.clipboard().setText(commands)
+        self.ufade_output.appendPlainText("Copied macOS UFADE setup commands to the clipboard.")
+
+    def open_ufade_repository(self) -> None:
+        QDesktopServices.openUrl(QUrl(UFADE_REPOSITORY_URL))
+
+    def launch_ufade(self) -> None:
+        device = self.selected_device()
+        if device is None:
+            self._show_no_device()
+            return
+        installation = self.validate_ufade_from_ui()
+        if installation is None:
+            QMessageBox.critical(
+                self,
+                "UFADE Validation Failed",
+                "Correct the UFADE checkout or Python 3.11 environment before launching it.",
+            )
+            return
+        try:
+            destination = self.ufade_output_directory()
+        except UFADEValidationError as error:
+            QMessageBox.critical(self, "Invalid UFADE Output Directory", str(error))
+            return
+        warning = (
+            f"Launch UFADE {installation.ufade_version} for an independent forensic acquisition?\n\n"
+            f"Toolkit-selected device: {device.display_name()} ({device.identifier})\n"
+            f"Working/output folder: {destination}\n"
+            f"Python: {installation.python}\n\n"
+            "UFADE performs its own device discovery and will ask you to choose Logical, Logical+, UFD, PRFS, or other "
+            "operations in its own window. Keep only the intended device connected. UFADE may create decrypted copies, "
+            "archives, logs, or reports containing highly sensitive data. Use UFADE's own stop controls; closing this "
+            "toolkit will not stop the separate UFADE process."
+        )
+        if not self._confirm("Launch External UFADE", warning):
+            return
+        try:
+            destination.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            QMessageBox.critical(
+                self,
+                "Could Not Create UFADE Output Directory",
+                f"Could not create {destination}: {error}",
+            )
+            return
+        started, process_identifier = QProcess.startDetached(
+            str(installation.python),
+            [str(installation.script)],
+            str(destination),
+        )
+        if not started:
+            QMessageBox.critical(
+                self,
+                "Could Not Launch UFADE",
+                f"The external process did not start with {installation.python}",
+            )
+            return
+        self.ufade_output.appendPlainText(
+            f"Launched external UFADE {installation.ufade_version} as process {process_identifier}. "
+            f"Working directory: {destination}"
+        )
+
+    def open_ufade_output_directory(self) -> None:
+        try:
+            destination = self.ufade_output_directory()
+        except UFADEValidationError as error:
+            QMessageBox.critical(self, "Invalid UFADE Output Directory", str(error))
+            return
+        if not destination.is_dir():
+            QMessageBox.information(
+                self,
+                "UFADE Output Folder Not Found",
+                f"The folder does not exist yet:\n{destination}",
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
 
     def _filter_command_presets(self) -> None:
         selected_identifier = self._current_preset.identifier if self._current_preset is not None else None

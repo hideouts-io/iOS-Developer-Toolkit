@@ -36,6 +36,7 @@
 - [IPA sideloading and removal](#ipa-sideloading-and-removal)
 - [Installed Apps inventory](#installed-apps-inventory)
 - [Local device backups and encryption](#local-device-backups-and-encryption)
+- [UFADE external forensic acquisition](#ufade-external-forensic-acquisition)
 - [Command-line collector](#command-line-collector)
 - [Interpretation and safety](#interpretation-and-safety)
 - [Privacy and responsible use](#privacy-and-responsible-use)
@@ -62,6 +63,7 @@ The project is intentionally evidence-oriented. Successful execution proves that
 - Installed-app inventory, optional size calculation, bundle-ID copying, and confirmed uninstall actions.
 - Local IPA structure, provisioning, and macOS code-signature inspection before installation is enabled.
 - Full or incremental MobileBackup2 backups with explicit persistent-encryption handling and no password in arguments or logs.
+- External UFADE provider validation and launch for Logical, Logical+, UFD, and PRFS forensic acquisitions.
 - Classic syslog, DVT Unified Logging, DVT Sysmon, screenshots, crash reports, and device-side PCAP capture.
 - Timestamped cases with command logs, exit status, retry history, coverage gaps, a JSON manifest, and SHA-256 inventory.
 - Direct argument execution without a shell; Advanced Mode parses arguments but does not evaluate pipes, redirects, substitutions, or shell operators.
@@ -579,6 +581,50 @@ The Backup tab uses the same MobileBackup2 protocol as the pinned `pymobiledevic
 
 Passwords travel only in a JSON request on the helper's standard input and are cleared from the GUI fields after dispatch. The helper never emits the password. Backup files themselves are highly sensitive even when encrypted, so keep the destination out of Git and restrict who can access it.
 
+## UFADE external forensic acquisition
+
+The Backup workspace includes a separate **UFADE External** provider for [`prosch88/UFADE`](https://github.com/prosch88/UFADE), the GPL-3.0 Universal Forensic Apple Device Extractor. UFADE supplies its own CustomTkinter interface and acquisition workflows:
+
+| UFADE choice | Upstream behavior |
+|---|---|
+| Logical | iTunes-style MobileBackup2 acquisition. |
+| Logical+ | Backup plus AFC media, shared app folders, crash reports, and optional Unified Logs. |
+| Logical+ UFD | Advanced logical ZIP with a UFD descriptor for compatible forensic tooling. |
+| PRFS | Decrypted, filesystem-shaped logical archive assembled from service-visible data. |
+| Full filesystem | SSH acquisition from an already jailbroken device; it is not a jailbreak or bypass. |
+
+### Why UFADE remains external
+
+The toolkit is MIT-licensed while UFADE is GPL-3.0. UFADE also requires Python 3.11 and currently pins a different `pymobiledevice3` release. To preserve both projects' license and dependency boundaries, this repository does not copy, vendor, import, patch, or redistribute UFADE code.
+
+Instead, the provider:
+
+1. asks for the root of a user-managed UFADE checkout;
+2. verifies `ufade.py`, `requirements.txt`, and the expected GPL-3.0 license;
+3. reads the checkout's declared UFADE version without importing it;
+4. verifies a separate Python 3.11 executable and representative UFADE runtime imports;
+5. asks for a protected working/output directory;
+6. displays the selected Toolkit device as an informational cross-check;
+7. launches `ufade.py` directly without a shell as an independent process.
+
+UFADE performs its own device discovery, prompts, password handling, progress reporting, stopping, archive creation, and report generation. Closing iOS Developer Toolkit does not terminate a launched UFADE process.
+
+### Install UFADE separately on macOS
+
+The provider's **Copy Setup Commands** button copies:
+
+```bash
+brew install python@3.11 python-tk@3.11
+git clone https://github.com/prosch88/UFADE.git
+cd UFADE
+python3.11 -m venv venv
+venv/bin/python -m pip install -r requirements.txt
+```
+
+Select the resulting `UFADE/` checkout and `UFADE/venv/bin/python` in the provider page. If UFADE developer features are also required, follow its upstream instructions for cloning the optional developer-image submodule.
+
+UFADE output can include decrypted backups, media, app-shared data, logs, reports, device identifiers, and account content. Store it outside the source checkout on an access-controlled volume. UFADE acquisitions, UFD/UFDR files, reports, captures, and backups are excluded by this repository's publication boundary.
+
 ## Command-line collector
 
 The same evidence engine can run without the GUI:
@@ -710,6 +756,7 @@ iOS-Developer-Toolkit/
 │   ├── local_ddi.py                # read-only Xcode DDI/Cryptex workflow
 │   ├── models.py                   # validated device/result models
 │   ├── runtime.py                  # project runtime and UDID environment
+│   ├── ufade_connector.py          # external UFADE checkout/runtime validation
 │   └── validation.py               # semantic process-output checks
 ├── macos/                          # local app-wrapper launcher and metadata
 ├── script/build_and_run.sh         # environment, bundle, launch, and verification entry point
@@ -726,6 +773,7 @@ iOS-Developer-Toolkit/
 - [`pymobiledevice3` documentation](https://doronz88.github.io/pymobiledevice3/)
 - [`DeveloperDiskImage` repository](https://github.com/doronz88/DeveloperDiskImage)
 - [`developer-disk-image` on PyPI](https://pypi.org/project/developer-disk-image/)
+- [`UFADE` repository](https://github.com/prosch88/UFADE) — external GPL-3.0 forensic acquisition provider
 
 `pymobiledevice3`, `DeveloperDiskImage`, Apple, Xcode, iPhone, iPad, and iOS belong to their respective authors and owners. Review each dependency's license and terms independently. The toolkit's project metadata declares MIT for the toolkit code.
 
