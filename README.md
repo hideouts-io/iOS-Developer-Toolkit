@@ -283,22 +283,76 @@ No dependency is installed globally. The launcher creates a project-local visibl
 
 ## Install and launch
 
-Clone the repository and run the project launcher:
+There is no standalone signed application binary in v0.1.0. Install from the tagged source so the launcher can create the project-local Python environment that the application expects.
+
+### Option A: clone the tagged release
+
+This is the recommended path because Git preserves executable permissions and makes later updates reviewable:
 
 ```bash
-git clone https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+git clone --branch v0.1.0 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
 cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
 
+### Option B: use the GitHub release source archive
+
+1. Open [iOS Developer Toolkit v0.1.0](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/tag/v0.1.0).
+2. Under **Assets**, download **Source code (zip)** or **Source code (tar.gz)**.
+3. Extract the archive and open Terminal in the extracted directory.
+4. Restore the launcher permission if the archive tool removed it, then launch:
+
+```bash
+chmod +x script/build_and_run.sh macos/iOSDeveloperToolkit
+./script/build_and_run.sh
+```
+
+### Verify prerequisites
+
+The launcher requires macOS 13 or later, a working `python3` version 3.10 or later, internet access for the first dependency installation, and enough free space for the project environment and Qt runtime.
+
+```bash
+sw_vers -productVersion
+python3 --version
+```
+
+If `python3` is absent or older than 3.10, install a current Python from [python.org](https://www.python.org/downloads/macos/) or with Homebrew, then run the launcher again. Do not run the launcher or `pip` with `sudo`; the environment belongs inside the checkout.
+
 The launcher:
 
 1. creates `venv/` when needed;
-2. installs the pinned package and dependencies into that environment;
-3. stages `dist/iOS Developer Toolkit.app`;
-4. opens the staged app.
+2. installs the toolkit plus pinned `PySide6` and `pymobiledevice3` dependencies into that environment;
+3. stages `dist/iOS Developer Toolkit.app` as a wrapper around the checkout;
+4. opens the staged application.
 
-The generated `venv/` and `dist/` directories stay outside version control. The wrapper is a local development build; build it from the source checkout with the command above.
+The generated `venv/`, `build/`, and `dist/` directories stay outside version control. The staged `.app` is not portable: keep it with its source checkout and launch it through the script after moving the project. It is a local development wrapper, not a Developer ID-signed or notarized distribution.
+
+If macOS warns that it cannot verify the locally built wrapper, confirm that the checkout came from the release above, review the source, and use **System Settings → Privacy & Security → Open Anyway** for this app. Do not disable Gatekeeper system-wide. The toolkit never needs the Mac login or administrator password for normal launch.
+
+### Connect the first device
+
+1. Connect the iPhone or iPad with a data-capable USB cable.
+2. Unlock it and tap **Trust** when iOS asks.
+3. Enter the device passcode on the device—not in this toolkit.
+4. Select the device in the app header or click **Refresh**.
+5. Enable Developer Mode and mount a matching DDI only when the chosen workflow lists those prerequisites.
+
+Verify basic connectivity from the same project environment if the GUI does not see the device:
+
+```bash
+venv/bin/pymobiledevice3 usbmux list
+```
+
+### Command-line entry points
+
+The environment also provides the GUI launcher and focused helper commands:
+
+```bash
+venv/bin/ios-developer-toolkit
+venv/bin/ios-developer-collect --help
+venv/bin/ios-local-ddi --help
+venv/bin/ios-ipa-inspect --help
+```
 
 Useful launch modes:
 
@@ -310,6 +364,17 @@ Useful launch modes:
 ```
 
 `--verify` waits for launch and proves the process remains alive. The logging modes stream host-side macOS logs; they are separate from the iPhone logging streams collected by the app.
+
+### Update or rebuild
+
+For a normal clone of `main`, review and fast-forward the checkout, then rerun the launcher. For a tagged release checkout, switch deliberately to a newer published tag instead of assuming it is compatible.
+
+```bash
+git pull --ff-only
+./script/build_and_run.sh
+```
+
+Rerunning the launcher refreshes the local package installation and rebuilds the wrapper. It does not delete saved locations, DDI caches, backups, evidence cases, or other user-selected output.
 
 ## Complete walkthrough
 
