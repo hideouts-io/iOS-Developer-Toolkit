@@ -4,59 +4,55 @@
   <img src="ios_developer_toolkit/assets/iosdevtoolkit.png" width="260" alt="iOS Developer Toolkit logo">
 </p>
 
-### iOS Device Workbench: a guided pymobiledevice3 GUI, Developer Disk Image mounter, and evidence toolkit for macOS
+### iOS Device Workbench: a guided pymobiledevice3 GUI, Developer Disk Image mounter, and evidence workbench for macOS
 
 ![Platform](https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white)
 ![Devices](https://img.shields.io/badge/device-iPhone%20%7C%20iPad-0969da)
-![Runtime](https://img.shields.io/badge/runtime-Python%203.10%2B-3776ab?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)
 ![GUI](https://img.shields.io/badge/GUI-PySide6-41cd52)
-![Version](https://img.shields.io/badge/version-0.1.0-8250df)
+![pymobiledevice3](https://img.shields.io/badge/pymobiledevice3-10.11.0-8250df)
 ![Tests](https://img.shields.io/badge/tests-37%20passing-1a7f37)
 ![License](https://img.shields.io/badge/license-MIT-2da44e)
 
-> **Scope:** iOS Developer Toolkit is a defensive macOS front end for authorized `pymobiledevice3` workflows, Developer Disk Image operations, app and backup management, and repeatable evidence collection. It does not jailbreak iOS, bypass a passcode, defeat code signing, decrypt protected traffic, or turn developer-service views into unrestricted filesystem access.
+> **Scope:** iOS Developer Toolkit is a macOS front end for authorized Apple-device development, diagnostics, testing, backup, and evidence-preservation workflows. It does not jailbreak iOS, bypass a passcode, disable the sandbox, defeat code signing, decrypt protected traffic, or provide unrestricted filesystem access.
 
-![iOS Developer Toolkit device and personalized DDI screen](docs/screenshots/device-and-ddi.png)
+![iOS Device Workbench Home workspace](docs/screenshots/home.png)
 
-## Table of Contents
+The current interface organizes one trusted device connection into 11 focused workspaces. It mounts modern DDIs, runs validated `pymobiledevice3` presets, exposes the installed command help, simulates test locations, streams three forms of device logs, captures packets, inspects and installs eligible IPAs, inventories apps, creates encrypted backups, launches an isolated UFADE acquisition, and builds hashed evidence cases.
 
-- [Overview](#overview)
-- [First run](#first-run)
-- [Executive Summary](#executive-summary)
-- [What it does](#what-it-does)
-- [Architecture](#architecture)
-- [Verified interface tour](#verified-interface-tour)
-- [What a DDI is](#what-a-ddi-is)
-- [Personalized DDI vs. local Xcode DDI](#personalized-ddi-vs-local-xcode-ddi)
+The screenshots use an illustrative device name, model, version, build, and UDID. They contain no real device capture, account identifier, backup, credential, or case evidence.
+
+## Contents
+
+- [Start here](#start-here)
+- [What the workbench covers](#what-the-workbench-covers)
+- [How the service layers fit together](#how-the-service-layers-fit-together)
 - [Requirements](#requirements)
-- [Install and launch](#install-and-launch)
-- [Complete walkthrough](#complete-walkthrough)
-- [Location Lab](#location-lab)
-- [Pop-out Live Logs](#pop-out-live-logs)
-- [Command Center](#command-center)
-- [Man Pages and advanced commands](#man-pages-and-advanced-commands)
-- [Evidence collected](#evidence-collected)
-- [IPA sideloading and removal](#ipa-sideloading-and-removal)
-- [Installed Apps inventory](#installed-apps-inventory)
-- [Local device backups and encryption](#local-device-backups-and-encryption)
-- [UFADE external forensic acquisition](#ufade-external-forensic-acquisition)
-- [Command-line collector](#command-line-collector)
-- [Interpretation and safety](#interpretation-and-safety)
-- [Privacy and responsible use](#privacy-and-responsible-use)
-- [Evidence and provenance](#evidence-and-provenance)
+- [Installation](#installation)
+- [First-device walkthrough](#first-device-walkthrough)
+- [Workspace guide](#workspace-guide)
+  - [Home](#home)
+  - [Device and DDI](#device-and-ddi)
+  - [Location Lab](#location-lab)
+  - [Live Logs](#live-logs)
+  - [Command Center](#command-center)
+  - [Installed Apps](#installed-apps)
+  - [Backup](#backup)
+  - [Sideload IPA](#sideload-ipa)
+  - [Evidence Capture](#evidence-capture)
+  - [Man Pages](#man-pages)
+  - [Scope and Safety](#scope-and-safety)
+- [Developer Disk Images explained](#developer-disk-images-explained)
+- [Guided command catalog](#guided-command-catalog)
+- [Evidence case contents](#evidence-case-contents)
+- [Command-line tools](#command-line-tools)
+- [Privacy, integrity, and interpretation](#privacy-integrity-and-interpretation)
 - [Troubleshooting](#troubleshooting)
-- [Development and verification](#development-and-verification)
-- [Repository structure](#repository-structure)
-- [Sources and credits](#sources-and-credits)
+- [Development and packaging](#development-and-packaging)
+- [Project boundaries and credits](#project-boundaries-and-credits)
 - [License](#license)
 
-## Overview
-
-iOS Developer Toolkit turns the broad `pymobiledevice3` command surface into a device-aware desktop workbench. It recognizes trusted USB devices, explains the required Apple service layers, provides guided parameter forms, shows the exact argument vector before execution, and keeps long-running output visible. Focused workspaces cover Developer Disk Images, location simulation and GPX testing, installed apps, IPA inspection and installation, MobileBackup2 backups, logs, packet capture, DVT/CoreDevice telemetry, and structured evidence cases.
-
-The project is intentionally evidence-oriented. Successful execution proves that a particular Apple service returned data at a particular time; it does not prove that the observation is malicious or that the same visibility exists outside that service. Failed or empty output is retained as a coverage result rather than silently treated as absence.
-
-## First run
+## Start here
 
 ```bash
 git clone https://github.com/hideouts-io/iOS-Developer-Toolkit.git
@@ -64,230 +60,117 @@ cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
 
-Then connect an unlocked iPhone or iPad with a data-capable USB cable, tap **Trust** on the device, and select it in the shared device picker. Enable Developer Mode and mount the matching DDI only for workflows that identify those prerequisites. Start with the read-oriented inventory and logging views before changing device state.
+Connect an unlocked iPhone or iPad with a data-capable USB cable, tap **Trust** on the device, and select the intended target in the top-right device picker. Developer Mode and a mounted DDI are required only for workflows that use Apple developer services; basic pairing, Lockdown, apps, backups, AFC, classic syslog, and many diagnostics can work without them.
 
-| Goal | Open | Primary prerequisite | Result |
-|---|---|---|---|
-| Prepare developer services | **Device & DDI** | Trusted USB connection; Developer Mode for mounting | Developer Mode status and downloaded or local Xcode DDI controls. |
-| Test app location handling | **Location Lab** | Developer Mode, DDI, and applicable tunnel | Confirmed fixed location or validated timestamped GPX playback with explicit Clear. |
-| Watch device logs | **Live Logs** | Trusted connection; DDI/tunnel only for DVT OSLog | Independent scrolling windows with complete raw spool and save controls. |
-| Run a known command | **Command Center** | Depends on selected preset | Validated parameters, exact argument preview, risk label, and direct execution. |
-| Learn installed syntax | **Man Pages** | Project environment | Live `--help` from the pinned local executable. |
-| Inventory or remove apps | **Installed Apps** | Trusted unlocked device | Searchable service-visible inventory and confirmed uninstall. |
-| Inspect and install a package | **Sideload IPA** | Local IPA; valid signing/provisioning for installation | Host-side validation followed by a separately confirmed device install attempt. |
-| Create a local backup | **Backup** | Trusted unlocked device and protected storage | MobileBackup2 backup with explicit encryption policy, or external UFADE launch. |
-| Build a correlated case | **Evidence Capture** | Required services for the selected scope | Timestamped artifacts, command logs, coverage states, manifest, and SHA-256 inventory. |
+For a new device, a sensible sequence is:
 
-The remaining **Home** and **Scope & Safety** pages provide orientation and interpretation limits. See the [complete walkthrough](#complete-walkthrough) for the full sequence.
+1. Open **Device & DDI**, confirm the selected device, and check Developer Mode.
+2. Mount the downloaded personalized DDI or install the local Xcode DDI Cryptex when a developer workflow requires it.
+3. Begin with read-oriented presets in **Command Center**.
+4. Use **Live Logs**, **Installed Apps**, or **Evidence Capture** for the intended task.
+5. Save sensitive output to protected local storage.
+6. Stop streams, clear a simulated location, and unmount the developer image when finished.
 
-## Executive Summary
+The application executes the project-pinned binary directly. Guided values become an argument vector; the GUI does not pass them through a shell. Advanced Mode uses `shlex` to split arguments, but it does not evaluate pipes, redirects, substitutions, aliases, or shell operators.
 
-- Standalone Python/PySide6 macOS application with its own icon and local `.app` wrapper.
-- Automatic recognition and explicit selection of trusted iPhones and iPads over `usbmux`.
-- Modern iOS 17+ personalized DDI mounting through downloaded or local Xcode/CoreDevice sources.
-- Forty-nine low-typing guided command presets with typed validation, prerequisites, risk labels, exact previews, and visible stop controls.
-- Fifty-nine live Man Page routes sourced from the pinned local `pymobiledevice3` executable.
-- Native Location Lab for fixed coordinates, eight-direction nudging, local saved places, bounded timestamped route generation, validated GPX playback, explicit clearing, and JSONL evidence.
-- Installed-app inventory, optional size calculation, bundle-ID copying, and confirmed uninstall actions.
-- Local IPA structure, provisioning, and macOS code-signature inspection before installation is enabled.
-- Full or incremental MobileBackup2 backups with explicit persistent-encryption handling and no password in arguments or logs.
-- External UFADE provider validation and launch for Logical, Logical+, UFD, and PRFS forensic acquisitions.
-- Independent pop-out classic syslog, structured `os_trace_relay` Unified Logs, and DVT OSLog windows with pause-view, follow-tail, filters, complete raw spooling, and save/export.
-- DVT Sysmon, screenshots, crash reports, stored log archives, and device-side PCAP capture.
-- Timestamped cases with command logs, exit status, retry history, coverage gaps, a JSON manifest, and SHA-256 inventory.
-- Direct argument execution without a shell; Advanced Mode parses arguments but does not evaluate pipes, redirects, substitutions, or shell operators.
-- No one-click erase, firmware restore, supervision, activation, or other irreversible shortcut.
+## What the workbench covers
 
-## What it does
+| Workspace | Primary purpose | DDI needed? | Important result |
+|---|---|---:|---|
+| **Home** | Understand the workflow and jump to a task | No | Service-layer overview and guided entry points |
+| **Device & DDI** | Check Developer Mode; mount, list, or remove a developer image | For mounting | Explicit device target and image source |
+| **Location Lab** | Set a coordinate or replay a validated GPX track | Usually | Structured location-event evidence and explicit Clear |
+| **Live Logs** | Open independent Unified Logs, classic syslog, and DVT OSLog windows | Only DVT OSLog | Complete raw spool plus filtered working view |
+| **Command Center** | Run 49 guided commands or explicit advanced arguments | Command-specific | Validated parameters, risk label, exact preview, exit output |
+| **Installed Apps** | Search the service-visible app inventory and uninstall with confirmation | No | Names, bundle IDs, versions, types, optional sizes |
+| **Backup** | Run MobileBackup2 or launch a separate UFADE environment | No | Full/incremental encrypted backup or external acquisition |
+| **Sideload IPA** | Inspect a local IPA before attempting installation | No DDI for normal install | Archive, provisioning, and signature report |
+| **Evidence Capture** | Correlate snapshots, timed streams, screenshots, crashes, and PCAP | Partial coverage without it | Timestamped case, coverage states, manifest, SHA-256 inventory |
+| **Man Pages** | Browse 59 live help routes from the installed executable | No | Version-matched syntax rather than copied examples |
+| **Scope & Safety** | Keep access and interpretation limits visible | No | Operational boundaries inside the app |
 
-The app organizes the Apple host-to-device protocol stack into eleven sidebar workspaces:
+Highlights of the current build:
 
-- polls `pymobiledevice3 usbmux list` and recognizes paired iPhones and iPads;
-- presents a Home dashboard that explains how usbmux, Lockdown, RemoteXPC, DDI, CoreDevice, and DVT fit together;
-- offers 49 guided presets across device basics, apps/files, logging/capture, DVT/CoreDevice, discovery/Web Inspector, and device actions;
-- validates preset parameters and previews the exact argument vector before direct execution;
-- provides 59 live help topics covering every top-level command family from the supplied inventory plus important nested developer services;
-- shows the selected device name, iOS/build version, model, and UDID;
-- provides the exact on-device Developer Mode sequence;
-- queries Developer Mode state;
-- mounts a downloaded personalized Developer Disk Image;
-- installs the local Apple/Xcode DDI as a personalized Cryptex;
-- lists and removes the corresponding mounted image;
-- sets and clears simulated locations, nudges local coordinate fields, builds timestamped speed/interval/traversal GPX tracks, replays validated GPX, and records Location Lab events without a mapping provider;
-- runs a repeatable evidence collector with complete command output;
-- pops out simultaneous classic syslog, structured `os_trace_relay` Unified Logs, and DVT OSLog viewers while preserving complete raw streams;
-- safely inspects IPA metadata, embedded provisioning, and the extracted app signature;
-- installs a verified IPA and refreshes a searchable installed-app inventory;
-- displays app name, bundle ID, version, type, and optional disk usage, with confirmed uninstall actions;
-- creates full or incremental MobileBackup2 backups and can require persistent backup encryption;
-- offers Advanced Mode for direct `pymobiledevice3` arguments without invoking a shell;
-- gives high-impact restore, erase, activation, supervision, reboot/shutdown, and nonce operations stronger warnings;
-- writes a manifest and SHA-256 inventory for every case.
+- shared, explicit device selection across the full interface;
+- downloaded and local Xcode/CoreDevice DDI paths kept separate;
+- fixed and GPX location simulation with bounded route generation and cleanup tracking;
+- independent log windows that keep capturing while the visible view is paused;
+- guided presets across device, app, logging, DVT, CoreDevice, discovery, Web Inspector, and device-action families;
+- local IPA archive, provisioning, and macOS signature inspection before installation is enabled;
+- searchable app inventory with optional size calculation and confirmed uninstall;
+- MobileBackup2 encryption checks and new-password handling through a private helper input stream;
+- isolated external UFADE validation and launch without importing its dependencies into this project;
+- a multi-source collector that retains failures as coverage evidence and hashes finalized artifacts;
+- no one-click erase, restore, activation, supervision, reboot, shutdown, or nonce-changing shortcut.
 
-### Direct capability vs. interpretation
-
-| Type | What the toolkit establishes |
-|---|---|
-| Direct capability | A trusted USB device is visible to `usbmux` and can be selected explicitly. |
-| Direct capability | A personalized developer image can expose Apple developer services at `/System/Developer`. |
-| Direct capability | The collector can request documented lockdown, diagnostics, AFC, crash, DVT, logging, and PCAP services. |
-| Direct capability | macOS `security` and `codesign` inspect a selected IPA locally before its install button is enabled. |
-| Direct capability | Live Man Pages come from the pinned executable's current `--help`, not a copied and potentially stale web example. |
-| Direct evidence | Each command, time, exit code, output path, package version, and coverage gap is recorded in `manifest.json`. |
-| Interpretation boundary | A DVT root listing is a developer-service view, not an unrestricted raw-filesystem image. |
-| Interpretation boundary | A process, profile, hostname, or endpoint is an observation—not proof of compromise or purpose. |
-
-## Architecture
+## How the service layers fit together
 
 ```mermaid
-flowchart TB
+flowchart LR
     Device[iPhone or iPad]
-    USB[Trusted USB pairing]
+    Trust[USB pairing and Trust]
+    Usbmux[usbmuxd]
+    Lockdown[lockdownd services]
+    Basic[AFC, apps, backup, diagnostics, syslog, PCAP]
     Mode[Developer Mode]
+    DDI[Personalized DDI at /System/Developer]
+    RSD[RemoteXPC / RSD tunnel]
+    Dev[DVT and CoreDevice services]
+    Toolkit[iOS Device Workbench]
+    Case[Local evidence or working output]
 
-    subgraph Host[macOS host]
-        GUI[Sidebar Workbench]
-        Presets[Guided Command Center]
-        Help[Live Man Pages]
-        Location[Location Lab]
-        PMD[pymobiledevice3]
-        Repo[DeveloperDiskImage payload]
-        Xcode[Local Xcode Candidate DDI]
-        Case[Timestamped evidence case]
-    end
-
-    TSS[Apple TSS personalization]
-    Dev[/System/Developer]
-
-    Device <--> USB <--> GUI
-    GUI --> PMD
-    GUI --> Presets --> PMD
-    GUI --> Help --> PMD
-    GUI --> Location --> PMD
-    GUI --> Repo
-    GUI --> Xcode
-    Repo --> TSS
-    Xcode --> TSS
-    TSS --> Dev
-    Mode --> Dev
-    PMD --> Case
+    Device <--> Trust <--> Usbmux <--> Toolkit
+    Toolkit <--> Lockdown <--> Basic
+    Toolkit <--> RSD <--> Dev
+    Mode --> DDI --> Dev
+    Basic --> Case
+    Dev --> Case
 ```
 
-The GUI never invokes user-entered commands through a shell. Guided values are validated into an argument tuple, and Advanced Mode uses `shlex` only to split the field before passing arguments directly to the project-local `pymobiledevice3` executable.
+These layers are related but not interchangeable:
 
-## Verified interface tour
-
-The documentation images are project-specific GUI captures. They contain no private device capture, backup, UDID, account credential, or case export.
-
-### Device recognition and DDI operations
-
-![Device recognition and personalized DDI controls](docs/screenshots/device-and-ddi.png)
-
-The shared device selector applies across the workbench. The Device & DDI workspace explains Developer Mode, checks the local Xcode candidate path, exposes downloaded and local personalization choices separately, and pairs each mount path with the matching list/remove action.
-
-### Developer Mode guidance
-
-![Developer Mode walkthrough](docs/screenshots/developer-mode-guide.png)
-
-Developer Mode is an on-device security decision. The guide explains the Settings path, mandatory restart, post-restart confirmation, and the distinction between USB trust, Developer Mode, and a mounted developer image.
-
-### Local Xcode/CoreDevice image
-
-![Local Xcode DDI workflow](docs/screenshots/local-xcode-ddi.png)
-
-The local option verifies `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg`, attaches the outer image read-only on macOS, validates the internal `Restore` payload, and delegates personalized Cryptex installation to the pinned toolchain.
-
-### Repeatable evidence collection
-
-![Evidence collection configuration](docs/screenshots/evidence-collection.png)
-
-Evidence Capture separates required snapshots from optional screenshots, crash pulls, logging streams, and PCAP. The live view preserves failures and progress while finalization records what completed, what failed, and what was not requested.
-
-### IPA inspection and installation
-
-![IPA inspection and installation workspace](docs/screenshots/sideload-ipa.png)
-
-The IPA workspace keeps host-side inspection distinct from device installation. A package must pass archive-path validation and local signature inspection before the user can confirm an install attempt.
-
-### Scope and safety
-
-![Scope and safety workspace](docs/screenshots/scope-and-safety.png)
-
-The safety workspace keeps service-view, retention, encryption, authorization, and interpretation boundaries visible inside the application instead of leaving them only in documentation.
-
-### Command Center and live help
-
-![Guided pymobiledevice3 Command Center](docs/screenshots/pymobiledevice3-console.png)
-
-Command Center exposes common operations as searchable presets with prerequisites, typed parameters, risk labels, and exact argument previews. Man Pages reads the matching `--help` from the installed project runtime so advanced syntax is not frozen into the screenshot or README.
-
-## What a DDI is
-
-A Developer Disk Image supplies device-side services used by development and diagnostic tools. Mounting it expands the services available through the device's development interfaces; it does not replace iOS or grant unrestricted access.
-
-There are two generations:
-
-| Device generation | Image form | Toolkit behavior |
-|---|---|---|
-| iOS below 17 | `DeveloperDiskImage.dmg` plus `.signature` for a matching iOS version | Supported by upstream `pymobiledevice3`; this GUI is centered on the modern workflow. |
-| iOS 17 and later | APFS image, `BuildManifest.plist`, and trust cache personalized for a device | Downloaded and mounted, or extracted from the local Xcode candidate and installed as a Cryptex. |
-
-For a modern image, Apple TSS signs a personalization request using device-specific identifiers and a nonce. The resulting developer image is mounted at `/System/Developer`. The ticket does not turn the DDI into a jailbreak and does not bypass the passcode, Secure Enclave, sandbox, code-signing policy, or application entitlements.
-
-## Personalized DDI vs. local Xcode DDI
-
-The app deliberately exposes both supported modern paths.
-
-| Choice | Source | Host network activity | Device result | Removal action |
-|---|---|---|---|---|
-| **Downloaded personalized DDI** | [`doronz88/DeveloperDiskImage`](https://github.com/doronz88/DeveloperDiskImage) through `pymobiledevice3 mounter auto-mount` | Downloads the APFS image, build manifest, and trust cache when the cache is missing or stale; normally contacts Apple TSS | Personalized image mounted at `/System/Developer` | `mounter umount-personalized` |
-| **Local Apple/Xcode DDI** | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` | No GitHub payload download; normally contacts Apple TSS | Local `Restore` payload installed as `com.apple.MobileAsset.DDI` through `cryptexd` | `cryptex uninstall com.apple.MobileAsset.DDI` |
-
-### Downloaded personalized path
-
-The upstream image repository publishes fixed payload names for the personalized mounter variant: `Image.dmg`, `BuildManifest.plist`, and `Image.dmg.trustcache`. `pymobiledevice3` caches these under:
-
-```text
-~/.pymobiledevice3/Xcode_iOS_DDI_Personalized/
-```
-
-It asks the device for personalization identifiers and a nonce, obtains or reuses an Apple personalization manifest, uploads the image and trust cache, and mounts the result.
-
-### Local Apple/Xcode path
-
-![Local Apple/Xcode DDI option](docs/screenshots/local-xcode-ddi.png)
-
-The Xcode candidate path is an **outer container**, not the image uploaded directly to iOS. The toolkit:
-
-1. verifies that `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` exists;
-2. attaches it on the Mac with `hdiutil` using `-readonly -nobrowse -noautoopen`;
-3. verifies `Restore/BuildManifest.plist` inside the mounted container;
-4. passes that `Restore` directory to `pymobiledevice3 cryptex auto-install --restore-dir`;
-5. lets Apple TSS personalize the payload for the selected device;
-6. detaches the temporary Mac-side image even when installation fails.
-
-This path is useful when Xcode/CoreDevice has already installed a compatible candidate. The GUI reports whether the expected local file is present before a device operation begins.
+- **USB detection** means `usbmuxd` can see a paired device. It does not prove every service is available.
+- **Trust** authorizes the host pairing relationship. It is separate from Developer Mode.
+- **Developer Mode** enables development services after an on-device restart and confirmation.
+- **A DDI** supplies the matching developer-service components. It does not grant root or bypass iOS protections.
+- **RemoteXPC/RSD** is used by many modern developer services, especially on iOS 17 and later.
+- **DVT/CoreDevice output** is a service-mediated view. A path such as `developer dvt ls /` is not a raw filesystem image.
 
 ## Requirements
 
-- macOS 13 or later is recommended.
-- Python 3.10 or later.
-- A data-capable USB cable.
-- An unlocked iPhone or iPad that trusts the Mac.
-- Developer Mode enabled for DDI/DVT operations.
-- Internet access for Apple TSS personalization.
-- Internet access to GitHub only when the downloaded personalized path needs to refresh its cache.
-- Xcode/CoreDevice candidate DDI only when using the local Apple/Xcode path.
+- macOS 13 or later;
+- Python 3.10 or later for this project;
+- an unlocked iPhone or iPad you are authorized to test or examine;
+- a data-capable USB cable;
+- enough protected disk space for logs, PCAPs, backups, crash reports, and case output;
+- internet access when the downloaded DDI cache must be populated or Apple TSS personalization is required;
+- Xcode when using the local candidate DDI path or when iOS needs Xcode pairing before it exposes Developer Mode.
 
-No dependency is installed globally. The launcher creates a project-local visible `venv/` because hidden `.venv/` directories in File Provider-managed folders can mark Qt's Cocoa plugin hidden and prevent the GUI from launching.
+Current pinned runtime:
 
-## Install and launch
+| Component | Version or path |
+|---|---|
+| Python | `>=3.10` |
+| PySide6 | `6.11.2` |
+| pymobiledevice3 | `10.11.0` |
+| Local Xcode candidate | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` |
+| Toolkit release | `0.1.0` |
 
-There is no standalone signed application binary in v0.1.0. Install from the tagged source so the launcher can create the project-local Python environment that the application expects.
+The current GUI and launcher are macOS-specific. Although upstream `pymobiledevice3` supports other host platforms, this application currently depends on macOS tools and conventions such as Xcode/CoreDevice, `hdiutil`, `security`, `codesign`, `.app` bundles, and macOS user-library paths.
 
-### Option A: clone the tagged release
+## Installation
 
-This is the recommended path because Git preserves executable permissions and makes later updates reviewable:
+### Clone the repository
+
+For the current main branch:
+
+```bash
+git clone https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+cd iOS-Developer-Toolkit
+./script/build_and_run.sh
+```
+
+For the published `v0.1.0` source state:
 
 ```bash
 git clone --branch v0.1.0 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
@@ -295,57 +178,434 @@ cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
 
-### Option B: use the GitHub release source archive
+The launcher:
 
-1. Open [iOS Developer Toolkit v0.1.0](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/tag/v0.1.0).
-2. Under **Assets**, download **Source code (zip)** or **Source code (tar.gz)**.
-3. Extract the archive and open Terminal in the extracted directory.
-4. Restore the launcher permission if the archive tool removed it, then launch:
+1. creates `venv/` when needed;
+2. installs the pinned project dependencies into that environment;
+3. stages `dist/iOS Developer Toolkit.app`;
+4. opens the staged app.
+
+The staged app is a development wrapper around the repository environment. It is not a portable, signed, notarized binary release. Do not move only the `.app` away from its checkout and expect it to carry the Python environment with it.
+
+### Use a GitHub source archive
+
+Download the source archive from the [releases page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases), extract it, open Terminal in the extracted folder, and run:
 
 ```bash
-chmod +x script/build_and_run.sh macos/iOSDeveloperToolkit
 ./script/build_and_run.sh
 ```
 
-### Verify prerequisites
+GitHub's automatically generated source ZIP and tarball are source packages, not prebuilt application bundles.
 
-The launcher requires macOS 13 or later, a working `python3` version 3.10 or later, internet access for the first dependency installation, and enough free space for the project environment and Qt runtime.
+### Verify the host first
 
 ```bash
 sw_vers -productVersion
 python3 --version
+xcode-select -p
 ```
 
-If `python3` is absent or older than 3.10, install a current Python from [python.org](https://www.python.org/downloads/macos/) or with Homebrew, then run the launcher again. Do not run the launcher or `pip` with `sudo`; the environment belongs inside the checkout.
+If `python3` is missing or older than 3.10, install a supported Python locally before launching. Dependencies belong in the project-created `venv/`; do not install this project's pinned packages globally.
 
-The launcher:
+If macOS warns about downloaded content, verify that you obtained the checkout or archive from the intended repository. Do not use broad commands that recursively remove quarantine or weaken Gatekeeper. This project is not currently signed or notarized.
 
-1. creates `venv/` when needed;
-2. installs the toolkit plus pinned `PySide6` and `pymobiledevice3` dependencies into that environment;
-3. stages `dist/iOS Developer Toolkit.app` as a wrapper around the checkout;
-4. opens the staged application.
-
-The generated `venv/`, `build/`, and `dist/` directories stay outside version control. The staged `.app` is not portable: keep it with its source checkout and launch it through the script after moving the project. It is a local development wrapper, not a Developer ID-signed or notarized distribution.
-
-If macOS warns that it cannot verify the locally built wrapper, confirm that the checkout came from the release above, review the source, and use **System Settings → Privacy & Security → Open Anyway** for this app. Do not disable Gatekeeper system-wide. The toolkit never needs the Mac login or administrator password for normal launch.
-
-### Connect the first device
-
-1. Connect the iPhone or iPad with a data-capable USB cable.
-2. Unlock it and tap **Trust** when iOS asks.
-3. Enter the device passcode on the device—not in this toolkit.
-4. Select the device in the app header or click **Refresh**.
-5. Enable Developer Mode and mount a matching DDI only when the chosen workflow lists those prerequisites.
-
-Verify basic connectivity from the same project environment if the GUI does not see the device:
+### Launch and diagnostic modes
 
 ```bash
-venv/bin/pymobiledevice3 usbmux list
+./script/build_and_run.sh
+./script/build_and_run.sh --verify
+./script/build_and_run.sh --debug
+./script/build_and_run.sh --logs
+./script/build_and_run.sh --telemetry
 ```
 
-### Command-line entry points
+Re-running the launcher updates the environment from the current checkout and rebuilds the staged wrapper. The script also stops an existing toolkit Python process before launching the rebuilt copy, so finish or save active captures first.
 
-The environment also provides the GUI launcher and focused helper commands:
+## First-device walkthrough
+
+### 1. Connect and trust
+
+1. Connect the device by USB.
+2. Unlock it.
+3. Tap **Trust** if iOS prompts.
+4. Enter the device passcode on the device, never into this toolkit.
+5. Select the intended device in the global picker.
+
+The blue banner reports discovery state. Keep only the intended device attached during a sensitive backup, install, location test, or acquisition.
+
+### 2. Enable Developer Mode when needed
+
+![Developer Mode instructions](docs/screenshots/developer-mode-guide.png)
+
+On iOS:
+
+1. Open **Settings → Privacy & Security → Developer Mode**.
+2. Turn Developer Mode on and restart when prompted.
+3. After restart, unlock the device and confirm **Turn On** or **Enable**.
+4. Reconnect and trust the Mac again if requested.
+
+If the Developer Mode setting is missing, pair the device in Xcode through **Window → Devices and Simulators**, then check Settings again. Developer Mode expands the device's development attack surface; turn it off and restart after the work if it is no longer needed.
+
+### 3. Mount the matching DDI
+
+Open **Device & DDI**. For iOS 17 and later, choose either the downloaded personalized DDI or the local Xcode candidate. List mounted images after the operation and retain the output if the mount state matters to your case.
+
+### 4. Run the intended workflow
+
+Use a guided workspace or a read-oriented Command Center preset first. The exact target, prerequisites, risk label, and argument preview are visible before execution.
+
+### 5. Clean up
+
+- Stop every live log, PCAP, metrics, or GPX playback process.
+- Save or explicitly discard each pop-out log capture.
+- Clear Location Lab state on the originally tracked device.
+- Unmount the downloaded DDI or uninstall the local DDI Cryptex with the matching button.
+- Protect or sanitize output before sharing it.
+
+## Workspace guide
+
+### Home
+
+![Home workspace](docs/screenshots/home.png)
+
+Home is the map of the application. It provides one-click entry points for preparing developer services, testing locations, running guided commands, collecting evidence, and reading advanced help. The protocol summary explains why logs, packets, processes, crash reports, and backups should be correlated rather than treated as interchangeable evidence.
+
+### Device and DDI
+
+![Device and personalized DDI workspace](docs/screenshots/device-and-ddi.png)
+
+This workspace shows the selected device name, iOS/build, model, and UDID; presents the on-device Developer Mode guide; queries Developer Mode state; and keeps the two modern DDI sources distinct.
+
+#### Downloaded personalized DDI
+
+The recommended iOS 17+ path runs `pymobiledevice3 mounter auto-mount`. Upstream retrieves the APFS image, `BuildManifest.plist`, and trust cache when needed, stores them under:
+
+```text
+~/.pymobiledevice3/Xcode_iOS_DDI_Personalized/
+```
+
+It then requests Apple TSS personalization for the selected device and mounts the result at `/System/Developer`. The matching cleanup action is **Unmount Personalized DDI**.
+
+#### Local Apple/Xcode DDI
+
+![Local Xcode DDI workspace](docs/screenshots/local-xcode-ddi.png)
+
+The local path uses:
+
+```text
+/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg
+```
+
+The toolkit attaches this outer host image read-only, validates its `Restore` payload and build manifest, asks `pymobiledevice3 cryptex auto-install --restore-dir` to personalize and install `com.apple.MobileAsset.DDI`, and detaches the host image even when an error occurs. The outer DMG itself is not uploaded directly to iOS. The matching cleanup action is **Uninstall Local DDI Cryptex**.
+
+Both modern paths normally require Apple TSS access. A cached DDI payload does not guarantee that personalization can complete offline.
+
+### Location Lab
+
+![Location Lab workspace](docs/screenshots/location-lab.png)
+
+Location Lab uses Apple developer services for explicit application testing. It does not alter GPS hardware and does not claim to hide simulation from applications.
+
+Capabilities:
+
+- validate finite latitude and longitude values and enforce geographic ranges;
+- set a fixed simulated coordinate;
+- nudge coordinate fields north, northeast, east, southeast, south, southwest, west, or northwest;
+- select a nudge distance from 1 through 100,000 metres;
+- save and remove named places in the local application-support folder;
+- accept manual `latitude,longitude` waypoints;
+- generate timestamped GPX routes using Walk, Run, Bicycle, Urban drive, Highway, or a custom speed;
+- configure 1–60 second point intervals, 1–20 traversals, and forward or ping-pong travel;
+- cap generated routes at 100,000 points;
+- inspect a local GPX up to 64 MiB, reject DTD/entity input, require track points, validate every coordinate, and calculate SHA-256;
+- report point count, timed-point count, first and last coordinates, distance, and expected duration;
+- replay original timing, add bounded timing randomness, or explicitly choose fast playback;
+- retain the original target identity for cleanup even if the global device picker changes;
+- stop playback and issue Clear, including a retry-and-evidence path during application close;
+- append structured events to `location-events.jsonl`.
+
+Saved locations and generated routes stay local. The feature contains no map, address search, external geocoder, automatic route provider, jitter, or anti-detection behavior.
+
+Modern devices use `developer dvt simulate-location`; older supported paths use the legacy developer location service. Availability still depends on the selected iOS build, Developer Mode, DDI, and any required tunnel.
+
+### Live Logs
+
+![Live Logs workspace](docs/screenshots/live-logs.png)
+
+Live Logs opens three independent windows, so investigators and developers can compare service views without forcing all data into a single combined stream.
+
+![Unified Logs pop-out window](docs/screenshots/live-log-window.png)
+
+| Window | Command family | DDI requirement | Format |
+|---|---|---:|---|
+| **Unified Logs** | `syslog live --format json --label` | No | Structured JSON lines from `os_trace_relay` |
+| **Classic Syslog** | `syslog live-old` | No | Raw compatibility text stream |
+| **DVT OSLog** | `developer dvt oslog --format json` | Yes | Structured developer-service stream |
+
+Each window provides:
+
+- a continuously scrolling view;
+- Pause View without pausing the underlying capture;
+- follow-tail control;
+- literal or regular-expression filtering;
+- case-sensitive filtering;
+- copy-visible, save-filtered, and save-raw actions;
+- an explicit Stop Capture action;
+- save, discard, or cancel when closing an unsaved stream.
+
+The complete raw byte stream is spooled below `~/Library/Caches/iOS Developer Toolkit/Live Logs`. A metadata sidecar records the exact command, target UDID, timestamps, byte and line counts, exit code, and process error. The responsive working view retains the latest 50,000 decoded lines and renders at most 20,000 blocks; those display limits do not truncate the raw spool.
+
+For retained system log archives, use the applicable `syslog collect` command through Command Center/Advanced Mode and analyze the resulting `.logarchive` with Console.app or the macOS `log` tool.
+
+### Command Center
+
+![Command Center](docs/screenshots/pymobiledevice3-console.png)
+
+Command Center is the low-typing interface to the pinned `pymobiledevice3` runtime. Search or filter a preset, review its description and prerequisites, fill only the required parameters, inspect the exact command, and run it directly.
+
+Every preset has a visible risk class:
+
+- **Read-oriented** requests information or starts an observation stream.
+- **Writes output** creates a host-side artifact, such as a screenshot, crash pull, or PCAP.
+- **Changes device state** launches an app, opens a URL, changes a simulated location, or performs another explicit device action.
+
+Advanced Mode accepts a `pymobiledevice3` argument string. It never invokes a shell, but it can still reach high-impact upstream commands. Restore, erase, activation, supervision, reboot, shutdown, and nonce-related operations receive stronger confirmation and are intentionally not promoted as guided one-click actions.
+
+Long-running commands remain attached to a visible Stop control. Stopping a process requests termination; always inspect the command output to determine whether the device or host operation completed before it stopped.
+
+### Installed Apps
+
+![Installed Apps workspace](docs/screenshots/installed-apps.png)
+
+Refresh loads the app inventory for the selected trusted device. The table can search and sort by app name, bundle ID, version, build, type, and optional calculated size. It can copy a selected bundle ID and uninstall a selected app only after explicit confirmation.
+
+The inventory is held in memory unless it is included in an evidence collection. App names and bundle IDs can reveal sensitive usage or organizational information; do not publish them without review.
+
+An empty inventory is not proof that no apps exist. It may instead indicate device lock state, pairing, service availability, filters, command failure, or incomplete visibility.
+
+### Backup
+
+![Backup providers workspace](docs/screenshots/backup.png)
+
+The Backup workspace keeps two providers isolated.
+
+#### MobileBackup2
+
+The built-in provider supports full and reusable incremental backup state. Before starting, it can query whether persistent backup encryption is enabled and enforce an encrypted-backup policy.
+
+If encryption is currently off and **Require encrypted backup** is selected:
+
+1. enter and confirm a new backup password;
+2. the toolkit passes it to a private helper over standard input as structured data;
+3. the password is cleared from the fields;
+4. it is never placed in process arguments, normal logs, or saved settings;
+5. the operation becomes a full backup because encryption state changed.
+
+Backup encryption is a persistent device setting. The toolkit never disables it automatically. Store the password securely: an encrypted backup cannot be restored without it. Do not reuse an account password or device passcode.
+
+Stopping a backup asks the worker to stop and preserves visible status. Confirm the finalized backup state before depending on it for recovery or evidence.
+
+#### UFADE External
+
+[UFADE](https://github.com/prosch88/UFADE) remains an independent GPL-3.0 application. This toolkit does not vendor, import, patch, relicense, or redistribute it.
+
+![External UFADE provider workspace](docs/screenshots/ufade-backup.png)
+
+The external provider validates:
+
+- an absolute path to a user-managed UFADE checkout;
+- the presence of `ufade.py`, `LICENSE`, and `requirements.txt`;
+- the expected GPL-3.0 license text and UFADE version declaration;
+- a separate Python 3.11 executable;
+- UFADE's required runtime imports in that isolated environment;
+- a user-selected working/output directory.
+
+After validation, **Launch UFADE** starts its own process and UI. UFADE controls device selection, passwords, acquisition type, stop behavior, and output. The toolkit does not read its passwords or acquisition data and does not terminate it when the toolkit closes.
+
+Acquisition choices are made inside UFADE:
+
+- **Logical** — MobileBackup2-style acquisition;
+- **Logical+** — backup plus additional service-visible media, shared folders, crash reports, and optional Unified Logs;
+- **Logical+ UFD** — advanced logical ZIP with a UFD descriptor;
+- **PRFS** — a decrypted, filesystem-shaped logical archive assembled from service-visible data;
+- **Full filesystem** — only when the device is already jailbroken; the integration supplies no jailbreak or bypass.
+
+Use UFADE's own documentation to assess version compatibility, licensing, dependencies, and the forensic meaning of each output format.
+
+### Sideload IPA
+
+![Sideload IPA workspace](docs/screenshots/sideload-ipa.png)
+
+Selecting an IPA starts host-side inspection before the install control can be enabled. The inspector:
+
+- rejects absolute, parent-traversal, duplicate, ambiguous, and unsafe archive paths;
+- locates the main `.app` and reads its `Info.plist`;
+- extracts into a protected temporary directory;
+- decodes `embedded.mobileprovision` with the macOS `security` tool when present;
+- verifies the extracted app through macOS `codesign --verify --deep --strict`;
+- reports bundle ID, display name, version, build, executable, signature status, team, certificate authorities, provisioning UUID, expiration, device count, debugging entitlement, and all-device provisioning state where available;
+- keeps installation disabled when the signature is missing or invalid.
+
+After inspection, choose normal installation or **Install as developer package** and confirm the operation. The toolkit does not sign, patch, re-sign, decrypt, or repair the IPA. Stock iOS still enforces package integrity, provisioning, trust, device eligibility, entitlements, and any App Store DRM. A DDI does not bypass those policies.
+
+Successful installation refreshes the Installed Apps inventory. Removal is a separate confirmed action in that workspace.
+
+### Evidence Capture
+
+![Evidence Capture workspace](docs/screenshots/evidence-collection.png)
+
+Evidence Capture creates a new timestamped case for the selected UDID. Every run includes the core snapshot set and can add timed streams or larger artifacts.
+
+Core snapshots:
+
+- connected-device inventory;
+- Lockdown device information;
+- mounted developer images and installed Cryptex inventory;
+- diagnostics service information;
+- known MobileGestalt values;
+- IORegistry;
+- one battery snapshot;
+- installed apps;
+- process inventory;
+- configuration and provisioning profiles;
+- crash-report inventory;
+- AFC media-root listing;
+- DVT device information;
+- DVT detailed process snapshot;
+- DVT root service-view listing.
+
+Optional scope:
+
+- classic syslog stream;
+- DVT structured OSLog stream;
+- device-side network PCAP;
+- current device screenshot;
+- complete crash-report pull.
+
+The collector retries failed snapshots once, keeps the final artifact and a complete per-attempt command log, records semantic validation failures, and distinguishes required identification failures from optional coverage gaps. Stop/Finalize ends streams and still finalizes the case where possible.
+
+### Man Pages
+
+![Man Pages and Possibilities workspace](docs/screenshots/man-pages.png)
+
+The Man Pages browser indexes 59 top-level and nested command routes. Selecting a route runs the project-local executable with `--help` and displays its output verbatim. You can copy the command prefix or send it to Command Center's Advanced Mode.
+
+This is the safest source for exact syntax in the installed environment. A command listed by the client is still not proof that the selected device build advertises the corresponding Apple service.
+
+The index covers activation, AFC, apps, backup, Bluetooth logging, Bonjour, companion, crash, Cryptex, developer services, diagnostics, IDAM, Lockdown, mounter, notifications, PCAP, power assertions, processes, profiles, provisioning, RemoteXPC, restore, SpringBoard, syslog, usbmux, Web Inspector, version, DVT, CoreDevice, DebugServer, accessibility, WDA, and other installed families.
+
+### Scope and Safety
+
+![Scope and Safety workspace](docs/screenshots/scope-and-safety.png)
+
+The final workspace states the application's boundaries where they are visible during use:
+
+- the app is a guided macOS workbench, not a jailbreak;
+- a personalized DDI is a device-specific developer-service payload;
+- a DVT listing is not unrestricted filesystem acquisition;
+- TLS, process, app, DNS, profile, and endpoint observations require context;
+- a failed command is a coverage gap, not proof of absence;
+- Developer Mode, mounted images, logging, and location simulation can change device state or create sensitive artifacts;
+- destructive upstream command families are documented through live help but not promoted as guided presets.
+
+## Developer Disk Images explained
+
+A Developer Disk Image supplies Apple device-side components used by developer and diagnostic services. The image must match the supported device generation and, on modern iOS, be personalized for the specific device.
+
+| Generation | Typical image | Toolkit path |
+|---|---|---|
+| iOS below 17 | `DeveloperDiskImage.dmg` plus matching `.signature` | Supported upstream; not the main GUI workflow |
+| iOS 17 and later | APFS image, build manifest, and trust cache | Downloaded personalized mount or local Xcode Cryptex install |
+
+Modern personalization uses identifiers and a nonce obtained from the selected device. Apple TSS returns a device-specific personalization manifest, and the result is mounted as a developer image at `/System/Developer`.
+
+What mounting a DDI can enable:
+
+- DVT device and process instrumentation;
+- developer OSLog streaming;
+- CoreDevice queries;
+- screenshots through developer services;
+- simulated location services;
+- developer-service filesystem listings;
+- other services explicitly exposed by the device build.
+
+What mounting a DDI does not do:
+
+- grant root;
+- bypass a passcode or Secure Enclave;
+- disable app sandboxing or entitlements;
+- decrypt protected data or traffic;
+- make an invalid IPA installable;
+- turn a developer-service view into physical or full-filesystem acquisition;
+- guarantee every client-side command exists on every iOS build.
+
+## Guided command catalog
+
+The current Command Center contains 49 presets in six categories.
+
+| Category | Count | Presets |
+|---|---:|---|
+| **Device Basics** | 13 | Connected devices; Lockdown overview; activation state; Developer Mode status; diagnostics overview; battery; IORegistry; MobileGestalt; processes; configuration profiles; provisioning profiles; screen orientation; Home Screen icon metrics |
+| **Apps & Files** | 6 | Installed apps; one-app query; AFC directory; DVT path; crash inventory; crash pull |
+| **Logging & Capture** | 4 | Live syslog; DVT Unified Logging; network PCAP; Bluetooth HCI capture |
+| **Developer & DVT** | 19 | DVT device, process, app, network, PID, energy, system/process metrics, graphics, notifications, KDebug, screenshot; CoreDevice information, display, lock, processes, apps; mounted images; personalization identifiers |
+| **Web & Discovery** | 3 | RSD discovery; RemoteXPC browsing; Safari and WebView tabs |
+| **Device Actions** | 4 | Launch app; open URL; set location; clear location |
+
+Presets minimize typing, not judgment. The displayed prerequisites and risks are part of the operation, and the exact argument preview should be retained when reproducibility matters.
+
+## Evidence case contents
+
+A finalized case follows this shape:
+
+```text
+ios-case-YYYYMMDDTHHMMSSZ-<udid-suffix>/
+├── artifacts/
+│   ├── crashes/                 # optional
+│   ├── network.pcap             # optional
+│   └── screen.png               # optional
+├── snapshots/
+│   ├── afc-root.txt
+│   ├── apps.json
+│   ├── battery.json
+│   ├── crash-list.txt
+│   ├── cryptex-list.json
+│   ├── diagnostics-info.json
+│   ├── dvt-device-information.json
+│   ├── dvt-root-listing.txt
+│   ├── dvt-sysmon-processes.txt
+│   ├── ioregistry.json
+│   ├── lockdown-info.json
+│   ├── mobilegestalt.json
+│   ├── mounter-list.json
+│   ├── processes.txt
+│   ├── profiles.json
+│   ├── provisioning.txt
+│   ├── usbmux.json
+│   └── *.command.log
+├── streams/
+│   ├── dvt-oslog.txt            # optional
+│   ├── pcap-metadata.txt        # optional
+│   └── syslog.txt               # optional
+├── manifest.json
+└── SHA256SUMS
+```
+
+`manifest.json` records the toolkit and `pymobiledevice3` versions, target UDID, selected options, timestamps, commands, output paths, attempts, exit codes, and status for each step. `SHA256SUMS` inventories finalized files.
+
+Hashes help detect later change; they do not by themselves prove when, where, or by whom evidence was acquired. Preserve the original case on protected storage, document custody separately, and analyze a verified copy.
+
+Collector exit status:
+
+| Exit | Meaning |
+|---:|---|
+| `0` | Required steps completed and no optional coverage failed |
+| `2` | Case finalized with one or more optional gaps |
+| `1` | Fatal setup or required target-identification failure |
+
+## Command-line tools
+
+The virtual environment exposes four entry points:
 
 ```bash
 venv/bin/ios-developer-toolkit
@@ -354,662 +614,204 @@ venv/bin/ios-local-ddi --help
 venv/bin/ios-ipa-inspect --help
 ```
 
-Useful launch modes:
-
-```bash
-./script/build_and_run.sh --verify
-./script/build_and_run.sh --debug
-./script/build_and_run.sh --logs
-./script/build_and_run.sh --telemetry
-```
-
-`--verify` waits for launch and proves the process remains alive. The logging modes stream host-side macOS logs; they are separate from the iPhone logging streams collected by the app.
-
-### Update or rebuild
-
-For a normal clone of `main`, review and fast-forward the checkout, then rerun the launcher. For a tagged release checkout, switch deliberately to a newer published tag instead of assuming it is compatible.
-
-```bash
-git pull --ff-only
-./script/build_and_run.sh
-```
-
-Rerunning the launcher refreshes the local package installation and rebuilds the wrapper. It does not delete saved locations, DDI caches, backups, evidence cases, or other user-selected output.
-
-## Complete walkthrough
-
-Start on **Home**. The sidebar separates preparation, guided commands, focused workflows, evidence capture, reference material, and safety limits. The device selector in the header applies across every device-aware workspace.
-
-### 1. Connect and trust the device
-
-1. Connect the iPhone or iPad directly by USB.
-2. Unlock it.
-3. Tap **Trust** on the device if prompted and enter the device passcode.
-4. Open the app and click **Refresh** if the device does not appear automatically.
-5. If more than one trusted device is present, select the intended target from the menu before mounting or collecting.
-
-The header remains explicit when no device is available, and device-changing buttons stay disabled.
-
-### 2. Enable Developer Mode
-
-Click **Show Steps** in the **Developer Mode** section.
-
-![Developer Mode walkthrough](docs/screenshots/developer-mode-guide.png)
-
-On the iPhone or iPad:
-
-1. Open **Settings → Privacy & Security → Developer Mode**.
-2. Turn Developer Mode on.
-3. Tap **Restart**.
-4. After restart, unlock the device, tap **Turn On** or **Enable**, and enter the device passcode.
-5. Reconnect and trust the Mac again if iOS asks.
-
-If the setting is absent, first initiate pairing in Xcode under **Window → Devices and Simulators**, then return to Settings. Apple documents that Developer Mode appears after pairing is initiated or the device was previously paired.
-
-Back in the toolkit, click **Check Status**. The app runs:
-
-```bash
-pymobiledevice3 mounter query-developer-mode-status
-```
-
-### 3. Choose and mount a DDI
-
-Choose exactly one path:
-
-- **Downloaded personalized DDI** for the simplest current iOS 17+ workflow.
-- **Local Apple/Xcode DDI** when the candidate image exists and you prefer Xcode's local payload.
-
-Review the confirmation dialog before proceeding. Both actions change device state and normally create network requests and timestamps.
-
-After completion, click **List Mounted Images**. The app uses `mounter list` for the downloaded path and `cryptex list` for the local path. Treat a successful completion and an expected mounted entry as the verification pair.
-
-### 4. Test a fixed location or GPX route
-
-Open **Location Lab** after Developer Mode and the matching developer image are ready.
-
-For a fixed test location:
-
-1. enter WGS-84 latitude and longitude values;
-2. optionally save the pair under a local name;
-3. click **Set Simulated Location** and verify the exact device and evidence-log path in the confirmation;
-4. keep the Location Lab process active while testing;
-5. click **Stop Playback / Set & Clear** when finished.
-
-The eight compass buttons move only the latitude/longitude fields by the selected number of metres. They do not send a new device command until **Set Simulated Location** is confirmed, which makes small deterministic QA offsets reviewable rather than silently streaming changes.
-
-For a route, choose a local `.gpx` file. The toolkit rejects malformed XML, DTD/entity declarations, files over 64 MiB, coordinates outside their legal ranges, and GPX documents without `<trkpt>` elements. The preview reports the track-point count, timed-point count, first and last coordinates, and SHA-256 before **Play Validated GPX** becomes available.
-
-Or build a route locally:
-
-1. add at least two `latitude,longitude` lines, either manually or with **Add Current Coordinate**;
-2. choose a walk, run, bicycle, urban-drive, or highway preset—or enter a speed from 1–300 km/h—and a point interval from 1–60 seconds;
-3. select 1–20 traversals—successive traversals reverse direction so the route does not teleport back to its first point;
-4. click **Build, Validate & Load GPX**;
-5. review distance, duration, sampled-point count, path, and SHA-256, then use the same confirmed playback workflow.
-
-Generation stops before 100,000 points. This explicit bound prevents an accidental long-distance/low-speed combination from exhausting host memory or producing an unreviewable GPX file. Generated files are stored below the selected Location Lab evidence directory in `Generated Routes/`.
-
-The toolkit uses `developer dvt simulate-location` on iOS 17 and newer and the legacy `developer simulate-location` service on older supported iOS releases. On modern iOS, the same Developer Mode, mounted DDI, and tunnel/service prerequisites as other DVT operations still apply.
-
-Location Lab deliberately has no embedded map or place-search service. Manual coordinates, saved places, and GPX files remain local rather than disclosing test locations to a map-tile or search provider. The displayed state is toolkit-known state, not an independent GPS reading from the device or every installed app.
-
-### 5. Inspect live device logs
-
-Open **Live Logs** and choose one or more independent windows:
-
-| Window | Service and prerequisite | Best use |
-|---|---|---|
-| Unified Logs | `syslog live --format json --label` over `com.apple.os_trace_relay`; trusted lockdown connection, no DDI | Structured live events with labels, subsystem/category and process context exposed by the service. |
-| Classic Syslog | `syslog live-old` over the older syslog relay | Compatibility view and comparison with tools that expect the traditional text stream. |
-| DVT OSLog | `developer dvt oslog --format json`; Developer Mode, mounted DDI and applicable tunnel | Developer-service stream that can expose additional DVT-visible data but is less stable across builds. |
-
-Each window can pause only its visible rendering, independently follow or leave the tail, filter by literal text or regular expression, copy the visible view, save a filtered text derivative, stop capture, and save the complete raw stream. The raw spool continues while the view is paused or filtered. Closing an unsaved window requires **Save Raw**, **Discard**, or **Cancel**.
-
-Use **Open Log Presets** for bounded command runs and `syslog collect` stored `.logarchive` acquisition. Use **Evidence Capture** when logs need to be correlated with inventories, DVT snapshots, PCAP, crashes, timestamps, exit results, and hashes.
-
-### 6. Inspect and sideload an IPA
-
-Open **Sideload IPA**, choose a local package, and wait for inspection to finish.
-
-The toolkit validates archive paths, reads the main app's `Info.plist`, decodes `embedded.mobileprovision`, extracts the bundle into a temporary directory, and runs `codesign --verify --deep --strict`. Installation remains disabled when the signature is missing or invalid.
-
-After a successful verification:
-
-1. confirm the selected device;
-2. select **Install as developer package** only when the IPA is a developer package;
-3. click **Install Verified IPA** and review the exact target, package, bundle ID, version, and mode;
-4. follow live output until the command finishes;
-5. review the automatically refreshed **Installed Apps** tab.
-
-The device still enforces signing, provisioning, Developer Mode, certificate trust, registered-device eligibility, and any App Store receipt or DRM requirements.
-
-### 7. Review installed apps
-
-Open **Installed Apps** and click **Refresh**. Use the filter to find an app by display name, bundle identifier, version, build, or application type. **Calculate sizes** asks iOS for static and dynamic disk usage and can make refresh slower.
-
-Selecting one row enables **Copy Bundle ID** and **Uninstall Selected**. Uninstall always shows the selected device and exact bundle identifier before changing device state. The inventory stays in application memory; evidence collection separately saves its own `apps list` output.
-
-### 8. Create a local backup
-
-Open **Backup**, choose a parent destination, and click **Check Status** to read the selected device's persistent local-backup encryption setting.
-
-- Leave **Require encrypted backup** selected to preserve existing encryption or enable it when currently off.
-- If encryption is off, enter and confirm a new password. The toolkit sends it to a private helper through standard input, then clears the fields. It is not placed in process arguments, logs, manifests, or saved settings. Enabling encryption forces that run to be a full backup so unencrypted local state is not reused.
-- If encryption is already on, the existing password and setting are preserved; no password is requested for the backup itself.
-- Clear **Require encrypted backup** only to preserve the current device setting without enabling it. The toolkit never disables encryption automatically.
-- Select **Force a full backup** to discard valid local incremental state; otherwise the backup is incremental when the destination contains complete metadata.
-
-Apple says encrypted computer backups can include saved passwords, Wi-Fi settings, website history, Health data, and call history that unencrypted backups may omit. Store the password safely: an encrypted backup cannot be restored without it. See [Apple's encrypted-backup guidance](https://support.apple.com/en-ca/108353).
-
-The backup is written under `<chosen destination>/<device UDID>/`. Stopping can leave an incomplete directory; the underlying backup engine will not treat incomplete metadata as valid incremental state on the next run.
-
-### 9. Configure evidence collection
-
-Open **Evidence Capture**.
-
-![Evidence collection options](docs/screenshots/evidence-collection.png)
-
-1. Choose the parent directory for case folders.
-2. Set a live-stream duration between 10 and 3,600 seconds.
-3. Select any timed streams:
-   - classic syslog;
-   - DVT structured Unified Logging;
-   - network PCAP with process metadata.
-4. Optionally request the current device screenshot or a full crash-report pull.
-5. Click **Start Evidence Collection** and review the privacy confirmation.
-
-Snapshot commands run first. Each failing command is retried once and saved with a complete command log. Timed streams begin only after the required target inventory succeeds. **Stop & Finalize** requests a clean stop, writes the manifest, and hashes the artifacts already acquired.
-
-### 10. Review the case
-
-Click **Open Last Case**, then begin with:
-
-```text
-manifest.json
-SHA256SUMS.txt
-```
-
-`manifest.json` records the target UDID, application and dependency versions, requested duration, start/end times, every command, attempt count, exit code, status, output path, and interpretation limits. A partial case is intentionally retained; a failed or empty command is a coverage gap, not evidence that the underlying data is absent.
-
-### 11. Remove the developer image
-
-Return to **Device & DDI** and use the removal button matching the path you installed:
-
-- **Unmount Personalized DDI**, or
-- **Uninstall Local DDI Cryptex**.
-
-If Developer Mode is no longer needed, turn it off under **Settings → Privacy & Security → Developer Mode** and restart the device.
-
-## Location Lab
-
-Location Lab is the native location-testing workspace. It uses the toolkit's selected device and pinned `pymobiledevice3` runtime directly; it does not import another GUI framework or start a second device manager.
-
-### Fixed locations and local saved places
-
-Latitude must be a finite value from -90 through 90 and longitude from -180 through 180. Values such as `NaN`, infinity, and out-of-range coordinates are rejected before a process starts. Saved places are stored at:
-
-```text
-~/Library/Application Support/iOS Developer Toolkit/locations.json
-```
-
-The file has a versioned JSON schema, unique case-insensitive names, and no cloud or application-account synchronization. A malformed saved-location document is surfaced as an error; it is not silently replaced.
-
-### GPX validation and playback
-
-The pinned location service replays GPX track segments and track points. Location Lab therefore requires at least one `<trkpt>` instead of accepting a waypoint-only or route-only file that the service would not replay. Before enabling playback it:
-
-- resolves and verifies the local `.gpx` file;
-- enforces a 64 MiB validation limit;
-- rejects DTD and entity declarations;
-- parses the GPX XML and validates every track-point coordinate;
-- counts all track points and points containing timestamps;
-- displays the first and last coordinate;
-- computes and displays SHA-256.
-
-Normal playback follows GPX timestamp intervals. **Ignore GPX timing delays** deliberately sends track points as quickly as the service permits. Timing randomness adds plus-or-minus the selected number of milliseconds of jitter through `pymobiledevice3`; it does not change the route coordinates.
-
-### Deterministic route generation and nudging
-
-The local route builder converts two or more WGS-84 waypoints into a timestamped GPX track. Speed controls the estimated distance between samples, the interval controls timestamp spacing, and traversals alternate forward/reverse. The builder calculates great-circle segment distance, reports total distance and duration, validates the generated document through the same GPX inspection path as imported files, and enforces a 100,000-point ceiling.
-
-Compass nudges use a spherical destination calculation for a user-selected 1–100,000 metre offset. They update only the form fields. There is no joystick, background device stream, random coordinate jitter, external geocoder, or claim that generated motion is indistinguishable from physical GPS.
-
-### Target retention and cleanup
-
-Once a set or playback request starts, Location Lab retains that device's UDID, name, and iOS version as the cleanup target. Changing the shared device picker does not redirect **Clear** to another phone. New simulation requests remain disabled until the tracked state is cleared.
-
-**Stop Playback / Set & Clear** terminates the active host process and then sends a separate clear request. Closing the app while a location may still be simulated opens a three-way cleanup prompt:
-
-- **Stop, Clear & Close** terminates the active process, retries Clear once after a failure, records the result, and closes only after success;
-- **Close Without Clearing** intentionally leaves cleanup to the user;
-- **Cancel** returns to Location Lab.
-
-A zero exit code without recognized error output confirms only that the Apple service accepted the clear request. It is not an independent observation of GPS hardware or every application's location behavior.
-
-### Location evidence log
-
-Each confirmed request appends structured JSON lines to `location-events.jsonl` under the selected local directory. Records contain the operation, requested/started/completed status, UTC timestamp, device identity and iOS version, direct command argument vector, coordinate or GPX path/hash, exit code, and interpretation detail. The log is required before an operation starts and may contain sensitive location history and device identifiers.
-
-The interface design was informed by [`sixzjd/fakeGPS-for-iPhone`](https://github.com/sixzjd/fakeGPS-for-iPhone), [`orestislef/ios-fake-gps`](https://github.com/orestislef/ios-fake-gps), and [`WarrenLin/FakeGPS`](https://github.com/WarrenLin/FakeGPS), but no source or dependency from those projects is copied into the toolkit. Useful QA workflow ideas—fixed locations, GPX playback, saved places, local waypoint routes, speed, bounded looping, offset controls, and clearing—are implemented independently around the already-pinned `pymobiledevice3` command surface. Randomized “realistic” or anti-detection behavior is intentionally out of scope.
-
-## Pop-out Live Logs
-
-The Live Logs workspace distinguishes three Apple service paths instead of labeling every stream “syslog.” Current structured Unified Logs use `com.apple.os_trace_relay` through `pymobiledevice3 syslog live`; classic text uses the legacy relay through `live-old`; DVT OSLog uses the mounted developer-service path.
-
-Every pop-out window is an independent process and capture boundary. Multiple windows can run simultaneously against the selected UDID. For each window:
-
-- process output is written byte-for-byte to a unique temporary raw spool before decoding;
-- JSON streams use `.jsonl`; traditional text uses `.log`;
-- a `.meta.json` sidecar records schema version, stream/service choice, exact direct command vector, device identity, start/end UTC times, raw byte and decoded-line counts, exit code, and process error;
-- **Pause View** does not pause the process or raw file;
-- literal/regex and case controls rebuild only the retained recent view and never modify the raw spool;
-- the UI retains the newest 50,000 decoded lines and renders at most 20,000 blocks, while the complete raw file remains unbounded by those display limits;
-- **Save Raw As** copies the complete capture plus metadata, while **Save Filtered As** explicitly creates a derived text view;
-- closing never silently leaves a temporary capture: the user saves it, explicitly discards it, or cancels the close.
-
-Temporary spools live under `~/Library/Caches/iOS Developer Toolkit/Live Logs/`. A saved raw stream is evidence of bytes returned by that service during the capture window, not proof that every device log was retained or that no transport/service gap occurred. Filtering JSON Lines as text is convenient for triage; use a structured parser for formal field analysis.
-
-The live-view integrity principles were informed by [`BerkayCaglar/ostrace`](https://github.com/BerkayCaglar/ostrace). `ostrace` is GPL-3.0-or-later, so this MIT repository does not copy, vendor, import, or redistribute its implementation. The toolkit's viewer is an independent PySide6 implementation over the already-pinned `pymobiledevice3` CLI.
-
-## Command Center
-
-Command Center is the low-typing interface for the wider `pymobiledevice3` surface. Choose a category, search or select a preset, fill only the values that command actually needs, review its risk label and prerequisites, then press **Run Guided Command**.
-
-The current catalog contains 49 presets:
-
-| Category | Examples | What the GUI adds |
-|---|---|---|
-| Device Basics | usbmux inventory, Lockdown, activation state, diagnostics, battery, IORegistry, MobileGestalt, profiles | Explanations that separate exposed state from interpretation. |
-| Apps & Files | app inventory/query, AFC listing, DVT listing, crash inventory/pull | Bundle/path validation and local destination pickers. |
-| Logging & Capture | syslog, DVT OS log, PCAP, Bluetooth HCI | Privacy warnings, output-path validation, visible Stop control. |
-| Developer & DVT | DVT device/process/app/network views, Sysmon, graphics, notifications, KDebug, screenshots, CoreDevice | DDI/tunnel prerequisites and service-view comparison notes. |
-| Web & Discovery | Bonjour RSD, RemoteXPC browse, Web Inspector tabs | Clear distinction between discovery, pairing, authorization, and observation. |
-| Device Actions | launch app, open Safari URL, set/clear simulated location | Explicit device-change badge and confirmation; dedicated GPX workflow in Location Lab. |
-
-Each preset previews a command such as:
-
-```text
-pymobiledevice3 developer dvt simulate-location set -- 34.0522 -118.2437
-```
-
-The preview is informational; execution uses a direct argument list, not a shell command string. Local paths, HTTP(S) URLs, bundle identifiers, coordinates, process identifiers, and device-service paths have kind-specific validation.
-
-### Why there are not one-click buttons for every command
-
-Some command families are intentionally reference-first:
-
-- `restore` can update/restore firmware, boot an update ramdisk, and interact with Recovery/DFU.
-- `profile erase-device`, `backup2 erase-device`, and supervision commands can make irreversible or high-impact changes.
-- activation commands alter activation state; they are not Activation Lock bypasses.
-- diagnostic restart/shutdown and mounter nonce-roll commands interrupt device state and can reboot.
-- debugserver, WDA, interactive service shells, WebDAV, port forwarding, and persistent RSD tunnels need a longer-running external workflow rather than a fire-and-forget button.
-
-They remain discoverable in **Man Pages** and runnable in **Advanced arguments**. High-impact prefixes receive a dedicated warning before the normal state-change confirmation.
-
-## Man Pages and advanced commands
-
-The **Man Pages & Possibilities** workspace starts the installed `pymobiledevice3` binary with the selected path plus `--help`. This matters because command names, options, tunnels, and Apple service availability move quickly.
-
-The index includes:
-
-- every top-level family in the attached command inventory: activation, AFC, AMFI, apps, backup2, Bluetooth logging, Bonjour, companions, crash, cryptex, developer, diagnostics, IDAM, Lockdown, mounter, notifications, PCAP, power assertions, processes, profiles, provisioning, remote, restore, SpringBoard, syslog, usbmux, Web Inspector, and version;
-- nested DVT Sysmon, CoreProfile, location, condition, CoreDevice display/HID/location, debugserver, accessibility, and WDA topics;
-- common leaf commands for apps, backups, crash pulling, battery, DDI mounting, PCAP, syslog, and Web Inspector.
-
-**Use in Advanced Mode** copies the selected command prefix into Command Center. Add only the arguments shown by that live page. Advanced Mode still uses the selected device's UDID environment and never evaluates pipes, redirects, substitutions, or other shell operators.
-
-### Advanced command interpretation
-
-| Layer | Advanced examples | Correct interpretation |
-|---|---|---|
-| Lockdown services | AFC, Installation Proxy, MobileBackup2, diagnostics, syslog, profiles | Apple-defined service views available through the pairing relationship; not root. |
-| RemoteXPC / RSD | `remote`, CoreDevice, modern display/HID/location | A transport and service-discovery layer. An advertised service can still reject or be absent on a specific build. |
-| DVT / DTX | Sysmon, graphics, energy, OS log, notifications, CoreProfile | Instruments-like developer telemetry requiring Developer Mode and mounted developer support. |
-| Packet/log capture | PCAP, syslog, OS log, Bluetooth HCI | Complementary observations; encryption and retention limits remain. |
-| Process control | launch, signal, kill, debugserver | Changes runtime state and still operates within Apple service authorization. |
-| Web automation | Web Inspector, CDP, WDA | Requires explicit device settings or a correctly signed WebDriverAgent; not arbitrary app automation by default. |
-| Restore/profile management | IPSW, erase, supervision, activation, profile installation | High-impact administrative operations; use only with exact authorization and verified recovery plans. |
-
-## Evidence collected
-
-Every normal run requests these snapshots:
-
-| Artifact | `pymobiledevice3` arguments | Purpose |
-|---|---|---|
-| USB inventory | `usbmux list` | Confirms the selected UDID remains connected. |
-| Lockdown information | `lockdown info` | Device identity, version, build, and pairing-visible properties. |
-| Mounted images | `mounter list` | Personalized image state. |
-| Cryptex inventory | `cryptex list` | Installed Cryptex state. |
-| Diagnostics | `diagnostics info` | Diagnostics-service information. |
-| MobileGestalt | `diagnostics mg` | Values exposed through the known MobileGestalt query set. |
-| IORegistry | `diagnostics ioregistry` | Device IORegistry data exposed by the diagnostics service. |
-| Battery | `diagnostics battery single` | Point-in-time battery data. |
-| Applications | `apps list` | Installed-application inventory visible to the service. |
-| Processes | `processes ps` | Diagnostics process inventory. |
-| Profiles | `profile list` | Installed configuration-profile inventory. |
-| Provisioning | `provision list` | Installed provisioning-profile inventory. |
-| Crash names | `crash ls` | Crash-report inventory. |
-| AFC root | `afc ls /` | Media/AFC root listing, not the raw iOS root. |
-| DVT device data | `developer dvt device-information` | Extended developer-service information. |
-| DVT processes | `developer dvt sysmon process single` | Detailed point-in-time process data. |
-| DVT filesystem | `developer dvt ls /` | DVT developer-service root view. |
-
-Optional snapshots:
-
-- `developer dvt screenshot artifacts/screen.png`
-- `crash pull artifacts/crashes`
-
-Optional timed streams:
-
-- `syslog live`
-- `developer dvt oslog`
-- `pcap --out streams/network.pcap`
-
-### Case layout
-
-```text
-ios-case-YYYYMMDDTHHMMSSZ-<UDID suffix>/
-├── artifacts/
-│   ├── crashes/                         # optional
-│   └── screen.png                       # optional
-├── snapshots/
-│   ├── apps.json
-│   ├── battery.json
-│   ├── dvt-device-information.json
-│   ├── dvt-root-listing.txt
-│   ├── dvt-sysmon-processes.txt
-│   ├── lockdown-info.json
-│   ├── profiles.json
-│   └── ...
-├── streams/
-│   ├── dvt-oslog.txt                    # optional
-│   ├── network.pcap                     # optional
-│   ├── pcap-metadata.txt                # optional
-│   └── syslog.txt                       # optional
-├── manifest.json
-└── SHA256SUMS.txt
-```
-
-Each snapshot also has a neighboring `.command.log` containing all attempts and semantic-validation errors. `SHA256SUMS.txt` hashes every collected file except itself.
-
-## IPA sideloading and removal
-
-![Sideload IPA tab](docs/screenshots/sideload-ipa.png)
-
-The sideload tab separates local package inspection from device mutation:
-
-```text
-Choose IPA
-   |
-   v
-Validate ZIP members and main app Info.plist
-   |
-   v
-Decode embedded.mobileprovision with macOS security
-   |
-   v
-Safely extract to a temporary directory
-   |
-   v
-Verify the app bundle with macOS codesign
-   |
-   +-- invalid or missing signature --> installation remains disabled
-   |
-   +-- valid signature --> user-confirmed pymobiledevice3 install
-```
-
-Inspection reports:
-
-- app name, bundle identifier, version, build, executable, and minimum iOS;
-- code-signature status, signing identifier, team identifier, authorities, and verification detail;
-- provisioning profile status, name, UUID, application identifier, teams, expiration, device count, all-device flag, debug entitlement, and developer-certificate count.
-
-Installation uses one of:
-
-```bash
-pymobiledevice3 apps install "/path/to/Application.ipa"
-pymobiledevice3 apps install --developer "/path/to/Application.ipa"
-```
-
-The package path is passed directly to `pymobiledevice3`; it is not evaluated by a shell. The toolkit does not modify, decrypt, patch, or re-sign the IPA.
-
-After a successful installation, the separate **Installed Apps** tab refreshes automatically. Select a row there and click **Uninstall Selected**. The app validates the bundle identifier and displays a destructive-action confirmation because uninstalling can remove the application's local data:
-
-```bash
-pymobiledevice3 apps uninstall com.example.application
-```
-
-A valid macOS code-signature verification proves that the extracted bundle is internally consistent at inspection time. It does not prove that the selected device is included in the profile, that Apple still trusts the certificate, or that iOS will accept the package.
-
-## Installed Apps inventory
-
-The inventory runs `pymobiledevice3 apps list --type Any` and validates that every result is keyed by the same bundle identifier reported in its metadata. Optional size calculation adds `--calculate-sizes`. Search and sorting happen locally after the device result is parsed.
-
-The list can include Apple system apps, hidden service-visible entries, and user apps. Presence proves only that the installation proxy reported the bundle at collection time; it does not prove recent use or suspicious behavior.
-
-## Local device backups and encryption
-
-The Backup tab uses the same MobileBackup2 protocol as the pinned `pymobiledevice3 backup2` implementation. Encryption is a persistent setting for computer backups from that device, not a one-time wrapper around a single output folder. The toolkit therefore exposes three explicit behaviors:
-
-| Device state and choice | Result |
-|---|---|
-| Encryption already enabled | The backup remains encrypted; the existing password is not requested or changed. |
-| Encryption disabled + **Require encrypted backup** | The toolkit asks for a new password, enables persistent encryption, verifies the new state, then forces a full backup. |
-| **Require encrypted backup** cleared | The current device setting is preserved; the toolkit does not enable or disable encryption. |
-
-Passwords travel only in a JSON request on the helper's standard input and are cleared from the GUI fields after dispatch. The helper never emits the password. Backup files themselves are highly sensitive even when encrypted, so keep the destination out of Git and restrict who can access it.
-
-## UFADE external forensic acquisition
-
-The Backup workspace includes a separate **UFADE External** provider for [`prosch88/UFADE`](https://github.com/prosch88/UFADE), the GPL-3.0 Universal Forensic Apple Device Extractor. UFADE supplies its own CustomTkinter interface and acquisition workflows:
-
-| UFADE choice | Upstream behavior |
-|---|---|
-| Logical | iTunes-style MobileBackup2 acquisition. |
-| Logical+ | Backup plus AFC media, shared app folders, crash reports, and optional Unified Logs. |
-| Logical+ UFD | Advanced logical ZIP with a UFD descriptor for compatible forensic tooling. |
-| PRFS | Decrypted, filesystem-shaped logical archive assembled from service-visible data. |
-| Full filesystem | SSH acquisition from an already jailbroken device; it is not a jailbreak or bypass. |
-
-### Why UFADE remains external
-
-The toolkit is MIT-licensed while UFADE is GPL-3.0. UFADE also requires Python 3.11 and currently pins a different `pymobiledevice3` release. To preserve both projects' license and dependency boundaries, this repository does not copy, vendor, import, patch, or redistribute UFADE code.
-
-Instead, the provider:
-
-1. asks for the root of a user-managed UFADE checkout;
-2. verifies `ufade.py`, `requirements.txt`, and the expected GPL-3.0 license;
-3. reads the checkout's declared UFADE version without importing it;
-4. verifies a separate Python 3.11 executable and representative UFADE runtime imports;
-5. asks for a protected working/output directory;
-6. displays the selected Toolkit device as an informational cross-check;
-7. launches `ufade.py` directly without a shell as an independent process.
-
-UFADE performs its own device discovery, prompts, password handling, progress reporting, stopping, archive creation, and report generation. Closing iOS Developer Toolkit does not terminate a launched UFADE process.
-
-### Install UFADE separately on macOS
-
-The provider's **Copy Setup Commands** button copies:
-
-```bash
-brew install python@3.11 python-tk@3.11
-git clone https://github.com/prosch88/UFADE.git
-cd UFADE
-python3.11 -m venv venv
-venv/bin/python -m pip install -r requirements.txt
-```
-
-Select the resulting `UFADE/` checkout and `UFADE/venv/bin/python` in the provider page. If UFADE developer features are also required, follow its upstream instructions for cloning the optional developer-image submodule.
-
-UFADE output can include decrypted backups, media, app-shared data, logs, reports, device identifiers, and account content. Store it outside the source checkout on an access-controlled volume. UFADE acquisitions, UFD/UFDR files, reports, captures, and backups are excluded by this repository's publication boundary.
-
-## Command-line collector
-
-The same evidence engine can run without the GUI:
+### Evidence collector
 
 ```bash
 venv/bin/ios-developer-collect \
-  --udid DEVICE_UDID \
-  --output-root "$HOME/Documents/iOS Developer Toolkit Cases" \
+  --udid 00008110-0000000000000000 \
+  --output-root "$PWD/cases" \
   --duration 300 \
   --include-syslog \
   --include-oslog \
-  --include-pcap
+  --include-pcap \
+  --include-screenshot \
+  --include-crash-pull
 ```
 
-Optional switches:
+Use only the optional flags needed for the task. PCAP, screenshots, app lists, crash reports, profiles, and logs can contain private information.
 
-```text
---include-screenshot
---include-crash-pull
+### Local Xcode DDI installer
+
+```bash
+venv/bin/ios-local-ddi \
+  --candidate /Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg \
+  --udid 00008110-0000000000000000
 ```
 
-Exit status `0` means the requested collection completed, `2` means the case was finalized with optional coverage gaps, and `1` means a fatal or required-command failure occurred. In all cases where a case directory was created, review the retained manifest and outputs rather than relying only on the exit status.
+### IPA inspector
 
-## Interpretation and safety
+```bash
+venv/bin/ios-ipa-inspect /absolute/path/to/Application.ipa
+```
 
-![Scope and safety view](docs/screenshots/scope-and-safety.png)
+The CLI inspector reports local package state; it does not install or repair the IPA.
 
-- Use the toolkit only on devices you own or are authorized to examine.
-- A DDI is not a jailbreak, exploit, passcode bypass, or Secure Enclave bypass.
-- Developer Mode and DDI operations change device state. For evidence-sensitive work, preserve a backup or sysdiagnose first and record the time of each action.
-- `developer dvt ls /` is not unrestricted raw-filesystem acquisition.
-- AFC exposes its service-defined media view, not all protected app containers.
-- PCAP does not decrypt TLS, QUIC, VPN, Private Relay, encrypted DNS, or application-layer encryption.
-- Process metadata, ports, DNS names, TLS names, and IP ownership are attribution clues, not proof of application purpose or malicious behavior.
-- Profiles, provisioning records, apps, processes, crashes, and retained strings show possible configuration or history; corroborate current activity separately.
-- A locally valid IPA signature is not a device authorization or a bypass of Apple provisioning and trust policy.
-- Empty output can mean unsupported service, permission limits, retention limits, version mismatch, or collection failure.
-- Logs, PCAPs, screenshots, UDIDs, app inventories, profile data, and crash reports may contain sensitive information. Keep case folders out of Git and sanitize before sharing.
+## Privacy, integrity, and interpretation
 
-## Privacy and responsible use
+### Sensitive material
 
-Use the toolkit only with devices and data you own or are explicitly authorized to examine. Pairing records, backups, logs, screenshots, PCAPs, crash reports, profiles, provisioning data, application inventories, and device identifiers can expose personal or organizational information.
+Treat these outputs as potentially sensitive:
 
-The repository ignores common private-output paths and file types by default, including `cases/`, `backups/`, `captures/`, reports, IPAs, profiles, certificates, DDI payloads, crash files, logs, PCAP, and PCAPNG. An ignore rule is a publication guard, not an access-control system: store sensitive output on an appropriately protected volume and inspect staged files before every commit.
+- UDIDs, serials, pairing metadata, device names, and OS/build information;
+- app and provisioning-profile inventories;
+- URLs, hostnames, IP addresses, packet payloads, and Bluetooth traffic;
+- Unified Logs, classic syslog, DVT logs, process lists, and crash reports;
+- screenshots, AFC listings, GPX routes, and simulated coordinates;
+- MobileBackup2 and UFADE acquisitions;
+- IPA provisioning records and signing identities.
 
-The application never asks for a Mac administrator password. Device-backup encryption secrets are sent to a private helper over standard input, cleared from the GUI after dispatch, and excluded from process arguments and application logs. Do not paste device passcodes, Apple Account credentials, backup passwords, certificates, or pairing records into issues or public reports.
+The repository `.gitignore` excludes the toolkit's common backup, case, capture, crash, log, packet, GPX, UFADE, DDI, certificate, profile, and IPA artifact patterns. That is a publication guard, not an access-control system. Store evidence outside a public checkout when possible, restrict filesystem permissions, encrypt sensitive archives, and review every staged file before committing.
 
-Before sharing a case, review at least:
+### Capability is not observed behavior
 
-- `manifest.json` for device identifiers, host paths, versions, and timestamps;
-- snapshots for serial numbers, phone numbers, account identifiers, profiles, installed apps, and process metadata;
-- logs and crash reports for user content, paths, URLs, tokens, and application state;
-- PCAP/PCAPNG for IP addresses, DNS names, TLS names, and timing patterns;
-- screenshots for messages, notifications, account names, and visible application data.
+| Observation | Supported conclusion | Unsupported shortcut |
+|---|---|---|
+| A DDI mounted | Developer services may now be available | The device is jailbroken or compromised |
+| A process or app appears | The queried service reported it at that time | It performed a specific malicious action |
+| A hostname appears in PCAP or logs | Traffic or text referenced that hostname | Ownership, purpose, or compromise without correlation |
+| A profile appears | The profile service reported installation metadata | Who authorized it or how it was used without provenance |
+| A DVT root path is listed | The DVT service exposed a path view | Raw, complete filesystem access |
+| A command returned no data | The request produced empty output | The data or activity does not exist |
+| A command failed | That collection path lacked coverage | The device is clean or the feature is absent |
 
-## Evidence and provenance
+Correlate timestamps and independent sources. Logs, network packets, processes, apps, profiles, crash reports, and backups answer different questions.
 
-Each collection case records the selected UDID, toolkit and dependency versions, requested scope, start and end time, exact command argument list, attempt count, exit status, artifact path, and semantic validation result. `SHA256SUMS.txt` provides a post-collection integrity inventory; it is not a cryptographic attestation of device origin.
+### Device-changing operations
 
-The collector preserves partial cases. A command failure, unsupported service, disconnect, or zero-length stream remains visible in the manifest and neighboring command log. This avoids converting a collection gap into a false claim that data was absent.
-
-The evidence model has four boundaries:
-
-| Boundary | Meaning |
-|---|---|
-| Acquisition | Data came from the named Apple service or host-side inspection command at the recorded time. |
-| Coverage | The manifest states which requests succeeded, failed, were empty, or were not selected. |
-| Integrity | SHA-256 detects later byte changes to retained case files but does not prove who created the original data. |
-| Interpretation | Processes, endpoints, profiles, apps, crashes, and strings require corroboration before attribution or security conclusions. |
-
-Repository screenshots are documentation artifacts, not evidence from a user case. The project does not ship captures, backups, DDI payloads, IPAs, pairing records, or generated reports.
+Mounting a DDI, enabling Developer Mode, installing or uninstalling an app, changing backup encryption, creating a backup, launching an app, opening a URL, and simulating location all change device or host state. Obtain authorization, preserve pre-change state when relevant, and record the action.
 
 ## Troubleshooting
 
-| Symptom | Check |
-|---|---|
-| No device appears | Use a data cable, unlock the device, tap **Trust**, and click **Refresh**. Verify with `venv/bin/pymobiledevice3 usbmux list`. |
-| Developer Mode is missing | Initiate pairing in Xcode **Window → Devices and Simulators**, then check **Settings → Privacy & Security** again. |
-| Developer Mode query fails | Keep the device unlocked, reconnect it, and confirm the selected UDID still appears in `usbmux list`. |
-| DDI says Developer Mode is disabled | Complete the restart and post-restart **Enable/Turn On** confirmation on the device. |
-| Downloaded image fails | Confirm GitHub and Apple TSS connectivity, review the exact output, and update only after checking compatibility with the pinned release. |
-| Local Xcode option is unavailable | Verify `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg`; install or update Xcode/CoreDevice if the file is absent. |
-| Image is already mounted | Use **List Mounted Images**; do not repeatedly mount. Remove only the matching personalized/Cryptex path. |
-| DVT commands fail after a mount | Re-check Developer Mode, mounted state, pairing, and whether the current iOS/pymobiledevice3 combination supports that service. |
-| IPA inspection reports missing/invalid signature | Obtain a correctly signed package from its developer. The toolkit intentionally does not repair or re-sign it. |
-| IPA verifies locally but installation fails | Review provisioning type, registered-device eligibility, certificate trust/expiration, Developer Mode, minimum iOS, and the complete `pymobiledevice3` output. |
-| Installed Apps refresh fails | Keep the device unlocked and trusted, verify the selected UDID, and review the tab's raw error output. Size calculation can be disabled for a faster retry. |
-| Backup encryption status fails | Keep the device unlocked and trusted. The toolkit will not guess the state or start a requested encrypted backup without a password when the state is unknown. |
-| Backup stops or fails | Preserve the error output, confirm free disk space and USB stability, and retry. Incomplete local state is not reused as a valid incremental backup. |
-| Guided command is disabled | Check the selected device, fill every required value, and satisfy any Developer Mode/DDI prerequisite shown in Command Center. |
-| Command exists but its Apple service is unavailable | Compare the live Man Page with the complete output. Service advertisement and authorization vary by iOS build and transport. |
-| Live Man Page fails | Confirm the project-local environment is intact with `venv/bin/pymobiledevice3 --help`; the help browser does not use a network copy. |
-| PCAP is empty or ends early | Keep the device connected and active; review `pcap-metadata.txt`, `manifest.json`, and the stream's process exit status. |
-| Qt reports that Cocoa cannot initialize | Remove the generated hidden `.venv/` if present and relaunch. The launcher uses visible `venv/` to prevent hidden Qt plugins. |
-| Collection is partial | This is preserved intentionally. Review failed entries and `.command.log` files, then rerun only after correcting the specific service or connectivity error. |
+### No device detected
 
-## Development and verification
+- use a known data-capable cable and direct USB port;
+- unlock the device and accept **Trust**;
+- reconnect after the trust prompt completes;
+- close competing tools that may be holding device services;
+- run `venv/bin/pymobiledevice3 usbmux list` and retain its error output;
+- verify the selected device when more than one is connected.
 
-Install into the project environment through the launcher, then run:
+### Developer Mode is missing
+
+- pair the device in Xcode through **Window → Devices and Simulators**;
+- wait for Xcode's device preparation to complete;
+- check **Settings → Privacy & Security** again;
+- restart and complete the post-restart confirmation on the device.
+
+### Personalized DDI does not mount
+
+- confirm Developer Mode is enabled, not merely visible;
+- verify that the device is unlocked and trusted;
+- check internet access to the payload source and Apple TSS;
+- open **List Mounted Images** before retrying;
+- inspect the full command output for service, tunnel, version, personalization, or cache errors;
+- do not substitute a random legacy DDI for a modern personalized image.
+
+### Local Xcode DDI is unavailable
 
 ```bash
-venv/bin/python -m unittest discover \
-  -s tests \
-  -p 'test_*.py'
+ls -l /Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg
+xcode-select -p
+```
 
-venv/bin/python -c 'import ios_developer_toolkit.app'
-venv/bin/ios-developer-collect --help
-venv/bin/ios-local-ddi --help
-venv/bin/ios-ipa-inspect --help
+Install or update Xcode if the candidate is absent. The toolkit requires the expected `Restore` contents and rejects an incomplete or wrong container.
+
+### A DVT/CoreDevice command fails
+
+- confirm Developer Mode and DDI state;
+- establish the modern tunnel when required by the installed `pymobiledevice3` command;
+- read the corresponding live Man Page;
+- remember that client syntax can exist even when an iOS build does not advertise the service;
+- keep the failure as a coverage result.
+
+### IPA inspection or installation fails
+
+- treat archive-path and signature failures as package problems, not installer problems;
+- confirm that the provisioning profile is current and includes the target device where required;
+- confirm certificate trust, entitlements, team identity, and app identifier;
+- do not expect a DDI to repair signing or bypass DRM;
+- inspect the complete host and device error rather than repeatedly retrying.
+
+### Backup does not start
+
+- unlock and trust the device;
+- verify free space and permissions on the destination;
+- check encryption state explicitly;
+- confirm and securely retain a new encryption password before enabling it;
+- use a new destination to distinguish corrupt incremental state from a device-service failure;
+- remember that changing encryption forces a full backup.
+
+### Live Logs becomes visually busy
+
+- pause the view; raw capture continues;
+- apply a literal or regex filter;
+- save the filtered view only as an analysis derivative;
+- use Save Raw for the complete capture and metadata;
+- stop and close the window cleanly to make the save/discard decision explicit.
+
+## Development and packaging
+
+### Repository layout
+
+```text
+.
+├── ios_developer_toolkit/
+│   ├── app.py                  # PySide6 workbench and workflow orchestration
+│   ├── backup_worker.py        # MobileBackup2 worker and password-input protocol
+│   ├── catalog.py              # evidence snapshot catalog and mutation classification
+│   ├── collector.py            # case creation, streams, retries, manifest, hashes
+│   ├── command_catalog.py      # guided presets and live-help routes
+│   ├── installed_apps.py       # app inventory validation and formatting
+│   ├── ipa_inspector.py        # safe IPA extraction, provisioning, signature checks
+│   ├── live_logs.py            # independent raw-spooling log windows
+│   ├── local_ddi.py            # local Xcode candidate/Cryptex workflow
+│   ├── location_lab.py         # coordinates, GPX, routes, saved places, evidence
+│   ├── models.py               # typed device and collection models
+│   ├── runtime.py              # project executable and device environment
+│   ├── ufade_connector.py      # isolated external UFADE validation and launch
+│   └── assets/
+├── docs/screenshots/           # sanitized current-interface captures
+├── macos/                      # wrapper executable, Info.plist, and icon
+├── script/build_and_run.sh     # environment, staging, launch, verification modes
+├── tests/test_core.py          # core integration/smoke-oriented test suite
+├── pyproject.toml              # package metadata and pinned dependencies
+└── LICENSE
+```
+
+### Run the verification suite
+
+```bash
+venv/bin/python -m unittest discover -s tests -v
+venv/bin/python -m compileall -q ios_developer_toolkit
+venv/bin/python -m ios_developer_toolkit.collector --help
+venv/bin/python -m ios_developer_toolkit.local_ddi --help
+venv/bin/python -m ios_developer_toolkit.ipa_inspector --help
 ./script/build_and_run.sh --verify
 ```
 
-The current suite contains 37 tests covering device-result parsing, command policy, guided-command rendering, output validation, DDI parsing, Location Lab coordinates/routes/GPX, live-log stream/filter/spool helpers, IPA inspection, app inventory, backup requests, and the external UFADE connector.
+The final launcher check opens the application and briefly verifies the process. It stops an existing toolkit process first, so do not run it during an active capture or backup.
 
-| Check | Establishes | Does not establish |
-|---|---|---|
-| Unit and integration suite | Deterministic parsing, validation, command construction, archive handling, and bounded route/log helpers behave as tested. | That every Apple service exists or behaves identically on every iOS build. |
-| Import and CLI `--help` checks | The installed package imports and its documented entry points resolve. | Successful communication with a physical device. |
-| `build_and_run.sh --verify` | The local `.app` wrapper builds, opens, and remains alive through the launch check. | Developer ID signing, notarization, or self-contained distribution. |
-| Device operation result | The named service returned the retained output for the selected UDID at that time. | Root access, complete historical coverage, or a security conclusion by itself. |
+### Release model
 
-The generated macOS bundle is a local development wrapper around the project environment. It is not currently a self-contained signed/notarized distribution artifact.
+Version `0.1.0` is distributed as source. The repository stages a local `.app` wrapper for development convenience; it is not signed, notarized, or self-contained. A future portable macOS build would need dependency bundling, hardened-runtime signing, notarization, release-asset generation, and verification on a clean Mac.
 
-## Repository structure
+Windows and Linux would require a separate host implementation or deliberately isolated adapters for discovery, pairing, filesystem paths, DDI acquisition, local signature inspection, packaging, and platform-specific dependencies. Copying the macOS wrapper is not a cross-platform port.
 
-```text
-iOS-Developer-Toolkit/
-├── docs/screenshots/               # sanitized GUI documentation
-├── ios_developer_toolkit/
-│   ├── assets/                      # supplied project logo used by the GUI and package
-│   ├── app.py                      # PySide6 GUI
-│   ├── backup_worker.py            # password-safe MobileBackup2 helper
-│   ├── catalog.py                  # collection and console command policy
-│   ├── command_catalog.py          # guided presets, validation, risk, and live-help index
-│   ├── collector.py                # case acquisition and finalization
-│   ├── ipa_inspector.py            # safe IPA, provisioning, and signature inspection
-│   ├── installed_apps.py           # validated app-inventory models and parsing
-│   ├── local_ddi.py                # read-only Xcode DDI/Cryptex workflow
-│   ├── live_logs.py                # independent raw-spooled pop-out log viewers
-│   ├── location_lab.py             # coordinates, route generation, GPX, saved-place, command, and evidence validation
-│   ├── models.py                   # validated device/result models
-│   ├── runtime.py                  # project runtime and UDID environment
-│   ├── ufade_connector.py          # external UFADE checkout/runtime validation
-│   └── validation.py               # semantic process-output checks
-├── macos/                          # local app-wrapper launcher and metadata
-├── script/build_and_run.sh         # environment, bundle, launch, and verification entry point
-├── tests/
-├── LICENSE
-└── pyproject.toml
-```
+## Project boundaries and credits
 
-## Sources and credits
+- [`pymobiledevice3`](https://github.com/doronz88/pymobiledevice3) supplies the Apple-device protocol implementation and command surface.
+- [`DeveloperDiskImage`](https://github.com/doronz88/DeveloperDiskImage) supplies the downloadable modern DDI payload used by upstream auto-mount.
+- [Apple Developer Mode documentation](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device) describes the on-device security workflow.
+- [`UFADE`](https://github.com/prosch88/UFADE) is supported only as a separately installed and independently licensed external provider.
+- [`ostrace`](https://github.com/BerkayCaglar/ostrace) informed live-log interaction design; no GPL source is copied, imported, or linked into this MIT project.
+- The project logo is stored at `ios_developer_toolkit/assets/iosdevtoolkit.png` and is used unchanged in the application and documentation.
 
-- [Apple: Enabling Developer Mode on a device](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device)
-- [Apple: About encrypted backups](https://support.apple.com/en-ca/108353)
-- [`pymobiledevice3` repository](https://github.com/doronz88/pymobiledevice3)
-- [`pymobiledevice3` documentation](https://doronz88.github.io/pymobiledevice3/)
-- [`DeveloperDiskImage` repository](https://github.com/doronz88/DeveloperDiskImage)
-- [`developer-disk-image` on PyPI](https://pypi.org/project/developer-disk-image/)
-- [`fakeGPS-for-iPhone` repository](https://github.com/sixzjd/fakeGPS-for-iPhone) — interface inspiration; no source is vendored
-- [`ios-fake-gps` repository](https://github.com/orestislef/ios-fake-gps) — MIT-licensed route-workflow reference; no source is vendored
-- [`WarrenLin/FakeGPS` repository](https://github.com/WarrenLin/FakeGPS) — MIT-licensed cross-platform workflow reference; no source is vendored
-- [`ostrace` repository](https://github.com/BerkayCaglar/ostrace) — GPL live-view integrity reference; no source is vendored
-- [`UFADE` repository](https://github.com/prosch88/UFADE) — external GPL-3.0 forensic acquisition provider
+Other location-simulation projects were studied as product references, but their source is not vendored. Location Lab uses the pinned `pymobiledevice3` developer-service commands and this project's own validation, route, cleanup, and evidence code.
 
-`pymobiledevice3`, `DeveloperDiskImage`, the referenced location tools, `ostrace`, Apple, Xcode, iPhone, iPad, and iOS belong to their respective authors and owners. Review each dependency's license and terms independently. The toolkit's project metadata declares MIT for the toolkit code.
+Apple, iPhone, iPad, iOS, macOS, and Xcode are trademarks of Apple Inc. This project is independent and is not affiliated with or endorsed by Apple.
+
+Use the toolkit only on devices and data you own or are explicitly authorized to test, administer, develop against, or examine.
 
 ## License
 
-The original iOS Developer Toolkit source in this repository is released under the [MIT License](LICENSE). Upstream projects, Apple software, downloaded Developer Disk Images, provisioning profiles, applications, and device data remain subject to their own licenses and terms. No Apple software or DDI payload is distributed by this repository.
+This repository is released under the [MIT License](LICENSE). External tools and upstream dependencies retain their own licenses.
