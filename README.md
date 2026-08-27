@@ -33,6 +33,7 @@ The screenshots use an illustrative device name, model, version, build, and UDID
 - [Workspace guide](#workspace-guide)
   - [Home](#home)
   - [Device and DDI](#device-and-ddi)
+  - [Device Capability Matrix](#device-capability-matrix)
   - [Location Lab](#location-lab)
   - [Live Logs](#live-logs)
   - [Command Center](#command-center)
@@ -66,10 +67,11 @@ For a new device, a sensible sequence is:
 
 1. Open **Device & DDI**, confirm the selected device, and check Developer Mode.
 2. Mount the downloaded personalized DDI or install the local Xcode DDI Cryptex when a developer workflow requires it.
-3. Begin with read-oriented presets in **Command Center**.
-4. Use **Live Logs**, **Installed Apps**, or **Evidence Capture** for the intended task.
-5. Save sensitive output to protected local storage.
-6. Stop streams, clear a simulated location, and unmount the developer image when finished.
+3. Run **Capability Matrix** to verify the exact host, trust, DDI, tunnel, and developer-service path.
+4. Begin with read-oriented presets in **Command Center**.
+5. Use **Live Logs**, **Installed Apps**, or **Evidence Capture** for the intended task.
+6. Save sensitive output to protected local storage.
+7. Stop streams, clear a simulated location, and unmount the developer image when finished.
 
 The application executes the project-pinned binary directly. Guided values become an argument vector; the GUI does not pass them through a shell. Advanced Mode uses `shlex` to split arguments, but it does not evaluate pipes, redirects, substitutions, aliases, or shell operators.
 
@@ -79,6 +81,7 @@ The application executes the project-pinned binary directly. Guided values becom
 |---|---|---:|---|
 | **Home** | Understand the workflow and jump to a task | No | Service-layer overview and guided entry points |
 | **Device & DDI** | Check Developer Mode; mount, list, or remove a developer image | For mounting | Explicit device target and image source |
+| **Capability Matrix** | Test host, connection, trust, DDI, tunnel, and developer-service readiness | Only for the developer-service rows | Bounded per-capability state, evidence, and remediation |
 | **Location Lab** | Set a coordinate or replay a validated GPX track | Usually | Structured location-event evidence and explicit Clear |
 | **Live Logs** | Open independent Unified Logs, classic syslog, and DVT OSLog windows | Only DVT OSLog | Complete raw spool plus filtered working view |
 | **Command Center** | Run 49 guided commands or explicit advanced arguments | Command-specific | Validated parameters, risk label, exact preview, exit output |
@@ -86,12 +89,13 @@ The application executes the project-pinned binary directly. Guided values becom
 | **Backup** | Run MobileBackup2 or launch a separate UFADE environment | No | Full/incremental encrypted backup or external acquisition |
 | **Sideload IPA** | Inspect a local IPA before attempting installation | No DDI for normal install | Archive, provisioning, and signature report |
 | **Evidence Capture** | Correlate snapshots, timed streams, screenshots, crashes, and PCAP | Partial coverage without it | Timestamped case, coverage states, manifest, SHA-256 inventory |
-| **Man Pages** | Browse 59 live help routes from the installed executable | No | Version-matched syntax rather than copied examples |
+| **Man Pages** | Browse 59 command routes instantly and request live help on demand | No | Version-matched syntax rather than copied examples |
 | **Scope & Safety** | Keep access and interpretation limits visible | No | Operational boundaries inside the app |
 
 Highlights of the current build:
 
 - shared, explicit device selection across the full interface;
+- a manual, read-only capability matrix with bounded subprocesses, cancellation, exact evidence, and no automatic probing;
 - downloaded and local Xcode/CoreDevice DDI paths kept separate;
 - fixed and GPX location simulation with bounded route generation and cleanup tracking;
 - independent log windows that keep capturing while the visible view is paused;
@@ -154,7 +158,7 @@ Current pinned runtime:
 | PySide6 | `6.11.2` |
 | pymobiledevice3 | `10.11.0` |
 | Local Xcode candidate | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` |
-| Toolkit release | `0.1.0` |
+| Toolkit release | `0.2.0` |
 
 The current GUI and launcher are macOS-specific. Although upstream `pymobiledevice3` supports other host platforms, this application currently depends on macOS tools and conventions such as Xcode/CoreDevice, `hdiutil`, `security`, `codesign`, `.app` bundles, and macOS user-library paths.
 
@@ -170,10 +174,10 @@ cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
 
-For the published `v0.1.0` source state:
+For the published `v0.2.0` source state:
 
 ```bash
-git clone --branch v0.1.0 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+git clone --branch v0.2.0 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
 cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
@@ -300,6 +304,27 @@ The toolkit attaches this outer host image read-only, validates its `Restore` pa
 
 Both modern paths normally require Apple TSS access. A cached DDI payload does not guarantee that personalization can complete offline.
 
+### Device Capability Matrix
+
+The matrix is a manual readiness check for the currently selected device. It never runs merely because a device connects or because you open the workspace. **Run Capability Matrix** starts a separate bounded worker so a slow Apple service or Python import cannot freeze the interface; **Cancel** stops the current probe and preserves every completed result.
+
+The current matrix reports:
+
+- the project-pinned `pymobiledevice3` runtime;
+- Apple `devicectl` and `xctrace` availability through `xcrun`;
+- the selected device and transport from the most recent usbmux discovery;
+- pairing and Lockdown trust;
+- Developer Mode state;
+- mounted Developer Disk Image records;
+- the iOS 17+ Remote Service Discovery/tunnel route, inferred only after a successful CoreDevice request;
+- CoreDevice device-information and lock-state services;
+- DVT instrumentation reachability;
+- Safari Web Inspector response state.
+
+Every row uses one of six explicit states: **Ready**, **Needs attention**, **Unavailable**, **Blocked**, **Not tested**, or **Not applicable**. Select a row to see the bounded evidence and its next step. **Copy Report** creates a plain-text snapshot for a bug report or development note; command errors redact the selected device identifier.
+
+The matrix does not mount a DDI, enable Developer Mode, start a tunnel daemon, change Safari settings, or unlock the device. A service being reachable at refresh time is not proof that every command in that family will succeed, and an empty Web Inspector tab list is different from a failed Web Inspector request.
+
 ### Location Lab
 
 ![Location Lab workspace](docs/screenshots/location-lab.png)
@@ -308,6 +333,9 @@ Location Lab uses Apple developer services for explicit application testing. It 
 
 Capabilities:
 
+- click a bundled, offline Natural Earth world map to select a coordinate without contacting a mapping service;
+- import coordinates directly or extract visible coordinates from full Apple Maps, Google Maps, and `geo:` links;
+- reject shortened or text-only map links instead of resolving them through an external service;
 - validate finite latitude and longitude values and enforce geographic ranges;
 - set a fixed simulated coordinate;
 - nudge coordinate fields north, northeast, east, southeast, south, southwest, west, or northwest;
@@ -324,7 +352,7 @@ Capabilities:
 - stop playback and issue Clear, including a retry-and-evidence path during application close;
 - append structured events to `location-events.jsonl`.
 
-Saved locations and generated routes stay local. The feature contains no map, address search, external geocoder, automatic route provider, jitter, or anti-detection behavior.
+Saved locations, map selections, imported coordinates, and generated routes stay local. The feature contains no address search, external geocoder, automatic route provider, location-link resolver, or anti-detection behavior. The bundled world map uses public-domain [Natural Earth 1:110m land data](https://www.naturalearthdata.com/downloads/110m-physical-vectors/).
 
 Modern devices use `developer dvt simulate-location`; older supported paths use the legacy developer location service. Availability still depends on the selected iOS build, Developer Mode, DDI, and any required tunnel.
 
@@ -488,7 +516,7 @@ The collector retries failed snapshots once, keeps the final artifact and a comp
 
 ![Man Pages and Possibilities workspace](docs/screenshots/man-pages.png)
 
-The Man Pages browser indexes 59 top-level and nested command routes. Selecting a route runs the project-local executable with `--help` and displays its output verbatim. You can copy the command prefix or send it to Command Center's Advanced Mode.
+The Man Pages browser indexes 59 top-level and nested command routes. Selecting a route is immediate and does not start a process or contact the device. Click **Refresh Live Help** when you want the project-local executable's verbatim `--help` output. You can cancel a slow request, and the toolkit stops it automatically after 15 seconds so the page cannot remain stuck on “Loading live help.” Successful results are cached for the current app session. You can also copy the command prefix or send it to Command Center's Advanced Mode.
 
 This is the safest source for exact syntax in the installed environment. A command listed by the client is still not proof that the selected device build advertises the corresponding Apple service.
 
@@ -758,6 +786,8 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 ├── ios_developer_toolkit/
 │   ├── app.py                  # PySide6 workbench and workflow orchestration
 │   ├── backup_worker.py        # MobileBackup2 worker and password-input protocol
+│   ├── capability_matrix.py    # typed readiness catalog, probes, and result validation
+│   ├── capability_matrix_worker.py # bounded NDJSON capability worker
 │   ├── catalog.py              # evidence snapshot catalog and mutation classification
 │   ├── collector.py            # case creation, streams, retries, manifest, hashes
 │   ├── command_catalog.py      # guided presets and live-help routes
@@ -773,7 +803,7 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 ├── docs/screenshots/           # sanitized current-interface captures
 ├── macos/                      # wrapper executable, Info.plist, and icon
 ├── script/build_and_run.sh     # environment, staging, launch, verification modes
-├── tests/test_core.py          # core integration/smoke-oriented test suite
+├── tests/                      # core and capability behavior tests
 ├── pyproject.toml              # package metadata and pinned dependencies
 └── LICENSE
 ```
@@ -793,7 +823,7 @@ The final launcher check opens the application and briefly verifies the process.
 
 ### Release model
 
-Version `0.1.0` is distributed as source. The repository stages a local `.app` wrapper for development convenience; it is not signed, notarized, or self-contained. A future portable macOS build would need dependency bundling, hardened-runtime signing, notarization, release-asset generation, and verification on a clean Mac.
+Version `0.2.0` is distributed as source. The repository stages a local `.app` wrapper for development convenience; it is not signed, notarized, or self-contained. A future portable macOS build would need dependency bundling, hardened-runtime signing, notarization, release-asset generation, and verification on a clean Mac.
 
 Windows and Linux would require a separate host implementation or deliberately isolated adapters for discovery, pairing, filesystem paths, DDI acquisition, local signature inspection, packaging, and platform-specific dependencies. Copying the macOS wrapper is not a cross-platform port.
 
@@ -804,9 +834,11 @@ Windows and Linux would require a separate host implementation or deliberately i
 - [Apple Developer Mode documentation](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device) describes the on-device security workflow.
 - [`UFADE`](https://github.com/prosch88/UFADE) is supported only as a separately installed and independently licensed external provider.
 - [`ostrace`](https://github.com/BerkayCaglar/ostrace) informed live-log interaction design; no GPL source is copied, imported, or linked into this MIT project.
+- [`LocationSimulator`](https://github.com/Schlaubischlump/LocationSimulator) informed the offline map/teleport workflow. Its GPL source is not copied or linked, and its public backend does not support iOS 17 or later.
+- [Natural Earth](https://www.naturalearthdata.com/) provides the public-domain 1:110m land geometry rendered into the bundled offline Location Lab map.
 - The project logo is stored at `ios_developer_toolkit/assets/iosdevtoolkit.png` and is used unchanged in the application and documentation.
 
-Other location-simulation projects were studied as product references, but their source is not vendored. Location Lab uses the pinned `pymobiledevice3` developer-service commands and this project's own validation, route, cleanup, and evidence code.
+Location Lab uses the pinned `pymobiledevice3` developer-service commands and this project's own map interaction, link parsing, validation, route, cleanup, and evidence code. Modern devices use the DVT path instead of the incompatible public LocationSimulator backend.
 
 Apple, iPhone, iPad, iOS, macOS, and Xcode are trademarks of Apple Inc. This project is independent and is not affiliated with or endorsed by Apple.
 

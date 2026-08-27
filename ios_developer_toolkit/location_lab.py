@@ -9,11 +9,19 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
+from urllib.parse import parse_qs, unquote, urlparse
 from xml.etree import ElementTree
 
 
 MAX_GPX_BYTES = 64 * 1024 * 1024
 SAVED_LOCATIONS_VERSION = 1
+COORDINATE_NUMBER_PATTERN = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+COORDINATE_PAIR_PATTERN = re.compile(
+    rf"^\s*\(?\s*({COORDINATE_NUMBER_PATTERN})\s*,\s*({COORDINATE_NUMBER_PATTERN})\s*\)?\s*$"
+)
+GOOGLE_MAP_PATH_PATTERN = re.compile(
+    rf"/@({COORDINATE_NUMBER_PATTERN}),({COORDINATE_NUMBER_PATTERN})(?:[,/]|$)"
+)
 
 
 class LocationLabError(ValueError):
@@ -108,6 +116,67 @@ def validate_coordinates(latitude: str, longitude: str) -> Coordinates:
     return Coordinates(
         latitude=validate_coordinate(latitude, "Latitude", -90.0, 90.0),
         longitude=validate_coordinate(longitude, "Longitude", -180.0, 180.0),
+    )
+
+
+def _parse_coordinate_pair(value: str) -> Coordinates | None:
+    match = COORDINATE_PAIR_PATTERN.fullmatch(unquote(value))
+    if match is None:
+        return None
+    return validate_coordinates(match.group(1), match.group(2))
+
+
+def parse_location_input(value: str) -> Coordinates:
+    location = value.strip()
+    if not location:
+        raise LocationLabError("Enter latitude,longitude or paste an Apple Maps, Google Maps, or geo: link")
+    direct_coordinates = _parse_coordinate_pair(location)
+    if direct_coordinates is not None:
+        return direct_coordinates
+    parsed = urlparse(location)
+    if parsed.scheme.casefold() == "geo":
+        geo_coordinates = _parse_coordinate_pair(parsed.path)
+        if geo_coordinates is not None:
+            return geo_coordinates
+    if parsed.scheme.casefold() not in ("http", "https"):
+        raise LocationLabError(
+            "Location input must be latitude,longitude or an Apple Maps, Google Maps, or geo: link containing coordinates"
+        )
+    query = parse_qs(parsed.query, keep_blank_values=False)
+    for key in ("ll", "coordinate", "query", "q", "destination", "daddr", "center"):
+        for candidate in query.get(key, ()):
+            coordinates = _parse_coordinate_pair(candidate)
+            if coordinates is not None:
+                return coordinates
+    for candidate in query.get("cp", ()):
+        coordinates = _parse_coordinate_pair(candidate.replace("~", ",", 1))
+        if coordinates is not None:
+            return coordinates
+    path_match = GOOGLE_MAP_PATH_PATTERN.search(unquote(parsed.path))
+    if path_match is not None:
+        return validate_coordinates(path_match.group(1), path_match.group(2))
+    raise LocationLabError(
+        "The map link does not contain visible coordinates. Expand shortened links in a browser, then copy a full "
+        "Apple Maps or Google Maps URL, or paste latitude,longitude directly."
+    )
+
+
+def coordinates_to_map_fractions(coordinates: Coordinates) -> tuple[float, float]:
+    validated = validate_coordinates(str(coordinates.latitude), str(coordinates.longitude))
+    return (
+        (validated.longitude + 180.0) / 360.0,
+        (90.0 - validated.latitude) / 180.0,
+    )
+
+
+def map_fractions_to_coordinates(horizontal: float, vertical: float) -> Coordinates:
+    if not math.isfinite(horizontal) or not math.isfinite(vertical):
+        raise LocationLabError("Map position must be finite")
+    if horizontal < 0.0 or horizontal > 1.0 or vertical < 0.0 or vertical > 1.0:
+        raise LocationLabError("Map position must be inside the displayed world map")
+    return Coordinates(
+        latitude=90.0 - vertical * 180.0,
+        longitude=horizontal * 360.0 - 180.0,
     )
 
 

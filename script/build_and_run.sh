@@ -25,7 +25,9 @@ build_app() {
   if [[ ! -x "$VENV_DIR/bin/python" ]]; then
     python3 -m venv "$VENV_DIR"
   fi
-  "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --quiet "$PROJECT_DIR"
+  if ! "$VENV_DIR/bin/python" -c 'import PySide6; import pymobiledevice3' >/dev/null 2>&1; then
+    "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --quiet "$PROJECT_DIR"
+  fi
   mkdir -p "$APP_MACOS" "$APP_RESOURCES"
   cp "$PROJECT_DIR/macos/Info.plist" "$APP_CONTENTS/Info.plist"
   cp "$PROJECT_DIR/macos/iOSDeveloperToolkit" "$APP_EXECUTABLE"

@@ -10,8 +10,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
-from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QFont, QIcon, QPixmap, QTextCursor
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRect, QTimer, QUrl, Qt, Signal
+from PySide6.QtGui import (
+    QBrush,
+    QCloseEvent,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QIcon,
+    QMouseEvent,
+    QPaintEvent,
+    QPainter,
+    QPen,
+    QPixmap,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -50,6 +63,17 @@ from PySide6.QtWidgets import (
 
 from ios_developer_toolkit import APP_VERSION
 from ios_developer_toolkit.backup_worker import BackupEvent, BackupRequestError, parse_backup_event
+from ios_developer_toolkit.capability_matrix import (
+    CapabilityMatrixError,
+    CapabilityResult,
+    CapabilityState,
+    CapabilityWorkerCompleted,
+    CapabilityWorkerStarted,
+    capability_definitions,
+    capability_state_label,
+    parse_capability_worker_event,
+    untested_capability_results,
+)
 from ios_developer_toolkit.catalog import is_potentially_mutating
 from ios_developer_toolkit.command_catalog import (
     CommandCatalogError,
@@ -85,9 +109,12 @@ from ios_developer_toolkit.location_lab import (
     append_evidence_event,
     build_route,
     clear_location_arguments,
+    coordinates_to_map_fractions,
     inspect_gpx,
     load_saved_locations,
+    map_fractions_to_coordinates,
     move_coordinates,
+    parse_location_input,
     parse_route_waypoints,
     parse_ios_major,
     play_location_arguments,
@@ -102,16 +129,22 @@ from ios_developer_toolkit.live_logs import LiveLogError, LiveLogWindow, log_str
 from ios_developer_toolkit.models import DeviceDataError, IOSDevice, parse_devices_json
 from ios_developer_toolkit.runtime import device_environment, pymobiledevice3_executable
 from ios_developer_toolkit.ufade_connector import (
+    UFADE_INSTALLATION_URL,
     UFADE_REPOSITORY_URL,
+    UFADE_USAGE_URL,
     UFADEInstallation,
     UFADEValidationError,
+    checkout_python_path,
     inspect_ufade_installation,
+    macos_setup_commands,
 )
 from ios_developer_toolkit.validation import output_indicates_failure
 
 
 XCODE_CANDIDATE_DDI = Path("/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg")
 DEVELOPER_DISK_IMAGE_REPOSITORY = "https://github.com/doronz88/DeveloperDiskImage"
+MANPAGE_HELP_TIMEOUT_MS = 15_000
+MANPAGE_HELP_KILL_DELAY_MS = 1_500
 
 
 def application_icon_path() -> Path:
@@ -119,6 +152,13 @@ def application_icon_path() -> Path:
     if not icon_path.is_file():
         raise FileNotFoundError(f"Application icon is missing: {icon_path}")
     return icon_path
+
+
+def location_map_asset_path() -> Path:
+    map_path = Path(__file__).resolve().parent / "assets" / "location-world-map.png"
+    if not map_path.is_file():
+        raise FileNotFoundError(f"Location Lab map asset is missing: {map_path}")
+    return map_path
 
 
 def qprocess_environment(values: Mapping[str, str]) -> QProcessEnvironment:
@@ -205,6 +245,70 @@ class DeviceScanner(QObject):
         self.devices_changed.emit(devices)
 
 
+class LocationMapWidget(QWidget):
+    coordinate_selected = Signal(float, float)
+
+    def __init__(self, marker: Coordinates) -> None:
+        super().__init__()
+        self._map = QPixmap(str(location_map_asset_path()))
+        if self._map.isNull():
+            raise FileNotFoundError(f"Could not load Location Lab map asset: {location_map_asset_path()}")
+        self._marker = marker
+        self.setMinimumSize(360, 190)
+        self.setAccessibleName("Offline world map coordinate picker")
+        self.setToolTip("Click the offline map to fill the coordinate fields. The device is not changed until confirmation.")
+
+    def set_marker(self, marker: Coordinates) -> None:
+        self._marker = marker
+        self.update()
+
+    def _map_rectangle(self) -> QRect:
+        available_width = max(1, self.width())
+        available_height = max(1, self.height())
+        map_width = available_width
+        map_height = max(1, map_width // 2)
+        if map_height > available_height:
+            map_height = available_height
+            map_width = max(1, map_height * 2)
+        return QRect(
+            (available_width - map_width) // 2,
+            (available_height - map_height) // 2,
+            map_width,
+            map_height,
+        )
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rectangle = self._map_rectangle()
+        painter.drawPixmap(rectangle, self._map)
+        horizontal, vertical = coordinates_to_map_fractions(self._marker)
+        marker_x = rectangle.left() + horizontal * rectangle.width()
+        marker_y = rectangle.top() + vertical * rectangle.height()
+        painter.setPen(QPen(QColor("#ffffff"), 2.0))
+        painter.setBrush(QBrush(QColor("#e43b3b")))
+        painter.drawEllipse(int(marker_x) - 6, int(marker_y) - 6, 12, 12)
+        painter.end()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+        rectangle = self._map_rectangle()
+        position = event.position()
+        if not rectangle.contains(int(position.x()), int(position.y())):
+            event.ignore()
+            return
+        coordinates = map_fractions_to_coordinates(
+            (position.x() - rectangle.left()) / rectangle.width(),
+            (position.y() - rectangle.top()) / rectangle.height(),
+        )
+        self.set_marker(coordinates)
+        self.coordinate_selected.emit(coordinates.latitude, coordinates.longitude)
+        event.accept()
+
+
 class DeveloperModeDialog(QDialog):
     def __init__(self) -> None:
         super().__init__()
@@ -239,6 +343,72 @@ class DeveloperModeDialog(QDialog):
         layout.addWidget(buttons)
 
 
+class UFADEGuideDialog(QDialog):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("Install and Run UFADE on macOS")
+        self.resize(820, 690)
+        layout = QVBoxLayout(self)
+        heading = QLabel("UFADE setup and acquisition walkthrough")
+        heading.setObjectName("ufadeGuideHeading")
+        heading.setFont(QFont(heading.font().family(), 18, QFont.Weight.DemiBold))
+        layout.addWidget(heading)
+        instructions = QTextBrowser()
+        instructions.setObjectName("ufadeGuideContent")
+        instructions.setOpenExternalLinks(True)
+        instructions.setHtml(
+            f"""
+            <h3>1. Install UFADE in a separate Python 3.11 environment</h3>
+            <p>Click <b>Copy Setup Commands</b> in the Backup workspace, paste the commands into Terminal, and wait for
+            every command to finish. The recommended clone includes UFADE's developer-image submodule. Do not install
+            UFADE's older pinned dependencies into the iOS Developer Toolkit environment.</p>
+
+            <h3>2. Point the toolkit at that installation</h3>
+            <ol>
+              <li><b>UFADE checkout:</b> choose the cloned <code>UFADE</code> folder containing
+              <code>ufade.py</code>, <code>requirements.txt</code>, and <code>LICENSE</code>.</li>
+              <li><b>Python 3.11:</b> click <b>Use Checkout .venv</b>, or choose
+              <code>UFADE/.venv/bin/python</code> manually.</li>
+              <li><b>Working/output folder:</b> choose protected local storage with enough free space.</li>
+              <li>Click <b>Validate Installation</b>. Fix every reported missing file, Python-version, or import error
+              before launching.</li>
+            </ol>
+
+            <h3>3. Connect the device</h3>
+            <p>Connect one authorized iPhone or iPad by USB, unlock it, tap <b>Trust</b>, and keep it unlocked while
+            UFADE discovers it. The toolkit's selected device is shown for confirmation, but UFADE performs its own
+            device discovery and selection.</p>
+
+            <h3>4. Launch and operate UFADE</h3>
+            <ol>
+              <li>Click <b>Launch UFADE</b> and review the confirmation showing the checkout, Python, device, and
+              working directory.</li>
+              <li>In UFADE's window, confirm or change the output directory. The toolkit starts UFADE in the selected
+              working directory, which becomes its initial default.</li>
+              <li>Choose <b>Save device information</b>, a <b>Backup Option</b>, <b>Collect Unified Logs</b>,
+              <b>Developer Options</b>, or <b>Advanced Options</b> inside UFADE.</li>
+              <li>Answer password and acquisition prompts only in UFADE. The toolkit never receives those values.</li>
+              <li>Use UFADE's own progress and stop controls. Closing this toolkit does not stop UFADE.</li>
+            </ol>
+
+            <h3>5. Developer options and completion</h3>
+            <p>UFADE Developer Options may require Developer Mode, a compatible developer image, and the populated
+            <code>ufade_developer</code> submodule. If the checkout was cloned without submodules, run
+            <code>git submodule update --init --recursive</code> in the UFADE folder and validate again.</p>
+            <p>After acquisition, wait for UFADE to report completion, review the output folder, preserve hashes and
+            custody records separately, and protect the output before sharing it. A successful launch is not proof
+            that every selected acquisition source completed.</p>
+
+            <p><a href="{UFADE_INSTALLATION_URL}">Official UFADE installation instructions</a> ·
+            <a href="{UFADE_USAGE_URL}">Official UFADE usage guide</a></p>
+            """
+        )
+        layout.addWidget(instructions, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -252,6 +422,15 @@ class MainWindow(QMainWindow):
         self._action_process: QProcess | None = None
         self._action_context = ""
         self._action_buffer = bytearray()
+        self._capability_process: QProcess | None = None
+        self._capability_stdout_buffer = bytearray()
+        self._capability_stderr = bytearray()
+        self._capability_results: dict[str, CapabilityResult] = {
+            result.identifier: result for result in untested_capability_results()
+        }
+        self._capability_completed_at: str | None = None
+        self._capability_cancel_reason: str | None = None
+        self._capability_worker_completed = False
         self._collection_process: QProcess | None = None
         self._ipa_inspection_process: QProcess | None = None
         self._ipa_inspection_stdout = bytearray()
@@ -303,6 +482,12 @@ class MainWindow(QMainWindow):
         self._manpage_process: QProcess | None = None
         self._manpage_stdout = bytearray()
         self._manpage_stderr = bytearray()
+        self._manpage_cache: dict[tuple[str, ...], str] = {}
+        self._manpage_active_path: tuple[str, ...] | None = None
+        self._manpage_cancel_reason: str | None = None
+        self._manpage_timeout_timer = QTimer(self)
+        self._manpage_timeout_timer.setSingleShot(True)
+        self._manpage_timeout_timer.timeout.connect(self._manpage_timed_out)
         self._last_case_path: Path | None = None
         self._build_ui()
         self._scanner = DeviceScanner(self._pmd3)
@@ -385,6 +570,7 @@ class MainWindow(QMainWindow):
         pages = (
             ("Home", self._build_home_page()),
             ("Device & DDI", self._build_overview_tab()),
+            ("Capability Matrix", self._build_capability_matrix_page()),
             ("Location Lab", self._build_location_lab_page()),
             ("Live Logs", self._build_live_logs_page()),
             ("Command Center", self._build_command_center_page()),
@@ -436,10 +622,11 @@ class MainWindow(QMainWindow):
         workflow_grid = QGridLayout()
         cards = (
             ("1", "Connect && prepare", "Trust the device, enable Developer Mode, and mount the correct personalized DDI.", "Device & DDI"),
-            ("2", "Test location", "Set a fixed coordinate or replay a validated GPX route, then explicitly clear the simulated state.", "Location Lab"),
-            ("3", "Run guided commands", "Choose a category and preset; the GUI validates any required fields and shows the exact command.", "Command Center"),
-            ("4", "Collect && preserve", "Create a bounded evidence case, encrypted backup, app inventory, PCAP, logs, and crash-report set.", "Evidence Capture"),
-            ("5", "Learn advanced services", "Browse current help for DVT, CoreDevice, RemoteXPC, Web Inspector, restore, profiles, and more.", "Man Pages"),
+            ("2", "Verify capabilities", "Test host tools, trust, Developer Mode, the DDI, tunnel, CoreDevice, DVT, and Web Inspector.", "Capability Matrix"),
+            ("3", "Test location", "Set a fixed coordinate or replay a validated GPX route, then explicitly clear the simulated state.", "Location Lab"),
+            ("4", "Run guided commands", "Choose a category and preset; the GUI validates any required fields and shows the exact command.", "Command Center"),
+            ("5", "Collect && preserve", "Create a bounded evidence case, encrypted backup, app inventory, PCAP, logs, and crash-report set.", "Evidence Capture"),
+            ("6", "Learn advanced services", "Browse current help for DVT, CoreDevice, RemoteXPC, Web Inspector, restore, profiles, and more.", "Man Pages"),
         )
         for position, (number, title, body, destination) in enumerate(cards):
             card = QGroupBox(f"{number}. {title}")
@@ -593,6 +780,89 @@ class MainWindow(QMainWindow):
         self._ddi_source_changed()
         return tab
 
+    def _build_capability_matrix_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+
+        heading = QLabel("Device Capability Matrix")
+        heading.setObjectName("pageTitle")
+        heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
+        layout.addWidget(heading)
+        explanation = QLabel(
+            "Run bounded, read-only probes against the selected device. The matrix separates host readiness, trust, "
+            "Developer Mode, the mounted DDI, iOS 17+ tunneling, developer services, and optional Web Inspector access."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        controls = QHBoxLayout()
+        self.refresh_capabilities_button = QPushButton("Run Capability Matrix")
+        self.refresh_capabilities_button.setObjectName("runCapabilityMatrixButton")
+        self.refresh_capabilities_button.clicked.connect(self.refresh_capability_matrix)
+        controls.addWidget(self.refresh_capabilities_button)
+        self.cancel_capabilities_button = QPushButton("Cancel")
+        self.cancel_capabilities_button.setObjectName("cancelCapabilityMatrixButton")
+        self.cancel_capabilities_button.clicked.connect(self.cancel_capability_matrix)
+        controls.addWidget(self.cancel_capabilities_button)
+        self.copy_capabilities_button = QPushButton("Copy Report")
+        self.copy_capabilities_button.setObjectName("copyCapabilityMatrixButton")
+        self.copy_capabilities_button.clicked.connect(self.copy_capability_report)
+        controls.addWidget(self.copy_capabilities_button)
+        open_device_button = QPushButton("Open Device && DDI")
+        open_device_button.setObjectName("capabilityOpenDeviceDDIButton")
+        open_device_button.clicked.connect(self._navigation_handler("Device & DDI"))
+        controls.addWidget(open_device_button)
+        controls.addStretch()
+        layout.addLayout(controls)
+
+        self.capability_status = QLabel("Select a device and run the matrix. No probe runs automatically.")
+        self.capability_status.setObjectName("capabilityMatrixStatus")
+        self.capability_status.setWordWrap(True)
+        layout.addWidget(self.capability_status)
+        self.capability_progress = QProgressBar()
+        self.capability_progress.setObjectName("capabilityMatrixProgress")
+        self.capability_progress.setTextVisible(True)
+        self.capability_progress.setRange(0, len(capability_definitions()))
+        self.capability_progress.setValue(0)
+        layout.addWidget(self.capability_progress)
+
+        self.capability_table = QTableWidget(0, 4)
+        self.capability_table.setObjectName("capabilityMatrixTable")
+        self.capability_table.setHorizontalHeaderLabels(("Layer", "Capability", "State", "Result"))
+        self.capability_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.capability_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.capability_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.capability_table.setAlternatingRowColors(True)
+        self.capability_table.verticalHeader().setVisible(False)
+        self.capability_table.itemSelectionChanged.connect(self._capability_selection_changed)
+        header = self.capability_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.capability_table, 1)
+
+        detail_group = QGroupBox("Selected capability evidence and next step")
+        detail_layout = QVBoxLayout(detail_group)
+        self.capability_detail = QTextBrowser()
+        self.capability_detail.setObjectName("capabilityMatrixDetail")
+        self.capability_detail.setOpenExternalLinks(True)
+        self.capability_detail.setMaximumHeight(155)
+        detail_layout.addWidget(self.capability_detail)
+        layout.addWidget(detail_group)
+
+        privacy = QLabel(
+            "The probes do not mount images, change settings, start captures, or write device data. Results describe "
+            "service reachability at one moment; a Ready state is not a guarantee that every downstream command will work."
+        )
+        privacy.setObjectName("capabilityMatrixBoundary")
+        privacy.setWordWrap(True)
+        layout.addWidget(privacy)
+        self._populate_capability_matrix()
+        self._update_capability_controls()
+        return page
+
     def _build_location_lab_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -603,9 +873,9 @@ class MainWindow(QMainWindow):
         heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
         layout.addWidget(heading)
         explanation = QLabel(
-            "Run Apple developer-service location simulation with the selected device, validated coordinates, "
-            "locally inspected GPX tracks, explicit cleanup, and a structured evidence log. No map, search, route, "
-            "or coordinate data is sent to an external mapping provider."
+            "Use a private offline map, imported map-link coordinates, saved places, or validated GPX routes with "
+            "Apple developer-service location simulation. Nothing is sent to a mapping provider, and clicking the "
+            "map changes only these fields until you explicitly confirm a device action."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -631,6 +901,31 @@ class MainWindow(QMainWindow):
 
         coordinate_group = QGroupBox("Fixed location and saved places")
         coordinate_layout = QVBoxLayout(coordinate_group)
+        map_heading = QLabel("Offline click-to-select map")
+        map_heading.setObjectName("locationMapHeading")
+        map_heading.setFont(QFont(map_heading.font().family(), 13, QFont.Weight.DemiBold))
+        coordinate_layout.addWidget(map_heading)
+        self.location_map = LocationMapWidget(Coordinates(latitude=34.0522, longitude=-118.2437))
+        self.location_map.setObjectName("locationOfflineMap")
+        self.location_map.coordinate_selected.connect(self._map_location_selected)
+        coordinate_layout.addWidget(self.location_map)
+        import_row = QHBoxLayout()
+        self.location_input_field = QLineEdit()
+        self.location_input_field.setObjectName("locationCoordinateImporter")
+        self.location_input_field.setPlaceholderText("latitude,longitude or full Apple Maps / Google Maps / geo: link")
+        self.location_input_field.returnPressed.connect(self.import_location_coordinates)
+        import_row.addWidget(self.location_input_field, 1)
+        self.import_location_button = QPushButton("Import")
+        self.import_location_button.setObjectName("importLocationCoordinatesButton")
+        self.import_location_button.clicked.connect(self.import_location_coordinates)
+        import_row.addWidget(self.import_location_button)
+        coordinate_layout.addLayout(import_row)
+        map_note = QLabel(
+            "Natural Earth map data is bundled locally. Text-only or shortened map links are not resolved over the network."
+        )
+        map_note.setObjectName("locationMapPrivacyNote")
+        map_note.setWordWrap(True)
+        coordinate_layout.addWidget(map_note)
         coordinate_form = QFormLayout()
         saved_row = QHBoxLayout()
         self.saved_location_combo = QComboBox()
@@ -645,10 +940,12 @@ class MainWindow(QMainWindow):
         self.location_latitude_field = QLineEdit("34.0522")
         self.location_latitude_field.setObjectName("locationLatitude")
         self.location_latitude_field.setPlaceholderText("-90 to 90")
+        self.location_latitude_field.editingFinished.connect(self.sync_location_map_from_fields)
         coordinate_form.addRow("Latitude", self.location_latitude_field)
         self.location_longitude_field = QLineEdit("-118.2437")
         self.location_longitude_field.setObjectName("locationLongitude")
         self.location_longitude_field.setPlaceholderText("-180 to 180")
+        self.location_longitude_field.editingFinished.connect(self.sync_location_map_from_fields)
         coordinate_form.addRow("Longitude", self.location_longitude_field)
         coordinate_layout.addLayout(coordinate_form)
         coordinate_buttons = QHBoxLayout()
@@ -1267,6 +1564,33 @@ class MainWindow(QMainWindow):
         overview.setWordWrap(True)
         layout.addWidget(overview)
 
+        quick_start_group = QGroupBox("How to install and run UFADE")
+        quick_start_layout = QVBoxLayout(quick_start_group)
+        quick_start = QLabel(
+            "1. Copy and run the macOS setup commands in Terminal.  2. Choose the cloned checkout, its .venv Python, "
+            "and a protected output folder.  3. Validate the installation.  4. Connect, unlock, and trust one intended "
+            "device.  5. Launch UFADE, choose the acquisition inside its window, and use UFADE's own progress and stop controls."
+        )
+        quick_start.setObjectName("ufadeQuickStart")
+        quick_start.setWordWrap(True)
+        quick_start_layout.addWidget(quick_start)
+        guide_controls = QHBoxLayout()
+        guide_button = QPushButton("Open Full Walkthrough")
+        guide_button.setObjectName("openUFADEGuideButton")
+        guide_button.clicked.connect(self.show_ufade_guide)
+        guide_controls.addWidget(guide_button)
+        setup_button = QPushButton("Copy Setup Commands")
+        setup_button.setObjectName("copyUFADESetupButton")
+        setup_button.clicked.connect(self.copy_ufade_setup_commands)
+        guide_controls.addWidget(setup_button)
+        official_guide_button = QPushButton("Open Official Guide")
+        official_guide_button.setObjectName("openUFADEOfficialGuideButton")
+        official_guide_button.clicked.connect(self.open_ufade_installation_guide)
+        guide_controls.addWidget(official_guide_button)
+        guide_controls.addStretch()
+        quick_start_layout.addLayout(guide_controls)
+        layout.addWidget(quick_start_group)
+
         types_group = QGroupBox("Acquisition types selected inside UFADE")
         types_layout = QVBoxLayout(types_group)
         types = QLabel(
@@ -1305,6 +1629,10 @@ class MainWindow(QMainWindow):
         choose_python.setObjectName("chooseUFADEPythonButton")
         choose_python.clicked.connect(self.choose_ufade_python)
         python_row.addWidget(choose_python)
+        use_checkout_python = QPushButton("Use Checkout .venv")
+        use_checkout_python.setObjectName("useUFADECheckoutVenvButton")
+        use_checkout_python.clicked.connect(self.use_checkout_ufade_python)
+        python_row.addWidget(use_checkout_python)
         setup_layout.addRow("Python 3.11", python_row)
 
         output_row = QHBoxLayout()
@@ -1332,10 +1660,10 @@ class MainWindow(QMainWindow):
         validate_button.setObjectName("validateUFADEButton")
         validate_button.clicked.connect(self.validate_ufade_from_ui)
         controls.addWidget(validate_button)
-        setup_button = QPushButton("Copy Setup Commands")
-        setup_button.setObjectName("copyUFADESetupButton")
-        setup_button.clicked.connect(self.copy_ufade_setup_commands)
-        controls.addWidget(setup_button)
+        copy_launch_button = QPushButton("Copy Manual Launch")
+        copy_launch_button.setObjectName("copyUFADEManualLaunchButton")
+        copy_launch_button.clicked.connect(self.copy_ufade_manual_launch_command)
+        controls.addWidget(copy_launch_button)
         repository_button = QPushButton("Open UFADE Repository")
         repository_button.setObjectName("openUFADERepositoryButton")
         repository_button.clicked.connect(self.open_ufade_repository)
@@ -1359,9 +1687,15 @@ class MainWindow(QMainWindow):
         self.ufade_output.setObjectName("ufadeProviderOutput")
         self.ufade_output.setReadOnly(True)
         self.ufade_output.setMaximumBlockCount(1000)
+        self.ufade_output.setMinimumHeight(150)
         layout.addWidget(self.ufade_output, 1)
         self._update_backup_controls()
-        return page
+        scroll = QScrollArea()
+        scroll.setObjectName("ufadeBackupScrollArea")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(page)
+        return scroll
 
     def _build_command_center_page(self) -> QWidget:
         page = QWidget()
@@ -1490,8 +1824,8 @@ class MainWindow(QMainWindow):
         heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
         layout.addWidget(heading)
         explanation = QLabel(
-            "This browser runs the installed pymobiledevice3 with --help and displays its output verbatim. "
-            "It is the authoritative syntax for this environment; the attachment is used as the command-family map."
+            "Browse the command map instantly, then request version-matched help from the installed pymobiledevice3 "
+            "when needed. Live help can be cancelled and stops automatically after 15 seconds."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -1527,6 +1861,10 @@ class MainWindow(QMainWindow):
         self.refresh_manpage_button.setObjectName("refreshManpageButton")
         self.refresh_manpage_button.clicked.connect(self.refresh_selected_manpage)
         manpage_actions.addWidget(self.refresh_manpage_button)
+        self.cancel_manpage_button = QPushButton("Cancel Loading")
+        self.cancel_manpage_button.setObjectName("cancelManpageButton")
+        self.cancel_manpage_button.clicked.connect(self.cancel_manpage_load)
+        manpage_actions.addWidget(self.cancel_manpage_button)
         self.copy_manpage_command_button = QPushButton("Copy Command Prefix")
         self.copy_manpage_command_button.setObjectName("copyManpageCommandButton")
         self.copy_manpage_command_button.clicked.connect(self.copy_selected_manpage_command)
@@ -1621,7 +1959,8 @@ class MainWindow(QMainWindow):
             #protocolStackSummary { font-family: Menlo; color: #34435a; }
             #connectionBanner { background: #e9f2ff; border: 1px solid #afcff8; border-radius: 8px; padding: 10px; }
             #collectionPrivacyWarning { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
-            #installedAppsPrivacyWarning, #backupEncryptionWarning, #locationPrivacyWarning { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
+            #installedAppsPrivacyWarning, #backupEncryptionWarning, #locationPrivacyWarning, #capabilityMatrixBoundary { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
+            #capabilityMatrixStatus { background: #e9f2ff; border: 1px solid #afcff8; border-radius: 8px; padding: 9px; }
             #appSubtitle { color: #596273; }
             """
         )
@@ -1678,8 +2017,11 @@ class MainWindow(QMainWindow):
     def _update_device_fields(self, device: IOSDevice | None) -> None:
         identifier = device.identifier if device is not None else None
         if identifier != self._active_device_identifier:
+            if self._capability_process is not None:
+                self._discard_capability_process_for_device_change()
             self._active_device_identifier = identifier
             self._backup_encryption_state = None
+            self._reset_capability_matrix(device)
             self.backup_encryption_status.setText("Encryption state not checked for this device")
             self._installed_apps = ()
             self._populate_installed_apps(())
@@ -1708,6 +2050,296 @@ class MainWindow(QMainWindow):
         self.device_model_value.setText(device.product_type)
         self.device_udid_value.setText(device.identifier)
         self._update_sideload_controls()
+
+    def _reset_capability_matrix(self, device: IOSDevice | None) -> None:
+        self._capability_results = {result.identifier: result for result in untested_capability_results()}
+        self._capability_completed_at = None
+        self._capability_worker_completed = False
+        self.capability_progress.setRange(0, len(capability_definitions()))
+        self.capability_progress.setValue(0)
+        self.capability_status.setText(
+            "Run the matrix to test the selected device. No probe runs automatically."
+            if device is not None
+            else "Connect and select a trusted device before running the matrix."
+        )
+        self._populate_capability_matrix()
+        self._update_capability_controls()
+
+    def _capability_state_brush(self, state: CapabilityState) -> QBrush:
+        colors: Mapping[CapabilityState, str] = {
+            "ready": "#dff3e4",
+            "attention": "#fff0c7",
+            "unavailable": "#ffdeda",
+            "blocked": "#eceff4",
+            "not-tested": "#f2f3f6",
+            "not-applicable": "#e8eef7",
+        }
+        color = colors.get(state)
+        if color is None:
+            raise CapabilityMatrixError(f"No matrix color is defined for capability state: {state}")
+        return QBrush(QColor(color))
+
+    def _populate_capability_matrix(self) -> None:
+        selected_identifier: str | None = None
+        selected_rows = self.capability_table.selectionModel().selectedRows()
+        if len(selected_rows) == 1:
+            selected_item = self.capability_table.item(selected_rows[0].row(), 0)
+            if selected_item is not None:
+                candidate = selected_item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(candidate, str):
+                    selected_identifier = candidate
+        definitions = capability_definitions()
+        self.capability_table.setRowCount(len(definitions))
+        selected_row = 0
+        for row, definition in enumerate(definitions):
+            result = self._capability_results[definition.identifier]
+            values = (
+                result.layer,
+                result.title,
+                capability_state_label(result.state),
+                result.summary,
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.ItemDataRole.UserRole, result.identifier)
+                if column == 2:
+                    item.setBackground(self._capability_state_brush(result.state))
+                    item.setFont(QFont(item.font().family(), item.font().pointSize(), QFont.Weight.DemiBold))
+                self.capability_table.setItem(row, column, item)
+            if result.identifier == selected_identifier:
+                selected_row = row
+        if definitions:
+            self.capability_table.selectRow(selected_row)
+        self._capability_selection_changed()
+
+    def _capability_selection_changed(self) -> None:
+        selected_rows = self.capability_table.selectionModel().selectedRows()
+        if len(selected_rows) != 1:
+            self.capability_detail.setPlainText("Select a capability to view its evidence and next step.")
+            return
+        item = self.capability_table.item(selected_rows[0].row(), 0)
+        identifier = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if not isinstance(identifier, str) or identifier not in self._capability_results:
+            raise CapabilityMatrixError("Capability matrix selection does not identify a catalog result")
+        result = self._capability_results[identifier]
+        self.capability_detail.setPlainText(
+            f"{result.title} — {capability_state_label(result.state)}\n\n"
+            f"Evidence\n{result.evidence}\n\n"
+            f"Next step\n{result.remediation}"
+        )
+
+    def refresh_capability_matrix(self) -> None:
+        device = self.selected_device()
+        if device is None:
+            self._show_no_device()
+            return
+        if self._capability_process is not None:
+            QMessageBox.warning(self, "Capability Refresh Running", "Cancel or wait for the current matrix refresh.")
+            return
+        self._capability_results = {result.identifier: result for result in untested_capability_results()}
+        self._capability_completed_at = None
+        self._capability_cancel_reason = None
+        self._capability_worker_completed = False
+        self._capability_stdout_buffer.clear()
+        self._capability_stderr.clear()
+        self.capability_progress.setRange(0, len(capability_definitions()))
+        self.capability_progress.setValue(0)
+        self.capability_status.setText(
+            f"Testing {device.display_name()} with bounded, read-only service probes…"
+        )
+        self._populate_capability_matrix()
+        process = QProcess(self)
+        process.setProgram(sys.executable)
+        process.setArguments(
+            [
+                "-m",
+                "ios_developer_toolkit.capability_matrix_worker",
+                "--pymobiledevice3",
+                str(self._pmd3),
+                "--identifier",
+                device.identifier,
+                "--name",
+                device.name,
+                "--product-type",
+                device.product_type,
+                "--product-version",
+                device.product_version,
+                "--build-version",
+                device.build_version,
+                "--connection-type",
+                device.connection_type,
+            ]
+        )
+        process.setProcessEnvironment(qprocess_environment(base_environment()))
+        process.readyReadStandardOutput.connect(self._read_capability_stdout)
+        process.readyReadStandardError.connect(self._read_capability_stderr)
+        process.finished.connect(self._capability_finished)
+        process.errorOccurred.connect(self._capability_error)
+        self._capability_process = process
+        self._update_capability_controls()
+        process.start()
+
+    def _read_capability_stdout(self) -> None:
+        process = self._capability_process
+        if process is None:
+            return
+        self._capability_stdout_buffer.extend(bytes(process.readAllStandardOutput()))
+        while b"\n" in self._capability_stdout_buffer:
+            line, remainder = self._capability_stdout_buffer.split(b"\n", 1)
+            self._capability_stdout_buffer = bytearray(remainder)
+            if line.strip():
+                self._handle_capability_event(line.decode("utf-8"))
+
+    def _read_capability_stderr(self) -> None:
+        if self._capability_process is not None:
+            self._capability_stderr.extend(bytes(self._capability_process.readAllStandardError()))
+
+    def _handle_capability_event(self, payload: str) -> None:
+        event = parse_capability_worker_event(payload)
+        if isinstance(event, CapabilityWorkerStarted):
+            if event.total != len(capability_definitions()):
+                raise CapabilityMatrixError(
+                    f"Capability worker expected {event.total} results, but the UI catalog has {len(capability_definitions())}"
+                )
+            self.capability_progress.setRange(0, event.total)
+            return
+        if isinstance(event, CapabilityResult):
+            self._capability_results[event.identifier] = event
+            completed = sum(result.state != "not-tested" for result in self._capability_results.values())
+            self.capability_progress.setValue(completed)
+            self.capability_status.setText(
+                f"Completed {completed} of {len(capability_definitions())}: {event.title} — "
+                f"{capability_state_label(event.state)}"
+            )
+            self._populate_capability_matrix()
+            return
+        if isinstance(event, CapabilityWorkerCompleted):
+            self._capability_worker_completed = True
+            return
+        raise CapabilityMatrixError(f"Unsupported capability event type: {type(event).__name__}")
+
+    def _capability_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        del exit_status
+        self._read_capability_stdout()
+        self._read_capability_stderr()
+        if self._capability_stdout_buffer.strip():
+            self._handle_capability_event(self._capability_stdout_buffer.decode("utf-8"))
+            self._capability_stdout_buffer.clear()
+        tested = sum(result.state != "not-tested" for result in self._capability_results.values())
+        if self._capability_cancel_reason is not None:
+            self.capability_status.setText(f"{self._capability_cancel_reason} Preserved {tested} completed results.")
+        elif exit_code == 0 and self._capability_worker_completed:
+            self._capability_completed_at = datetime.now(timezone.utc).isoformat()
+            ready = sum(result.state == "ready" for result in self._capability_results.values())
+            attention = sum(result.state in ("attention", "unavailable", "blocked") for result in self._capability_results.values())
+            self.capability_status.setText(
+                f"Capability refresh completed: {ready} ready, {attention} requiring attention, "
+                f"{len(self._capability_results) - ready - attention} informational."
+            )
+        else:
+            stderr = self._capability_stderr.decode("utf-8", errors="replace").strip()
+            detail = stderr[-800:] if stderr else "The worker exited without a diagnostic message."
+            self.capability_status.setText(f"Capability refresh failed with exit code {exit_code}: {detail}")
+        self._capability_process = None
+        self._capability_cancel_reason = None
+        self._populate_capability_matrix()
+        self._update_capability_controls()
+
+    def _capability_error(self, process_error: QProcess.ProcessError) -> None:
+        if self._capability_process is None:
+            return
+        self.capability_status.setText(f"Capability worker error: {self._capability_process.errorString()}")
+        if process_error == QProcess.ProcessError.FailedToStart:
+            self._capability_process = None
+            self._update_capability_controls()
+
+    def cancel_capability_matrix(self) -> None:
+        self._stop_capability_process("Capability refresh was cancelled.")
+
+    def _stop_capability_process(self, reason: str) -> None:
+        process = self._capability_process
+        if process is None:
+            return
+        self._capability_cancel_reason = reason
+        self.capability_status.setText(f"{reason} Stopping the active probe…")
+        self._terminate_capability_children(process)
+        process.terminate()
+        QTimer.singleShot(1500, self._kill_capability_after_cancel)
+        self._update_capability_controls()
+
+    def _terminate_capability_children(self, process: QProcess) -> None:
+        process_identifier = process.processId()
+        if process_identifier <= 0 or not Path("/usr/bin/pkill").is_file():
+            return
+        subprocess.run(
+            ["/usr/bin/pkill", "-TERM", "-P", str(process_identifier)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=2,
+        )
+
+    def _discard_capability_process_for_device_change(self) -> None:
+        process = self._capability_process
+        if process is None:
+            return
+        process.readyReadStandardOutput.disconnect(self._read_capability_stdout)
+        process.readyReadStandardError.disconnect(self._read_capability_stderr)
+        process.finished.disconnect(self._capability_finished)
+        process.errorOccurred.disconnect(self._capability_error)
+        self._terminate_capability_children(process)
+        process.terminate()
+        if not process.waitForFinished(2500):
+            process.kill()
+            process.waitForFinished(1000)
+        self._capability_process = None
+        self._capability_cancel_reason = None
+        self._capability_stdout_buffer.clear()
+        self._capability_stderr.clear()
+
+    def _kill_capability_after_cancel(self) -> None:
+        process = self._capability_process
+        if process is not None and process.state() != QProcess.ProcessState.NotRunning:
+            process.kill()
+
+    def _update_capability_controls(self) -> None:
+        running = self._capability_process is not None
+        tested = any(result.state != "not-tested" for result in self._capability_results.values())
+        self.refresh_capabilities_button.setEnabled(self.selected_device() is not None and not running)
+        self.cancel_capabilities_button.setEnabled(running)
+        self.copy_capabilities_button.setEnabled(tested and not running)
+
+    def copy_capability_report(self) -> None:
+        device = self.selected_device()
+        if device is None:
+            self._show_no_device()
+            return
+        tested = tuple(
+            self._capability_results[definition.identifier]
+            for definition in capability_definitions()
+            if self._capability_results[definition.identifier].state != "not-tested"
+        )
+        if not tested:
+            QMessageBox.information(self, "No Capability Results", "Run the capability matrix before copying a report.")
+            return
+        lines = [
+            "iOS Developer Toolkit — Device Capability Matrix",
+            f"Target: {device.name}; {device.product_type}; iOS {device.product_version}; build {device.build_version}; {device.connection_type}",
+            f"Completed at: {self._capability_completed_at or 'incomplete or cancelled run'}",
+            "",
+        ]
+        for result in tested:
+            lines.extend(
+                (
+                    f"[{capability_state_label(result.state)}] {result.layer} / {result.title}",
+                    f"Result: {result.summary}",
+                    f"Evidence: {result.evidence}",
+                    f"Next step: {result.remediation}",
+                    "",
+                )
+            )
+        QApplication.clipboard().setText("\n".join(lines).rstrip() + "\n")
+        self.capability_status.setText("Copied the current capability report to the clipboard.")
 
     def show_developer_mode_guide(self) -> None:
         DeveloperModeDialog().exec()
@@ -1846,6 +2478,39 @@ class MainWindow(QMainWindow):
         if self._action_process is not None:
             self.action_output.appendPlainText(f"\nProcess error: {self._action_process.errorString()}")
 
+    def _apply_location_coordinates(self, coordinates: Coordinates) -> None:
+        self.location_latitude_field.setText(format(coordinates.latitude, ".12g"))
+        self.location_longitude_field.setText(format(coordinates.longitude, ".12g"))
+        self.location_map.set_marker(coordinates)
+        self.location_map.setToolTip(
+            f"Selected {coordinates.latitude:.6f}, {coordinates.longitude:.6f}. "
+            "The device is unchanged until Set Simulated Location is confirmed."
+        )
+
+    def _map_location_selected(self, latitude: float, longitude: float) -> None:
+        coordinates = validate_coordinates(str(latitude), str(longitude))
+        self._apply_location_coordinates(coordinates)
+
+    def import_location_coordinates(self) -> None:
+        try:
+            coordinates = parse_location_input(self.location_input_field.text())
+        except LocationLabError as error:
+            QMessageBox.critical(self, "Could Not Import Location", str(error))
+            return
+        self._apply_location_coordinates(coordinates)
+        self.location_input_field.clear()
+
+    def sync_location_map_from_fields(self) -> None:
+        try:
+            coordinates = validate_coordinates(
+                self.location_latitude_field.text(),
+                self.location_longitude_field.text(),
+            )
+        except LocationLabError as error:
+            self.location_map.setToolTip(f"Map marker not updated: {error}")
+            return
+        self.location_map.set_marker(coordinates)
+
     def _populate_saved_locations(self) -> None:
         self.saved_location_combo.blockSignals(True)
         self.saved_location_combo.clear()
@@ -1873,8 +2538,7 @@ class MainWindow(QMainWindow):
         if len(matching) != 1:
             raise LocationLabError(f"Expected one saved location for selection {name!r}, found {len(matching)}")
         location = matching[0]
-        self.location_latitude_field.setText(format(location.coordinates.latitude, ".12g"))
-        self.location_longitude_field.setText(format(location.coordinates.longitude, ".12g"))
+        self._apply_location_coordinates(location.coordinates)
         self._update_location_controls()
 
     def save_current_location(self) -> None:
@@ -1958,8 +2622,7 @@ class MainWindow(QMainWindow):
         except LocationLabError as error:
             QMessageBox.critical(self, "Could Not Nudge Coordinate", str(error))
             return
-        self.location_latitude_field.setText(format(nudged.latitude, ".12g"))
-        self.location_longitude_field.setText(format(nudged.longitude, ".12g"))
+        self._apply_location_coordinates(nudged)
 
     def apply_location_speed_preset(self, index: int) -> None:
         speed = self.location_route_speed_preset.itemData(index)
@@ -2283,6 +2946,9 @@ class MainWindow(QMainWindow):
         self.location_route_interval.setEnabled(not running)
         self.location_route_traversals.setEnabled(not running)
         self.location_nudge_distance.setEnabled(not running)
+        self.location_map.setEnabled(not running)
+        self.location_input_field.setEnabled(not running)
+        self.import_location_button.setEnabled(not running)
         saved_available = self._saved_locations_error is None and not running
         self.save_location_button.setEnabled(saved_available)
         self.remove_saved_location_button.setEnabled(
@@ -3184,6 +3850,23 @@ class MainWindow(QMainWindow):
         if selected:
             self.ufade_python_field.setText(selected)
 
+    def use_checkout_ufade_python(self) -> None:
+        try:
+            checkout = self.ufade_checkout()
+        except UFADEValidationError as error:
+            QMessageBox.critical(self, "Choose UFADE Checkout First", str(error))
+            return
+        python = checkout_python_path(checkout)
+        if not python.is_file():
+            QMessageBox.critical(
+                self,
+                "UFADE .venv Not Found",
+                f"The expected Python executable does not exist:\n{python}\n\n"
+                "Click Copy Setup Commands, run every command in Terminal, then try again.",
+            )
+            return
+        self.ufade_python_field.setText(str(python))
+
     def choose_ufade_output_directory(self) -> None:
         selected = QFileDialog.getExistingDirectory(
             self,
@@ -3226,29 +3909,70 @@ class MainWindow(QMainWindow):
             self.ufade_output.appendPlainText(f"UFADE validation failed: {error}")
             return None
         self._ufade_installation = installation
+        developer_status = (
+            "Developer-image submodule is populated."
+            if installation.developer_images_available
+            else "Developer-image submodule is not populated; logical acquisitions can still run, but UFADE Developer Options may be limited."
+        )
         message = (
             f"Validated UFADE {installation.ufade_version} with Python {installation.python_version}. "
-            "The GPL application will remain a separate process."
+            f"{developer_status} The GPL application will remain a separate process."
         )
         self.ufade_validation_status.setText(message)
         self.ufade_output.appendPlainText(message)
         return installation
 
     def copy_ufade_setup_commands(self) -> None:
-        commands = "\n".join(
+        commands = "\n".join(macos_setup_commands())
+        QApplication.clipboard().setText(commands)
+        self.ufade_output.appendPlainText(
+            "Copied macOS UFADE setup commands to the clipboard. Run them in Terminal, then choose the UFADE checkout "
+            "and click Use Checkout .venv."
+        )
+
+    def copy_ufade_manual_launch_command(self) -> None:
+        installation = self.validate_ufade_from_ui()
+        if installation is None:
+            QMessageBox.critical(
+                self,
+                "UFADE Validation Failed",
+                "Correct the UFADE checkout or Python 3.11 environment before copying a launch command.",
+            )
+            return
+        try:
+            destination = self.ufade_output_directory()
+        except UFADEValidationError as error:
+            QMessageBox.critical(self, "Invalid UFADE Output Directory", str(error))
+            return
+        command = "\n".join(
             (
-                "brew install python@3.11 python-tk@3.11",
-                "git clone https://github.com/prosch88/UFADE.git",
-                "cd UFADE",
-                "python3.11 -m venv venv",
-                "venv/bin/python -m pip install -r requirements.txt",
+                f"cd {shlex.quote(str(destination))}",
+                shlex.join((str(installation.python), str(installation.script))),
             )
         )
-        QApplication.clipboard().setText(commands)
-        self.ufade_output.appendPlainText("Copied macOS UFADE setup commands to the clipboard.")
+        QApplication.clipboard().setText(command)
+        self.ufade_output.appendPlainText(
+            "Copied a manual UFADE launch command. It uses the validated Python and starts in the selected output folder."
+        )
+
+    def show_ufade_guide(self) -> None:
+        UFADEGuideDialog().exec()
+
+    def open_ufade_installation_guide(self) -> None:
+        if not QDesktopServices.openUrl(QUrl(UFADE_INSTALLATION_URL)):
+            QMessageBox.critical(
+                self,
+                "Could Not Open UFADE Guide",
+                f"macOS could not open the official UFADE installation guide:\n{UFADE_INSTALLATION_URL}",
+            )
 
     def open_ufade_repository(self) -> None:
-        QDesktopServices.openUrl(QUrl(UFADE_REPOSITORY_URL))
+        if not QDesktopServices.openUrl(QUrl(UFADE_REPOSITORY_URL)):
+            QMessageBox.critical(
+                self,
+                "Could Not Open UFADE Repository",
+                f"macOS could not open the UFADE repository:\n{UFADE_REPOSITORY_URL}",
+            )
 
     def launch_ufade(self) -> None:
         device = self.selected_device()
@@ -3273,6 +3997,7 @@ class MainWindow(QMainWindow):
             f"Toolkit-selected device: {device.display_name()} ({device.identifier})\n"
             f"Working/output folder: {destination}\n"
             f"Python: {installation.python}\n\n"
+            f"Developer-image submodule: {'available' if installation.developer_images_available else 'not populated'}\n\n"
             "UFADE performs its own device discovery and will ask you to choose Logical, Logical+, UFD, PRFS, or other "
             "operations in its own window. Keep only the intended device connected. UFADE may create decrypted copies, "
             "archives, logs, or reports containing highly sensitive data. Use UFADE's own stop controls; closing this "
@@ -3662,12 +4387,20 @@ class MainWindow(QMainWindow):
         entry = self.selected_manpage_entry()
         if entry is not None:
             self._show_manpage_entry(entry)
-            self.refresh_selected_manpage()
 
     def _show_manpage_entry(self, entry: ManPageEntry) -> None:
         self.manpage_title.setText(entry.title)
         prefix = "pymobiledevice3" if not entry.command_path else f"pymobiledevice3 {shlex.join(entry.command_path)}"
         self.manpage_command.setText(prefix)
+        cached_help = self._manpage_cache.get(entry.command_path)
+        if cached_help is not None:
+            self.manpage_output.setPlainText(cached_help)
+        elif self._manpage_process is None:
+            self.manpage_output.setPlainText(
+                f"{entry.title}\n\nCommand prefix: {prefix}\nCategory: {entry.category}\n\n"
+                "Click Refresh Live Help to query the installed pymobiledevice3 executable. Selection alone never "
+                "contacts a device. Loading can be cancelled and is stopped automatically after 15 seconds."
+            )
 
     def select_manpage_path(self, command_path: tuple[str, ...]) -> None:
         matching_index = next(
@@ -3704,7 +4437,12 @@ class MainWindow(QMainWindow):
             return
         self._manpage_stdout.clear()
         self._manpage_stderr.clear()
-        self.manpage_output.setPlainText("Loading live help from the installed pymobiledevice3…")
+        self._manpage_active_path = entry.command_path
+        self._manpage_cancel_reason = None
+        self.manpage_output.setPlainText(
+            "Loading live help from the installed pymobiledevice3…\n\n"
+            "This can take several seconds on the first Python import. Use Cancel Loading to stop immediately."
+        )
         process = QProcess(self)
         process.setProgram(str(self._pmd3))
         process.setArguments([*entry.command_path, "--help"])
@@ -3716,6 +4454,7 @@ class MainWindow(QMainWindow):
         self._manpage_process = process
         self._update_manpage_controls()
         process.start()
+        self._manpage_timeout_timer.start(MANPAGE_HELP_TIMEOUT_MS)
 
     def _read_manpage_stdout(self) -> None:
         if self._manpage_process is not None:
@@ -3727,25 +4466,62 @@ class MainWindow(QMainWindow):
 
     def _manpage_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         del exit_status
+        self._manpage_timeout_timer.stop()
         self._read_manpage_stdout()
         self._read_manpage_stderr()
         stdout = self._manpage_stdout.decode("utf-8", errors="replace")
         stderr = self._manpage_stderr.decode("utf-8", errors="replace")
-        if exit_code == 0:
+        if self._manpage_cancel_reason is not None:
+            partial_output = stdout or stderr
+            suffix = f"\n\nPartial output:\n{partial_output}" if partial_output else ""
+            self.manpage_output.setPlainText(f"{self._manpage_cancel_reason}{suffix}")
+        elif exit_code == 0 and stdout:
+            if self._manpage_active_path is None:
+                raise CommandCatalogError("Live help completed without an active command path")
+            self._manpage_cache[self._manpage_active_path] = stdout
             self.manpage_output.setPlainText(stdout)
         else:
             self.manpage_output.setPlainText(
                 f"Live help failed with exit code {exit_code}.\n\n{stderr or stdout}"
             )
         self._manpage_process = None
+        self._manpage_active_path = None
+        self._manpage_cancel_reason = None
         self._update_manpage_controls()
 
     def _manpage_error(self, process_error: QProcess.ProcessError) -> None:
         if self._manpage_process is not None:
             self.manpage_output.setPlainText(f"Could not load help: {self._manpage_process.errorString()}")
             if process_error == QProcess.ProcessError.FailedToStart:
+                self._manpage_timeout_timer.stop()
                 self._manpage_process = None
+                self._manpage_active_path = None
+                self._manpage_cancel_reason = None
                 self._update_manpage_controls()
+
+    def cancel_manpage_load(self) -> None:
+        self._cancel_manpage_load("Live help loading was cancelled by the user.")
+
+    def _manpage_timed_out(self) -> None:
+        self._cancel_manpage_load(
+            "Live help exceeded the 15-second limit and was stopped. The installed CLI did not return promptly; "
+            "the Man Pages browser remains available."
+        )
+
+    def _cancel_manpage_load(self, reason: str) -> None:
+        process = self._manpage_process
+        if process is None:
+            return
+        self._manpage_timeout_timer.stop()
+        self._manpage_cancel_reason = reason
+        self.manpage_output.setPlainText(f"{reason}\n\nStopping the help process…")
+        process.terminate()
+        QTimer.singleShot(MANPAGE_HELP_KILL_DELAY_MS, self._kill_manpage_after_cancel)
+
+    def _kill_manpage_after_cancel(self) -> None:
+        process = self._manpage_process
+        if process is not None and process.state() != QProcess.ProcessState.NotRunning:
+            process.kill()
 
     def _update_manpage_controls(self) -> None:
         running = self._manpage_process is not None
@@ -3753,6 +4529,7 @@ class MainWindow(QMainWindow):
         self.manpage_list.setEnabled(not running)
         self.manpage_search_field.setEnabled(not running)
         self.refresh_manpage_button.setEnabled(selected and not running)
+        self.cancel_manpage_button.setEnabled(running)
         self.copy_manpage_command_button.setEnabled(selected and not running)
         self.use_manpage_command_button.setEnabled(selected and not running)
 
@@ -3946,6 +4723,15 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         self._scanner.stop()
+        self._manpage_timeout_timer.stop()
+        capability_process = self._capability_process
+        if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
+            self._terminate_capability_children(capability_process)
+            capability_process.terminate()
+            if not capability_process.waitForFinished(2500):
+                capability_process.kill()
+                capability_process.waitForFinished(1000)
+            self._capability_process = None
         for process in critical_processes:
             process.terminate()
             if not process.waitForFinished(10000):

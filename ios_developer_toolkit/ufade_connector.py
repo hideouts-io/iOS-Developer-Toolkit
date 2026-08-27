@@ -7,6 +7,8 @@ from pathlib import Path
 
 
 UFADE_REPOSITORY_URL = "https://github.com/prosch88/UFADE"
+UFADE_INSTALLATION_URL = f"{UFADE_REPOSITORY_URL}#installation"
+UFADE_USAGE_URL = f"{UFADE_REPOSITORY_URL}#usage"
 UFADE_REQUIRED_PYTHON = (3, 11)
 UFADE_RUNTIME_IMPORTS = (
     "tkinter",
@@ -18,6 +20,14 @@ UFADE_RUNTIME_IMPORTS = (
     "iOSbackup",
     "pyiosbackup",
     "paramiko",
+    "simpleaudio",
+    "tkcalendar",
+    "crossfiledialog",
+    "exifread",
+    "pdfme",
+    "imagehash",
+    "numpy",
+    "cryptography",
 )
 
 
@@ -32,6 +42,26 @@ class UFADEInstallation:
     python: Path
     ufade_version: str
     python_version: str
+    developer_images_available: bool
+
+
+def macos_setup_commands() -> tuple[str, ...]:
+    return (
+        "brew install python@3.11 python-tk@3.11",
+        "git clone --recurse-submodules https://github.com/prosch88/UFADE.git",
+        "cd UFADE",
+        "python3.11 -m venv .venv",
+        ".venv/bin/python -m pip install --upgrade pip",
+        ".venv/bin/python -m pip install -r requirements.txt",
+    )
+
+
+def checkout_python_path(checkout: Path) -> Path:
+    return checkout.expanduser().resolve() / ".venv" / "bin" / "python"
+
+
+def developer_images_are_available(checkout: Path) -> bool:
+    return (checkout.expanduser().resolve() / "ufade_developer" / "Developer").is_dir()
 
 
 def required_absolute_path(value: Path, label: str) -> Path:
@@ -111,8 +141,9 @@ def validate_ufade_dependencies(checkout: Path, python: Path) -> None:
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise UFADEValidationError(
-            "UFADE's Python 3.11 environment is incomplete. Install its requirements in that separate environment. "
-            f"Import check failed: {detail}"
+            "UFADE's Python 3.11 environment is incomplete. Run "
+            f"{python} -m pip install -r {checkout / 'requirements.txt'} in that separate environment. "
+            f"Runtime import check failed: {detail}"
         )
 
 
@@ -126,4 +157,5 @@ def inspect_ufade_installation(checkout: Path, python: Path) -> UFADEInstallatio
         python=resolved_python,
         ufade_version=ufade_version,
         python_version=python_version,
+        developer_images_available=developer_images_are_available(resolved_checkout),
     )

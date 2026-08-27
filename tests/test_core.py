@@ -33,8 +33,11 @@ from ios_developer_toolkit.location_lab import (
     add_saved_location,
     build_route,
     clear_location_arguments,
+    coordinates_to_map_fractions,
     inspect_gpx,
+    map_fractions_to_coordinates,
     move_coordinates,
+    parse_location_input,
     parse_route_waypoints,
     parse_saved_locations,
     play_location_arguments,
@@ -51,6 +54,9 @@ from ios_developer_toolkit.live_logs import (
 from ios_developer_toolkit.models import DeviceDataError, parse_devices_json
 from ios_developer_toolkit.ufade_connector import (
     UFADEValidationError,
+    checkout_python_path,
+    developer_images_are_available,
+    macos_setup_commands,
     parse_python_version,
     validate_ufade_checkout,
 )
@@ -183,6 +189,40 @@ class LocalDDITests(unittest.TestCase):
 
 
 class LocationLabTests(unittest.TestCase):
+    def test_imports_coordinates_and_full_map_links_without_network_resolution(self) -> None:
+        cases = (
+            ("34.0522,-118.2437", Coordinates(34.0522, -118.2437)),
+            ("geo:37.3349,-122.0090", Coordinates(37.3349, -122.0090)),
+            (
+                "https://maps.apple.com/?ll=51.5007%2C-0.1246",
+                Coordinates(51.5007, -0.1246),
+            ),
+            (
+                "https://www.google.com/maps/@35.6586,139.7454,15z",
+                Coordinates(35.6586, 139.7454),
+            ),
+            (
+                "https://www.google.com/maps/search/?api=1&query=-33.8568%2C151.2153",
+                Coordinates(-33.8568, 151.2153),
+            ),
+        )
+        for payload, expected in cases:
+            with self.subTest(payload=payload):
+                self.assertEqual(parse_location_input(payload), expected)
+        for unsupported in ("https://maps.app.goo.gl/short", "https://maps.apple.com/?q=Coffee"):
+            with self.subTest(unsupported=unsupported):
+                with self.assertRaises(LocationLabError):
+                    parse_location_input(unsupported)
+
+    def test_round_trips_coordinates_through_offline_map_fractions(self) -> None:
+        original = Coordinates(latitude=34.0522, longitude=-118.2437)
+        horizontal, vertical = coordinates_to_map_fractions(original)
+        restored = map_fractions_to_coordinates(horizontal, vertical)
+        self.assertAlmostEqual(restored.latitude, original.latitude, places=12)
+        self.assertAlmostEqual(restored.longitude, original.longitude, places=12)
+        with self.assertRaises(LocationLabError):
+            map_fractions_to_coordinates(1.1, 0.5)
+
     def test_builds_version_specific_location_commands(self) -> None:
         coordinates = Coordinates(latitude=34.0522, longitude=-118.2437)
         self.assertEqual(
@@ -433,6 +473,23 @@ class BackupWorkerParsingTests(unittest.TestCase):
 
 
 class UFADEConnectorTests(unittest.TestCase):
+    def test_builds_isolated_macos_setup_and_checkout_python_path(self) -> None:
+        commands = macos_setup_commands()
+        self.assertIn("--recurse-submodules", commands[1])
+        self.assertIn("python3.11 -m venv .venv", commands)
+        self.assertEqual(commands[-1], ".venv/bin/python -m pip install -r requirements.txt")
+        self.assertEqual(
+            checkout_python_path(Path("/Applications/UFADE")),
+            Path("/Applications/UFADE/.venv/bin/python"),
+        )
+
+    def test_reports_whether_developer_image_submodule_is_populated(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            checkout = Path(temporary_directory)
+            self.assertFalse(developer_images_are_available(checkout))
+            (checkout / "ufade_developer" / "Developer").mkdir(parents=True)
+            self.assertTrue(developer_images_are_available(checkout))
+
     def test_validates_external_gpl_checkout_and_reads_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             checkout = Path(temporary_directory)
