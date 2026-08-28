@@ -11,14 +11,14 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)
 ![GUI](https://img.shields.io/badge/GUI-PySide6-41cd52)
 ![pymobiledevice3](https://img.shields.io/badge/pymobiledevice3-10.11.0-8250df)
-![Tests](https://img.shields.io/badge/tests-37%20passing-1a7f37)
+![Tests](https://img.shields.io/badge/tests-45%20passing-1a7f37)
 ![License](https://img.shields.io/badge/license-MIT-2da44e)
 
 > **Scope:** iOS Developer Toolkit is a macOS front end for authorized Apple-device development, diagnostics, testing, backup, and evidence-preservation workflows. It does not jailbreak iOS, bypass a passcode, disable the sandbox, defeat code signing, decrypt protected traffic, or provide unrestricted filesystem access.
 
 ![iOS Device Workbench Home workspace](docs/screenshots/home.png)
 
-The current interface organizes one trusted device connection into 11 focused workspaces. It mounts modern DDIs, runs validated `pymobiledevice3` presets, exposes the installed command help, simulates test locations, streams three forms of device logs, captures packets, inspects and installs eligible IPAs, inventories apps, creates encrypted backups, launches an isolated UFADE acquisition, and builds hashed evidence cases.
+The current interface organizes one trusted device connection into 12 focused workspaces. It mounts modern DDIs, checks device and developer-service readiness, runs validated `pymobiledevice3` presets, exposes the installed command help, simulates test locations, streams three forms of device logs, captures packets, inspects and installs eligible IPAs, inventories apps, creates encrypted backups, launches an isolated UFADE acquisition, and builds hashed evidence cases.
 
 The screenshots use an illustrative device name, model, version, build, and UDID. They contain no real device capture, account identifier, backup, credential, or case evidence.
 
@@ -158,7 +158,7 @@ Current pinned runtime:
 | PySide6 | `6.11.2` |
 | pymobiledevice3 | `10.11.0` |
 | Local Xcode candidate | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` |
-| Toolkit release | `0.2.0` |
+| Toolkit release | `0.2.1` |
 
 The current GUI and launcher are macOS-specific. Although upstream `pymobiledevice3` supports other host platforms, this application currently depends on macOS tools and conventions such as Xcode/CoreDevice, `hdiutil`, `security`, `codesign`, `.app` bundles, and macOS user-library paths.
 
@@ -174,10 +174,10 @@ cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
 
-For the published `v0.2.0` source state:
+For the published `v0.2.1` source state:
 
 ```bash
-git clone --branch v0.2.0 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+git clone --branch v0.2.1 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
 cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
@@ -254,11 +254,17 @@ If the Developer Mode setting is missing, pair the device in Xcode through **Win
 
 Open **Device & DDI**. For iOS 17 and later, choose either the downloaded personalized DDI or the local Xcode candidate. List mounted images after the operation and retain the output if the mount state matters to your case.
 
-### 4. Run the intended workflow
+### 4. Verify capability readiness
+
+Open **Capability Matrix** and run the manual check against the selected device. Review each row independently: a working Lockdown connection does not prove that Developer Mode, the DDI, an RSD tunnel, CoreDevice, DVT, or Web Inspector is ready. Resolve **Needs attention**, **Unavailable**, or **Blocked** results required by your intended workflow before continuing.
+
+The matrix is a point-in-time readiness report, not a permanent certification. Save or copy the report when you need to document why a command was expected to work or which prerequisite remained unavailable.
+
+### 5. Run the intended workflow
 
 Use a guided workspace or a read-oriented Command Center preset first. The exact target, prerequisites, risk label, and argument preview are visible before execution.
 
-### 5. Clean up
+### 6. Clean up
 
 - Stop every live log, PCAP, metrics, or GPX playback process.
 - Save or explicitly discard each pop-out log capture.
@@ -458,6 +464,30 @@ Acquisition choices are made inside UFADE:
 - **PRFS** — a decrypted, filesystem-shaped logical archive assembled from service-visible data;
 - **Full filesystem** — only when the device is already jailbroken; the integration supplies no jailbreak or bypass.
 
+##### Set up and launch UFADE on macOS
+
+UFADE must use its own Python 3.11 environment. Do not install UFADE's pinned dependencies into the iOS Developer Toolkit environment. The **Copy Setup Commands** button provides the current recommended commands:
+
+```bash
+brew install python@3.11 python-tk@3.11
+git clone --recurse-submodules https://github.com/prosch88/UFADE.git
+cd UFADE
+python3.11 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+Then, in **Backup → UFADE External**:
+
+1. Choose the cloned `UFADE` folder containing `ufade.py`, `requirements.txt`, and `LICENSE`.
+2. Click **Use Checkout .venv**, or select `UFADE/.venv/bin/python` manually.
+3. Choose a protected working/output directory with enough free space for the intended acquisition.
+4. Click **Validate Installation** and resolve every missing-file, Python-version, submodule, or import error.
+5. Connect, unlock, and trust only the intended device, then click **Launch UFADE**.
+6. Select the acquisition and answer password prompts inside UFADE. Use UFADE's own progress and stop controls.
+
+The selected toolkit device is shown only as a cross-check; UFADE performs its own discovery and device selection. Closing iOS Developer Toolkit does not stop the separately launched UFADE process. UFADE output may contain decrypted backups, app-shared data, logs, device identifiers, and account content, so keep it outside the source checkout on access-controlled storage.
+
 Use UFADE's own documentation to assess version compatibility, licensing, dependencies, and the forensic meaning of each output format.
 
 ### Sideload IPA
@@ -521,6 +551,20 @@ The Man Pages browser indexes 59 top-level and nested command routes. Selecting 
 This is the safest source for exact syntax in the installed environment. A command listed by the client is still not proof that the selected device build advertises the corresponding Apple service.
 
 The index covers activation, AFC, apps, backup, Bluetooth logging, Bonjour, companion, crash, Cryptex, developer services, diagnostics, IDAM, Lockdown, mounter, notifications, PCAP, power assertions, processes, profiles, provisioning, RemoteXPC, restore, SpringBoard, syslog, usbmux, Web Inspector, version, DVT, CoreDevice, DebugServer, accessibility, WDA, and other installed families.
+
+#### Advanced command interpretation
+
+The command catalog tells you what the installed client can request. Interpret its output according to the Apple service layer that produced it:
+
+| Layer | Examples | Correct interpretation |
+|---|---|---|
+| Lockdown services | AFC, Installation Proxy, MobileBackup2, diagnostics, syslog, profiles | Apple-defined views available through the pairing relationship; not root or unrestricted storage access. |
+| RemoteXPC / RSD | `remote`, CoreDevice, modern display, HID, and location services | A transport and service-discovery layer; an advertised service can still reject a request or be absent on a particular build. |
+| DVT / DTX | Sysmon, graphics, energy, OSLog, notifications, CoreProfile | Instruments-like developer telemetry that generally depends on Developer Mode, a compatible DDI, and the required tunnel. |
+| Packet and log capture | PCAP, syslog, OSLog, Bluetooth HCI | Complementary observations with independent encryption, retention, permission, and visibility limits. |
+| Process control | Launch, signal, kill, DebugServer | Runtime-changing operations that remain constrained by Apple service authorization. |
+| Web automation | Web Inspector, CDP, WDA | Features requiring explicit device settings or a correctly signed WebDriverAgent; not arbitrary application automation by default. |
+| Restore and profile management | IPSW, erase, supervision, activation, profile installation | High-impact administrative operations requiring exact authorization, current syntax, backups, and a verified recovery plan. |
 
 ### Scope and Safety
 
@@ -823,7 +867,7 @@ The final launcher check opens the application and briefly verifies the process.
 
 ### Release model
 
-Version `0.2.0` is distributed as source. The repository stages a local `.app` wrapper for development convenience; it is not signed, notarized, or self-contained. A future portable macOS build would need dependency bundling, hardened-runtime signing, notarization, release-asset generation, and verification on a clean Mac.
+Version `0.2.1` is distributed as source. The repository stages a local `.app` wrapper for development convenience; it is not signed, notarized, or self-contained. A future portable macOS build would need dependency bundling, hardened-runtime signing, notarization, release-asset generation, and verification on a clean Mac.
 
 Windows and Linux would require a separate host implementation or deliberately isolated adapters for discovery, pairing, filesystem paths, DDI acquisition, local signature inspection, packaging, and platform-specific dependencies. Copying the macOS wrapper is not a cross-platform port.
 

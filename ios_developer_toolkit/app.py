@@ -1195,6 +1195,7 @@ class MainWindow(QMainWindow):
         command_button.clicked.connect(self._open_log_presets)
         archive_layout.addWidget(command_button)
         evidence_button = QPushButton("Open Evidence Capture")
+        evidence_button.setObjectName("openEvidenceCaptureButton")
         evidence_button.clicked.connect(self._navigation_handler("Evidence Capture"))
         archive_layout.addWidget(evidence_button)
         layout.addWidget(archive_group)
