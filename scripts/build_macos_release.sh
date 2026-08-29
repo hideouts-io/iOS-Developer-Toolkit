@@ -32,13 +32,15 @@ fi
 
 release_root="$(cd "$repository_root" && mkdir -p "$output_directory" && cd "$output_directory" && pwd)"
 build_environment="$repository_root/build/release-venv-$machine_architecture"
-app_path="$repository_root/build/release/iOS Developer Toolkit.app"
+generated_app_path="$repository_root/build/release/iOS Developer Toolkit.app"
+staging_root="$(mktemp -d /private/tmp/iosdevtoolkit-release.XXXXXX)"
+app_path="$staging_root/iOS Developer Toolkit.app"
 archive_name="iOS-Developer-Toolkit-v${release_version}-macOS-${machine_architecture}.zip"
 archive_path="$release_root/$archive_name"
 generated_directory="$repository_root/packaging/deployment"
 deployment_config="$repository_root/build/pysidedeploy-$machine_architecture.spec"
 
-/bin/rm -rf "$generated_directory/main.app" "$generated_directory/main.dist" "$app_path"
+/bin/rm -rf "$generated_directory/main.app" "$generated_directory/main.dist" "$generated_app_path"
 /bin/rm -f "$archive_path"
 
 "$python_executable" -m venv "$build_environment"
@@ -50,11 +52,12 @@ cd "$repository_root"
 /bin/cp packaging/pysidedeploy.spec "$deployment_config"
 "$build_environment/bin/pyside6-deploy" -c "$deployment_config" --force --keep-deployment-files
 
-if [[ ! -d "$app_path" ]]; then
-  echo "pyside6-deploy did not create the expected app bundle: $app_path" >&2
+if [[ ! -d "$generated_app_path" ]]; then
+  echo "pyside6-deploy did not create the expected app bundle: $generated_app_path" >&2
   exit 68
 fi
 
+/usr/bin/ditto --norsrc "$generated_app_path" "$app_path"
 plist_path="$app_path/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.hideouts.ios-developer-toolkit" "$plist_path"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName iOS Developer Toolkit" "$plist_path"
