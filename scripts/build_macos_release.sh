@@ -32,15 +32,14 @@ fi
 
 release_root="$(cd "$repository_root" && mkdir -p "$output_directory" && cd "$output_directory" && pwd)"
 build_environment="$repository_root/build/release-venv-$machine_architecture"
-generated_app_path="$repository_root/build/release/iOS Developer Toolkit.app"
 staging_root="$(mktemp -d /private/tmp/iosdevtoolkit-release.XXXXXX)"
+source_wrapper="$staging_root/main.py"
+generated_app_path="$staging_root/build/iOS Developer Toolkit.app"
 app_path="$staging_root/iOS Developer Toolkit.app"
 archive_name="iOS-Developer-Toolkit-v${release_version}-macOS-${machine_architecture}.zip"
 archive_path="$release_root/$archive_name"
-generated_directory="$repository_root/packaging/deployment"
-deployment_config="$repository_root/build/pysidedeploy-$machine_architecture.spec"
+deployment_config="$staging_root/pysidedeploy.spec"
 
-/bin/rm -rf "$generated_directory/main.app" "$generated_directory/main.dist" "$generated_app_path"
 /bin/rm -f "$archive_path"
 
 "$python_executable" -m venv "$build_environment"
@@ -49,7 +48,14 @@ deployment_config="$repository_root/build/pysidedeploy-$machine_architecture.spe
 
 cd "$repository_root"
 "$build_environment/bin/python" -m unittest discover -s tests -v
+/bin/cp packaging/main.py "$source_wrapper"
 /bin/cp packaging/pysidedeploy.spec "$deployment_config"
+/usr/bin/sed -i '' \
+  -e "s|^project_dir =.*|project_dir = $repository_root|" \
+  -e "s|^input_file =.*|input_file = $source_wrapper|" \
+  -e "s|^exec_directory =.*|exec_directory = $staging_root/build|" \
+  -e "s|^icon =.*|icon = $repository_root/macos/iOSDeveloperToolkit.icns|" \
+  "$deployment_config"
 "$build_environment/bin/pyside6-deploy" -c "$deployment_config" --force --keep-deployment-files
 
 if [[ ! -d "$generated_app_path" ]]; then
