@@ -17,15 +17,17 @@ jobs:
         include:
           - runner: macos-15
             architecture: arm64
+            python_architecture: arm64
           - runner: macos-15-intel
             architecture: x86_64
+            python_architecture: x64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-          architecture: ${{ matrix.architecture }}
+          architecture: ${{ matrix.python_architecture }}
           cache: pip
       - name: Build and verify native application
         run: ./scripts/build_macos_release.sh "${GITHUB_REF_NAME#v}" release-assets python3
