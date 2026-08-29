@@ -19,7 +19,13 @@ from ios_developer_toolkit import APP_VERSION
 from ios_developer_toolkit.catalog import snapshot_commands
 from ios_developer_toolkit.models import CommandResult, CommandSpec
 from ios_developer_toolkit.models import DeviceDataError, parse_devices_json
-from ios_developer_toolkit.runtime import device_environment, pymobiledevice3_executable
+from ios_developer_toolkit.runtime import (
+    ExecutableCommand,
+    command_argv,
+    command_text,
+    device_environment,
+    pymobiledevice3_command,
+)
 from ios_developer_toolkit.validation import output_indicates_failure
 
 
@@ -82,12 +88,8 @@ def create_case_directory(output_root: Path, udid: str) -> Path:
     return case_directory
 
 
-def command_text(executable: Path, arguments: Sequence[str]) -> str:
-    return " ".join((str(executable), *arguments))
-
-
 def run_snapshot(
-    executable: Path,
+    executable: ExecutableCommand,
     environment: Mapping[str, str],
     case_directory: Path,
     spec: CommandSpec,
@@ -106,7 +108,7 @@ def run_snapshot(
         attempts = attempt
         emit("step-start", spec.title, {"command": command_text(executable, spec.arguments), "attempt": attempt})
         process = subprocess.Popen(
-            [str(executable), *spec.arguments],
+            command_argv(executable, spec.arguments),
             cwd=case_directory,
             env=environment,
             stdout=subprocess.PIPE,
@@ -220,7 +222,7 @@ def stream_specs(include_syslog: bool, include_oslog: bool, include_pcap: bool) 
 
 
 def start_stream(
-    executable: Path,
+    executable: ExecutableCommand,
     environment: Mapping[str, str],
     case_directory: Path,
     spec: StreamSpec,
@@ -231,7 +233,7 @@ def start_stream(
     emit("stream-start", spec.title, {"command": command_text(executable, spec.arguments), "output": str(output_path)})
     try:
         process = subprocess.Popen(
-            [str(executable), *spec.arguments],
+            command_argv(executable, spec.arguments),
             cwd=case_directory,
             env=environment,
             stdout=output_file,
@@ -275,7 +277,7 @@ def stop_stream(handle: StreamHandle) -> CommandResult:
 
 
 def collect_streams(
-    executable: Path,
+    executable: ExecutableCommand,
     environment: Mapping[str, str],
     case_directory: Path,
     duration_seconds: int,
@@ -364,7 +366,7 @@ def run_collection(
 ) -> Path:
     if duration_seconds < 1:
         raise ValueError("Capture duration must be at least one second")
-    executable = pymobiledevice3_executable()
+    executable = pymobiledevice3_command()
     environment = device_environment(udid)
     case_directory = create_case_directory(output_root, udid)
     started_at = utc_now()

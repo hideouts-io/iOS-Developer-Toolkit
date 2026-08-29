@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ios_developer_toolkit.runtime import ExecutableCommand, command_arguments, command_argv
+
 
 MAX_RECENT_LINES = 50_000
 MAX_VISIBLE_BLOCKS = 20_000
@@ -136,7 +138,7 @@ class LiveLogWindow(QMainWindow):
 
     def __init__(
         self,
-        executable: Path,
+        executable: ExecutableCommand,
         specification: LogStreamSpec,
         device_identifier: str,
         device_name: str,
@@ -260,8 +262,8 @@ class LiveLogWindow(QMainWindow):
                 ) from error
             raise LiveLogError(f"Could not initialize live-log spool {self._spool_path}: {error}") from error
         process = QProcess(self)
-        process.setProgram(str(self._executable))
-        process.setArguments(list(self._specification.arguments))
+        process.setProgram(str(self._executable.program))
+        process.setArguments(list(command_arguments(self._executable, self._specification.arguments)))
         process_environment = QProcessEnvironment.systemEnvironment()
         for key, value in self._environment.items():
             process_environment.insert(key, value)
@@ -412,7 +414,7 @@ class LiveLogWindow(QMainWindow):
             "requires_developer_services": self._specification.requires_developer_services,
             "device_identifier": self._device_identifier,
             "device_name": self._device_name,
-            "command": [str(self._executable), *self._specification.arguments],
+            "command": list(command_argv(self._executable, self._specification.arguments)),
             "started_at": self._started_at,
             "finished_at": self._finished_at,
             "exit_code": self._exit_code,

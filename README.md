@@ -11,7 +11,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)
 ![GUI](https://img.shields.io/badge/GUI-PySide6-41cd52)
 ![pymobiledevice3](https://img.shields.io/badge/pymobiledevice3-10.11.0-8250df)
-![Tests](https://img.shields.io/badge/tests-45%20passing-1a7f37)
+![Tests](https://img.shields.io/badge/tests-49%20passing-1a7f37)
 ![License](https://img.shields.io/badge/license-MIT-2da44e)
 
 > **Scope:** iOS Developer Toolkit is a macOS front end for authorized Apple-device development, diagnostics, testing, backup, and evidence-preservation workflows. It does not jailbreak iOS, bypass a passcode, disable the sandbox, defeat code signing, decrypt protected traffic, or provide unrestricted filesystem access.
@@ -55,11 +55,7 @@ The screenshots use an illustrative device name, model, version, build, and UDID
 
 ## Start here
 
-```bash
-git clone https://github.com/hideouts-io/iOS-Developer-Toolkit.git
-cd iOS-Developer-Toolkit
-./script/build_and_run.sh
-```
+Download the native `arm64` build for Apple Silicon or the native `x86_64` build for an Intel Mac from the [latest release](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest). Verify its checksum, extract the ZIP, and open **iOS Developer Toolkit.app**. The release bundle carries its pinned Python, PySide6, pymobiledevice3, and developer-image runtime; a repository checkout is not required. Terminal-only interactive IPython/xonsh shells are intentionally excluded from the GUI bundle and remain available from the source installation.
 
 Connect an unlocked iPhone or iPad with a data-capable USB cable, tap **Trust** on the device, and select the intended target in the top-right device picker. Developer Mode and a mounted DDI are required only for workflows that use Apple developer services; basic pairing, Lockdown, apps, backups, AFC, classic syslog, and many diagnostics can work without them.
 
@@ -158,11 +154,34 @@ Current pinned runtime:
 | PySide6 | `6.11.2` |
 | pymobiledevice3 | `10.11.0` |
 | Local Xcode candidate | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` |
-| Toolkit release | `0.2.1` |
+| Toolkit release | `0.3.0` |
 
 The current GUI and launcher are macOS-specific. Although upstream `pymobiledevice3` supports other host platforms, this application currently depends on macOS tools and conventions such as Xcode/CoreDevice, `hdiutil`, `security`, `codesign`, `.app` bundles, and macOS user-library paths.
 
 ## Installation
+
+### Download the native application
+
+Release `v0.3.0` provides two independent application bundles:
+
+| Mac | Release asset |
+|---|---|
+| Apple Silicon (`arm64`) | `iOS-Developer-Toolkit-v0.3.0-macOS-arm64.zip` |
+| Intel (`x86_64`) | `iOS-Developer-Toolkit-v0.3.0-macOS-x86_64.zip` |
+
+Check the Mac architecture before downloading:
+
+```bash
+uname -m
+```
+
+Download the matching ZIP and `SHA256SUMS.txt` from the [release page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/tag/v0.3.0), place them in the same directory, and verify the selected archive:
+
+```bash
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+Extract the verified ZIP and move **iOS Developer Toolkit.app** to `/Applications` if desired. These builds are self-contained and ad-hoc code signed, but they are not Developer ID signed or Apple-notarized. macOS may therefore block the first launch. Use Finder’s **Open** command from the app’s contextual menu and review the publisher warning; do not disable Gatekeeper or recursively strip quarantine attributes.
 
 ### Clone the repository
 
@@ -174,10 +193,10 @@ cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
 
-For the published `v0.2.1` source state:
+For the published `v0.3.0` source state:
 
 ```bash
-git clone --branch v0.2.1 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+git clone --branch v0.3.0 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
 cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
@@ -189,7 +208,7 @@ The launcher:
 3. stages `dist/iOS Developer Toolkit.app`;
 4. opens the staged app.
 
-The staged app is a development wrapper around the repository environment. It is not a portable, signed, notarized binary release. Do not move only the `.app` away from its checkout and expect it to carry the Python environment with it.
+The locally staged app is still a development wrapper around the repository environment. Use the architecture-specific release asset when you need a portable, self-contained application.
 
 ### Use a GitHub source archive
 
@@ -199,7 +218,7 @@ Download the source archive from the [releases page](https://github.com/hideouts
 ./script/build_and_run.sh
 ```
 
-GitHub's automatically generated source ZIP and tarball are source packages, not prebuilt application bundles.
+GitHub's automatically generated source ZIP and tarball are source packages. The two explicitly named macOS ZIP assets are the prebuilt applications.
 
 ### Verify the host first
 
@@ -211,7 +230,7 @@ xcode-select -p
 
 If `python3` is missing or older than 3.10, install a supported Python locally before launching. Dependencies belong in the project-created `venv/`; do not install this project's pinned packages globally.
 
-If macOS warns about downloaded content, verify that you obtained the checkout or archive from the intended repository. Do not use broad commands that recursively remove quarantine or weaken Gatekeeper. This project is not currently signed or notarized.
+If macOS warns about downloaded content, verify the release checksum and confirm that you obtained the archive from the intended repository. The native release is ad-hoc signed rather than Developer ID signed and notarized; do not use broad commands that recursively remove quarantine or weaken Gatekeeper.
 
 ### Launch and diagnostic modes
 
@@ -841,13 +860,17 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 │   ├── local_ddi.py            # local Xcode candidate/Cryptex workflow
 │   ├── location_lab.py         # coordinates, GPX, routes, saved places, evidence
 │   ├── models.py               # typed device and collection models
-│   ├── runtime.py              # project executable and device environment
+│   ├── entrypoint.py           # packaged internal CLI and worker dispatch
+│   ├── runtime.py              # source/frozen commands and device environment
 │   ├── ufade_connector.py      # isolated external UFADE validation and launch
 │   └── assets/
+├── .github/workflows/          # native Intel and Apple Silicon release builds
 ├── docs/screenshots/           # sanitized current-interface captures
 ├── macos/                      # wrapper executable, Info.plist, and icon
+├── packaging/                  # pinned PySide6 deployment configuration
+├── scripts/                    # self-contained native release builder
 ├── script/build_and_run.sh     # environment, staging, launch, verification modes
-├── tests/                      # core and capability behavior tests
+├── tests/                      # core, capability, and packaged-runtime tests
 ├── pyproject.toml              # package metadata and pinned dependencies
 └── LICENSE
 ```
@@ -867,7 +890,9 @@ The final launcher check opens the application and briefly verifies the process.
 
 ### Release model
 
-Version `0.2.1` is distributed as source. The repository stages a local `.app` wrapper for development convenience; it is not signed, notarized, or self-contained. A future portable macOS build would need dependency bundling, hardened-runtime signing, notarization, release-asset generation, and verification on a clean Mac.
+Version `0.3.0` is built natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 49 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 78-button offscreen GUI smoke test, verifies the Mach-O architecture, applies an ad-hoc signature, and uploads an architecture-labeled ZIP. The release job publishes both archives with one SHA-256 inventory.
+
+The artifacts are not universal binaries: choose the ZIP matching `uname -m`. They are also not Developer ID signed or Apple-notarized because this repository has no release signing identity. A future signing upgrade should use a narrowly scoped Developer ID Application certificate, hardened runtime, Apple notarization, and stapling without changing the two-architecture verification gates.
 
 Windows and Linux would require a separate host implementation or deliberately isolated adapters for discovery, pairing, filesystem paths, DDI acquisition, local signature inspection, packaging, and platform-specific dependencies. Copying the macOS wrapper is not a cross-platform port.
 

@@ -127,7 +127,15 @@ from ios_developer_toolkit.location_lab import (
 )
 from ios_developer_toolkit.live_logs import LiveLogError, LiveLogWindow, log_stream_specs, stream_spec
 from ios_developer_toolkit.models import DeviceDataError, IOSDevice, parse_devices_json
-from ios_developer_toolkit.runtime import device_environment, pymobiledevice3_executable
+from ios_developer_toolkit.runtime import (
+    ExecutableCommand,
+    command_arguments,
+    command_argv,
+    command_text,
+    device_environment,
+    pymobiledevice3_command,
+    worker_command,
+)
 from ios_developer_toolkit.ufade_connector import (
     UFADE_INSTALLATION_URL,
     UFADE_REPOSITORY_URL,
@@ -179,7 +187,7 @@ class DeviceScanner(QObject):
     devices_changed = Signal(object)
     scan_error = Signal(str)
 
-    def __init__(self, executable: Path) -> None:
+    def __init__(self, executable: ExecutableCommand) -> None:
         super().__init__()
         self._executable = executable
         self._timer = QTimer(self)
@@ -212,8 +220,8 @@ class DeviceScanner(QObject):
         self._stdout.clear()
         self._stderr.clear()
         process = QProcess(self)
-        process.setProgram(str(self._executable))
-        process.setArguments(["usbmux", "list"])
+        process.setProgram(str(self._executable.program))
+        process.setArguments(list(command_arguments(self._executable, ("usbmux", "list"))))
         process.setProcessEnvironment(qprocess_environment(base_environment()))
         process.readyReadStandardOutput.connect(self._read_stdout)
         process.readyReadStandardError.connect(self._read_stderr)
@@ -415,7 +423,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"iOS Device Workbench {APP_VERSION}")
         self.setWindowIcon(QIcon(str(application_icon_path())))
         self.resize(1280, 840)
-        self._pmd3 = pymobiledevice3_executable()
+        self._pmd3 = pymobiledevice3_command()
         self._devices: tuple[IOSDevice, ...] = ()
         self._active_device_identifier: str | None = None
         self._guided_udids: set[str] = set()
@@ -2149,14 +2157,11 @@ class MainWindow(QMainWindow):
             f"Testing {device.display_name()} with bounded, read-only service probes…"
         )
         self._populate_capability_matrix()
+        worker = worker_command("capability")
         process = QProcess(self)
-        process.setProgram(sys.executable)
+        process.setProgram(str(worker.program))
         process.setArguments(
-            [
-                "-m",
-                "ios_developer_toolkit.capability_matrix_worker",
-                "--pymobiledevice3",
-                str(self._pmd3),
+            list(command_arguments(worker, (
                 "--identifier",
                 device.identifier,
                 "--name",
@@ -2169,7 +2174,7 @@ class MainWindow(QMainWindow):
                 device.build_version,
                 "--connection-type",
                 device.connection_type,
-            ]
+            )))
         )
         process.setProcessEnvironment(qprocess_environment(base_environment()))
         process.readyReadStandardOutput.connect(self._read_capability_stdout)
@@ -2395,8 +2400,8 @@ class MainWindow(QMainWindow):
         if not self._confirm("Install Local Xcode DDI", prompt):
             return
         self._start_action(
-            Path(sys.executable),
-            ("-m", "ios_developer_toolkit.local_ddi", "--candidate", str(XCODE_CANDIDATE_DDI), "--udid", device.identifier),
+            worker_command("local-ddi"),
+            ("--candidate", str(XCODE_CANDIDATE_DDI), "--udid", device.identifier),
             base_environment(),
             "mount-local-cryptex",
         )
@@ -2425,7 +2430,7 @@ class MainWindow(QMainWindow):
 
     def _start_action(
         self,
-        program: Path,
+        program: ExecutableCommand,
         arguments: tuple[str, ...],
         environment: Mapping[str, str],
         context: str,
@@ -2433,11 +2438,11 @@ class MainWindow(QMainWindow):
         if self._action_process is not None and self._action_process.state() != QProcess.ProcessState.NotRunning:
             QMessageBox.warning(self, "Action Running", "Wait for the current DDI action to finish.")
             return
-        self.action_output.appendPlainText(f"$ {program} {' '.join(arguments)}")
+        self.action_output.appendPlainText(f"$ {command_text(program, arguments)}")
         self._action_buffer.clear()
         process = QProcess(self)
-        process.setProgram(str(program))
-        process.setArguments(list(arguments))
+        process.setProgram(str(program.program))
+        process.setArguments(list(command_arguments(program, arguments)))
         process.setProcessEnvironment(qprocess_environment(environment))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         process.readyReadStandardOutput.connect(self._read_action_output)
@@ -2779,8 +2784,8 @@ class MainWindow(QMainWindow):
         self._location_coordinates = coordinates
         self._location_operation_gpx = gpx
         process = QProcess(self)
-        process.setProgram(str(self._pmd3))
-        process.setArguments(list(arguments))
+        process.setProgram(str(self._pmd3.program))
+        process.setArguments(list(command_arguments(self._pmd3, arguments)))
         process.setWorkingDirectory(str(Path.home()))
         process.setProcessEnvironment(qprocess_environment(device_environment(device_identifier)))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -3158,8 +3163,6 @@ class MainWindow(QMainWindow):
         if not self._confirm("Start Evidence Collection", warning):
             return
         arguments = [
-            "-m",
-            "ios_developer_toolkit.collector",
             "--udid",
             device.identifier,
             "--output-root",
@@ -3176,9 +3179,10 @@ class MainWindow(QMainWindow):
         ):
             if enabled:
                 arguments.append(flag)
+        worker = worker_command("collector")
         process = QProcess(self)
-        process.setProgram(sys.executable)
-        process.setArguments(arguments)
+        process.setProgram(str(worker.program))
+        process.setArguments(list(command_arguments(worker, arguments)))
         process.setProcessEnvironment(qprocess_environment(base_environment()))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         process.readyReadStandardOutput.connect(self._read_collection_output)
@@ -3254,9 +3258,10 @@ class MainWindow(QMainWindow):
         self.ipa_inspection_summary.clear()
         self.ipa_inspection_summary.setPlainText("Inspecting archive, provisioning profile, and code signature…")
         self.ipa_inspection_progress.setVisible(True)
+        worker = worker_command("ipa-inspector")
         process = QProcess(self)
-        process.setProgram(sys.executable)
-        process.setArguments(["-m", "ios_developer_toolkit.ipa_inspector", str(selected_ipa)])
+        process.setProgram(str(worker.program))
+        process.setArguments(list(command_arguments(worker, (str(selected_ipa),))))
         process.setProcessEnvironment(qprocess_environment(base_environment()))
         process.readyReadStandardOutput.connect(self._read_ipa_inspection_stdout)
         process.readyReadStandardError.connect(self._read_ipa_inspection_stderr)
@@ -3367,8 +3372,8 @@ class MainWindow(QMainWindow):
         self._sideload_context = context
         self.sideload_output.appendPlainText(f"\n$ pymobiledevice3 {shlex.join(arguments)}\n")
         process = QProcess(self)
-        process.setProgram(str(self._pmd3))
-        process.setArguments(list(arguments))
+        process.setProgram(str(self._pmd3.program))
+        process.setArguments(list(command_arguments(self._pmd3, arguments)))
         process.setWorkingDirectory(str(Path.home()))
         process.setProcessEnvironment(qprocess_environment(device_environment(device.identifier)))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -3441,8 +3446,8 @@ class MainWindow(QMainWindow):
         self._apps_stderr.clear()
         self.apps_output.appendPlainText(f"\n$ pymobiledevice3 {shlex.join(arguments)}\n")
         process = QProcess(self)
-        process.setProgram(str(self._pmd3))
-        process.setArguments(list(arguments))
+        process.setProgram(str(self._pmd3.program))
+        process.setArguments(list(command_arguments(self._pmd3, arguments)))
         process.setWorkingDirectory(str(Path.home()))
         process.setProcessEnvironment(qprocess_environment(device_environment(device.identifier)))
         process.readyReadStandardOutput.connect(self._read_apps_stdout)
@@ -3692,9 +3697,10 @@ class MainWindow(QMainWindow):
         self._backup_action = action
         self._backup_stdout.clear()
         self._backup_stderr.clear()
+        worker = worker_command("backup")
         process = QProcess(self)
-        process.setProgram(sys.executable)
-        process.setArguments(["-m", "ios_developer_toolkit.backup_worker", action])
+        process.setProgram(str(worker.program))
+        process.setArguments(list(command_arguments(worker, (action,))))
         process.setProcessEnvironment(qprocess_environment(base_environment()))
         process.readyReadStandardOutput.connect(self._read_backup_stdout)
         process.readyReadStandardError.connect(self._read_backup_stderr)
@@ -4280,8 +4286,8 @@ class MainWindow(QMainWindow):
             return
         self.console_output.appendPlainText(f"\n[{title}]\n$ pymobiledevice3 {shlex.join(arguments)}\n")
         process = QProcess(self)
-        process.setProgram(str(self._pmd3))
-        process.setArguments(list(arguments))
+        process.setProgram(str(self._pmd3.program))
+        process.setArguments(list(command_arguments(self._pmd3, arguments)))
         process.setWorkingDirectory(str(Path.home()))
         environment = base_environment() if device is None else device_environment(device.identifier)
         process.setProcessEnvironment(qprocess_environment(environment))
@@ -4445,8 +4451,8 @@ class MainWindow(QMainWindow):
             "This can take several seconds on the first Python import. Use Cancel Loading to stop immediately."
         )
         process = QProcess(self)
-        process.setProgram(str(self._pmd3))
-        process.setArguments([*entry.command_path, "--help"])
+        process.setProgram(str(self._pmd3.program))
+        process.setArguments(list(command_arguments(self._pmd3, (*entry.command_path, "--help"))))
         process.setProcessEnvironment(qprocess_environment(base_environment()))
         process.readyReadStandardOutput.connect(self._read_manpage_stdout)
         process.readyReadStandardError.connect(self._read_manpage_stderr)
@@ -4625,7 +4631,7 @@ class MainWindow(QMainWindow):
         for attempt in (1, 2):
             try:
                 completed = subprocess.run(
-                    [str(self._pmd3), *arguments],
+                    command_argv(self._pmd3, arguments),
                     env=device_environment(identifier),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,

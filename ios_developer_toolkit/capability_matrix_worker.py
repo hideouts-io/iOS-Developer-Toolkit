@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 from typing import Sequence
 
 from ios_developer_toolkit.capability_matrix import capability_definitions, probe_capabilities
 from ios_developer_toolkit.models import IOSDevice
+from ios_developer_toolkit.runtime import pymobiledevice3_command
 
 
 def emit(payload: object) -> None:
@@ -16,7 +16,6 @@ def emit(payload: object) -> None:
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run bounded iOS Developer Toolkit capability probes")
-    parser.add_argument("--pymobiledevice3", required=True)
     parser.add_argument("--identifier", required=True)
     parser.add_argument("--name", required=True)
     parser.add_argument("--product-type", required=True)
@@ -37,7 +36,7 @@ def main(arguments: Sequence[str] | None) -> int:
         connection_type=parsed.connection_type,
     )
     emit({"event": "started", "total": len(capability_definitions())})
-    for result in probe_capabilities(Path(parsed.pymobiledevice3), device):
+    for result in probe_capabilities(pymobiledevice3_command(), device):
         emit({"event": "result", "result": result.to_mapping()})
     emit({"event": "completed"})
     return 0

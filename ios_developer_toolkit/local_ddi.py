@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from ios_developer_toolkit.runtime import device_environment, pymobiledevice3_executable
+from ios_developer_toolkit.runtime import ExecutableCommand, command_argv, device_environment, pymobiledevice3_command
 from ios_developer_toolkit.validation import output_indicates_failure
 
 
@@ -84,10 +84,10 @@ def detach_candidate(attached: AttachedImage) -> None:
 class CryptexInstaller:
     """Coordinates the external hdiutil and pymobiledevice3 processes."""
 
-    def __init__(self, candidate: Path, udid: str, executable: Path) -> None:
+    def __init__(self, candidate: Path, udid: str, command: ExecutableCommand) -> None:
         self._candidate = candidate
         self._udid = udid
-        self._executable = executable
+        self._command = command
         self._stop_requested = False
         self._active_process: subprocess.Popen[bytes] | None = None
 
@@ -112,7 +112,10 @@ class CryptexInstaller:
             print(f"Using local Restore payload: {restore_directory}", flush=True)
             environment: Mapping[str, str] = device_environment(self._udid)
             self._active_process = subprocess.Popen(
-                [str(self._executable), "cryptex", "auto-install", "--restore-dir", str(restore_directory)],
+                command_argv(
+                    self._command,
+                    ("cryptex", "auto-install", "--restore-dir", str(restore_directory)),
+                ),
                 env=environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -174,8 +177,8 @@ def parse_args(arguments: Sequence[str]) -> argparse.Namespace:
 def main() -> int:
     options = parse_args(sys.argv[1:])
     try:
-        executable = pymobiledevice3_executable()
-        installer = CryptexInstaller(options.candidate.expanduser().resolve(), options.udid, executable)
+        command = pymobiledevice3_command()
+        installer = CryptexInstaller(options.candidate.expanduser().resolve(), options.udid, command)
         signal.signal(signal.SIGINT, installer.request_stop)
         signal.signal(signal.SIGTERM, installer.request_stop)
         installer.install()

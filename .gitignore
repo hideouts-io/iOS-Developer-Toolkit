@@ -2,6 +2,8 @@
 venv/
 build/
 dist/
+ios_developer_toolkit/deployment/
+packaging/deployment/
 *.egg-info/
 __pycache__/
 *.pyc

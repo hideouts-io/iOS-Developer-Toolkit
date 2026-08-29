@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterable, Literal, Mapping
 
 from ios_developer_toolkit.models import IOSDevice
-from ios_developer_toolkit.runtime import device_environment
+from ios_developer_toolkit.runtime import ExecutableCommand, command_argv, command_text, device_environment
 from ios_developer_toolkit.validation import output_indicates_failure
 
 
@@ -263,14 +263,14 @@ def _decode_timeout_output(value: str | bytes | None) -> str:
 
 
 def run_command(
-    program: Path,
+    program: ExecutableCommand,
     arguments: tuple[str, ...],
     environment: Mapping[str, str],
     timeout_seconds: int,
 ) -> CommandOutcome:
     try:
         completed = subprocess.run(
-            [str(program), *arguments],
+            command_argv(program, arguments),
             env=dict(environment),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -405,7 +405,7 @@ def _probe_xcode_tools() -> CapabilityResult:
     )
 
 
-def probe_capabilities(pymobiledevice3: Path, device: IOSDevice) -> Iterable[CapabilityResult]:
+def probe_capabilities(pymobiledevice3: ExecutableCommand, device: IOSDevice) -> Iterable[CapabilityResult]:
     environment = device_environment(device.identifier)
     version_outcome = run_command(pymobiledevice3, ("version",), dict(os.environ), 8)
     if command_succeeded(version_outcome) and version_outcome.stdout.strip():
@@ -413,7 +413,7 @@ def probe_capabilities(pymobiledevice3: Path, device: IOSDevice) -> Iterable[Cap
             "pymobiledevice3",
             "ready",
             f"pymobiledevice3 {version_outcome.stdout.strip()} is executable.",
-            str(pymobiledevice3),
+            command_text(pymobiledevice3, ()),
         )
     else:
         yield unavailable_from_outcome("pymobiledevice3", version_outcome, device.identifier)
