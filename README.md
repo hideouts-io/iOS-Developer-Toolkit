@@ -55,7 +55,7 @@ The screenshots use an illustrative device name, model, version, build, and UDID
 
 ## Start here
 
-Download the native `arm64` build for Apple Silicon or the native `x86_64` build for an Intel Mac from the [latest release](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest). Verify its checksum, extract the ZIP, and open **iOS Developer Toolkit.app**. The release bundle carries its pinned Python, PySide6, pymobiledevice3, and developer-image runtime; a repository checkout is not required. Terminal-only interactive IPython/xonsh shells are intentionally excluded from the GUI bundle and remain available from the source installation.
+Download the native `arm64` build for Apple Silicon or the native `x86_64` build for an Intel Mac from the [latest release](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest). Verify its checksum, extract the ZIP, and open **iOS Developer Toolkit.app**. The release bundle carries its pinned Python, PySide6, pymobiledevice3, and developer-image runtime; a repository checkout is not required. The GUI does not expose an interactive shell. IPython and Jedi remain source-installation tools, while the xonsh runtime is bundled because pymobiledevice3's AFC and backup services import it.
 
 Connect an unlocked iPhone or iPad with a data-capable USB cable, tap **Trust** on the device, and select the intended target in the top-right device picker. Developer Mode and a mounted DDI are required only for workflows that use Apple developer services; basic pairing, Lockdown, apps, backups, AFC, classic syslog, and many diagnostics can work without them.
 
