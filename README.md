@@ -26,6 +26,7 @@ The screenshots use an illustrative device name, model, version, build, and UDID
 ## Contents
 
 - [Start here](#start-here)
+- [Current release additions and visual tour](#current-release-additions-and-visual-tour)
 - [What the workbench covers](#what-the-workbench-covers)
 - [How the service layers fit together](#how-the-service-layers-fit-together)
 - [Requirements](#requirements)
@@ -72,6 +73,29 @@ For a new device, a sensible sequence is:
 7. Stop streams, clear a simulated location, and unmount the developer image when finished.
 
 The application executes the project-pinned binary directly. Guided values become an argument vector; the GUI does not pass them through a shell. Advanced Mode uses `shlex` to split arguments, but it does not evaluate pipes, redirects, substitutions, aliases, or shell operators.
+
+## Current release additions and visual tour
+
+Release `v0.3.1` combines the complete 12-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
+
+- **Retry Scan** performs an immediate usbmux device check, while **Reconnect & Retry…** opens a guided detection window without attempting to restart SIP-protected Apple services;
+- the manual **Capability Matrix** reports host, trust, Developer Mode, DDI, tunnel, DVT, CoreDevice, and related readiness as separate bounded results;
+- **DVT network activity** and **CoreDevice applications** are handled as long-running streams with explicit Stop controls instead of misleading finite snapshots;
+- Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
+- Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
+- app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one selected-device workflow;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 51 tests, embedded CLI checks, a 79-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
+- public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
+
+The README contains 15 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
+
+| Prepare the device and DDI | Observe live services | Run guided commands |
+|---|---|---|
+| [![Device and DDI workspace](docs/screenshots/device-and-ddi.png)](docs/screenshots/device-and-ddi.png) | [![Live Logs workspace](docs/screenshots/live-logs.png)](docs/screenshots/live-logs.png) | [![Command Center workspace](docs/screenshots/pymobiledevice3-console.png)](docs/screenshots/pymobiledevice3-console.png) |
+
+| Simulate test locations | Create protected backups | Preserve correlated evidence |
+|---|---|---|
+| [![Location Lab workspace](docs/screenshots/location-lab.png)](docs/screenshots/location-lab.png) | [![Backup workspace](docs/screenshots/backup.png)](docs/screenshots/backup.png) | [![Evidence Capture workspace](docs/screenshots/evidence-collection.png)](docs/screenshots/evidence-collection.png) |
 
 ## What the workbench covers
 
@@ -164,12 +188,12 @@ The current GUI and launcher are macOS-specific. Although upstream `pymobiledevi
 
 ### Download the native application
 
-Release `v0.3.1` provides two independent application bundles:
+Release `v0.3.1` provides two independent application bundles. The sizes below are the exact published ZIP sizes; macOS Finder may display rounded values differently.
 
-| Mac | Release asset |
-|---|---|
-| Apple Silicon (`arm64`) | `iOS-Developer-Toolkit-v0.3.1-macOS-arm64.zip` |
-| Intel (`x86_64`) | `iOS-Developer-Toolkit-v0.3.1-macOS-x86_64.zip` |
+| Mac | Release asset | Download size | SHA-256 |
+|---|---|---:|---|
+| Apple Silicon (`arm64`) | `iOS-Developer-Toolkit-v0.3.1-macOS-arm64.zip` | 99,200,585 bytes (94.6 MiB) | `7cde4de0547acb8d8e8446ac02d96f4a1f2789dabc5d1c0087dcf5db42406614` |
+| Intel (`x86_64`) | `iOS-Developer-Toolkit-v0.3.1-macOS-x86_64.zip` | 107,416,160 bytes (102.4 MiB) | `aa6da8fd816c5a94b81ac089bcb84c6184e85e41b54f750bef76f8647d61e1ab` |
 
 Check the Mac architecture before downloading:
 
@@ -177,13 +201,48 @@ Check the Mac architecture before downloading:
 uname -m
 ```
 
-Download the matching ZIP and `SHA256SUMS.txt` from the [release page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/tag/v0.3.1), place them in the same directory, and verify the selected archive:
+Download the matching ZIP and `SHA256SUMS.txt` from the [release page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/tag/v0.3.1) and place them in the same directory. Verify only the archive for the current Mac; the manifest contains entries for both architectures, so checking the complete manifest after downloading only one ZIP would correctly report the other archive as missing.
 
 ```bash
-shasum -a 256 -c SHA256SUMS.txt
+toolkit_arch="$(uname -m)"
+grep "macOS-${toolkit_arch}.zip" SHA256SUMS.txt | shasum -a 256 -c -
 ```
 
-Extract the verified ZIP and move **iOS Developer Toolkit.app** to `/Applications` if desired. These builds are self-contained and ad-hoc code signed, but they are not Developer ID signed or Apple-notarized. macOS may therefore block the first launch. Use Finder’s **Open** command from the app’s contextual menu and review the publisher warning; do not disable Gatekeeper or recursively strip quarantine attributes.
+The expected result ends in `OK`. If it reports `FAILED`, a missing line, or a different digest, do not open that download. Delete it and download the asset and checksum file again from the release page.
+
+Extract the verified ZIP in Finder, or use:
+
+```bash
+toolkit_arch="$(uname -m)"
+ditto -x -k "iOS-Developer-Toolkit-v0.3.1-macOS-${toolkit_arch}.zip" "iOS Developer Toolkit v0.3.1"
+```
+
+Open the extracted folder and drag **iOS Developer Toolkit.app** into `/Applications`. The application is self-contained; Python and the pinned runtime do not need to be installed separately.
+
+### Open the ad-hoc-signed app safely
+
+The published bundles pass strict nested code-signature verification, but the signature is ad-hoc: it does not identify a Developer ID publisher and the app is not Apple-notarized. Gatekeeper may therefore block the first launch even when the ZIP matches the published SHA-256 value.
+
+Use the Apple-supported per-app opening path:
+
+1. In Finder, open **Applications** and try to open **iOS Developer Toolkit.app** once.
+2. If macOS blocks it, Control-click or right-click the app and choose **Open**.
+3. Review the warning and choose **Open** when that option is available.
+4. If Finder still offers no Open option, open **System Settings → Privacy & Security**.
+5. Scroll to the Security section, find the message that iOS Developer Toolkit was blocked, and click **Open Anyway**.
+6. Authenticate through the macOS-owned prompt if requested, review the final warning, and choose **Open**.
+
+The exception applies to this app; it does not require turning off Gatekeeper. On a managed Mac, organization policy may remove **Open Anyway** or require administrator approval. That policy has no safe local workaround—the administrator must approve the application or provide a trusted distribution path.
+
+After moving the app to `/Applications`, the bundled code can be checked independently:
+
+```bash
+codesign --verify --deep --strict --verbose=2 "/Applications/iOS Developer Toolkit.app"
+```
+
+A successful `codesign` check confirms that the extracted bundle is internally consistent with its ad-hoc signature. It does not turn the build into a Developer ID-signed or notarized application; the release checksum is what ties the downloaded ZIP to the asset published by this repository.
+
+Do not disable Gatekeeper globally, alter System Integrity Protection, or run broad commands such as recursive quarantine removal. If the verified app still will not open after the supported exception, retain the exact macOS warning, confirm the Mac architecture, download a fresh copy, and open a sanitized support request.
 
 ### Clone the repository
 
@@ -232,7 +291,7 @@ xcode-select -p
 
 If `python3` is missing or older than 3.10, install a supported Python locally before launching. Dependencies belong in the project-created `venv/`; do not install this project's pinned packages globally.
 
-If macOS warns about downloaded content, verify the release checksum and confirm that you obtained the archive from the intended repository. The native release is ad-hoc signed rather than Developer ID signed and notarized; do not use broad commands that recursively remove quarantine or weaken Gatekeeper.
+If macOS warns about downloaded content, follow [Open the ad-hoc-signed app safely](#open-the-ad-hoc-signed-app-safely). Source installations and local development wrappers are also not a substitute for Developer ID signing and notarization.
 
 ### Launch and diagnostic modes
 
