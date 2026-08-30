@@ -68,7 +68,7 @@ plist_path="$app_path/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.hideouts.ios-developer-toolkit" "$plist_path"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName iOS Developer Toolkit" "$plist_path"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $release_version" "$plist_path"
-/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 4" "$plist_path" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 4" "$plist_path"
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 5" "$plist_path" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 5" "$plist_path"
 /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 13.0" "$plist_path" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 13.0" "$plist_path"
 
 /usr/bin/xattr -cr "$app_path"

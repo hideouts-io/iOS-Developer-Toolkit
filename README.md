@@ -154,7 +154,7 @@ Current pinned runtime:
 | PySide6 | `6.11.2` |
 | pymobiledevice3 | `10.11.0` |
 | Local Xcode candidate | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` |
-| Toolkit release | `0.3.0` |
+| Toolkit release | `0.3.1` |
 
 The current GUI and launcher are macOS-specific. Although upstream `pymobiledevice3` supports other host platforms, this application currently depends on macOS tools and conventions such as Xcode/CoreDevice, `hdiutil`, `security`, `codesign`, `.app` bundles, and macOS user-library paths.
 
@@ -162,12 +162,12 @@ The current GUI and launcher are macOS-specific. Although upstream `pymobiledevi
 
 ### Download the native application
 
-Release `v0.3.0` provides two independent application bundles:
+Release `v0.3.1` provides two independent application bundles:
 
 | Mac | Release asset |
 |---|---|
-| Apple Silicon (`arm64`) | `iOS-Developer-Toolkit-v0.3.0-macOS-arm64.zip` |
-| Intel (`x86_64`) | `iOS-Developer-Toolkit-v0.3.0-macOS-x86_64.zip` |
+| Apple Silicon (`arm64`) | `iOS-Developer-Toolkit-v0.3.1-macOS-arm64.zip` |
+| Intel (`x86_64`) | `iOS-Developer-Toolkit-v0.3.1-macOS-x86_64.zip` |
 
 Check the Mac architecture before downloading:
 
@@ -175,7 +175,7 @@ Check the Mac architecture before downloading:
 uname -m
 ```
 
-Download the matching ZIP and `SHA256SUMS.txt` from the [release page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/tag/v0.3.0), place them in the same directory, and verify the selected archive:
+Download the matching ZIP and `SHA256SUMS.txt` from the [release page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/tag/v0.3.1), place them in the same directory, and verify the selected archive:
 
 ```bash
 shasum -a 256 -c SHA256SUMS.txt
@@ -193,10 +193,10 @@ cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
 
-For the published `v0.3.0` source state:
+For the published `v0.3.1` source state:
 
 ```bash
-git clone --branch v0.3.0 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+git clone --branch v0.3.1 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
 cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
