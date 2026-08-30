@@ -1,0 +1,121 @@
+name: Bug report
+description: Report a reproducible problem with the toolkit.
+title: "[Bug]: "
+labels:
+  - bug
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve iOS Developer Toolkit. Remove UDIDs, serial numbers, account data, coordinates, backup contents, packet payloads, and case evidence before posting.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Before submitting
+      options:
+        - label: I am using a device and data I own or am explicitly authorized to test.
+          required: true
+        - label: I searched existing issues and tested the latest release or current main branch.
+          required: true
+        - label: I removed private device, account, location, network, backup, and evidence data.
+          required: true
+
+  - type: input
+    id: toolkit-version
+    attributes:
+      label: Toolkit version
+      description: For example, v0.3.1 or a commit SHA.
+      placeholder: v0.3.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation type
+      options:
+        - Apple Silicon release
+        - Intel release
+        - Source checkout
+    validations:
+      required: true
+
+  - type: input
+    id: host
+    attributes:
+      label: Mac and macOS
+      description: Include Mac architecture and macOS version.
+      placeholder: Apple Silicon, macOS 26.3
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device and iOS or iPadOS
+      description: Give only the product family and OS version. Do not include a UDID, serial number, phone number, or device name.
+      placeholder: iPhone 16 family, iOS 26.3.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection state
+      options:
+        - USB, trusted and unlocked
+        - USB, trust or pairing incomplete
+        - Wi-Fi or tunnel
+        - No device required
+        - Other or unknown
+    validations:
+      required: true
+
+  - type: input
+    id: workspace
+    attributes:
+      label: Workspace or command
+      placeholder: Live Logs / DVT OSLog
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: List the smallest reliable sequence, including the button or preset used.
+      placeholder: |
+        1. Connect and select the device
+        2. Open ...
+        3. Press ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized error
+      description: Paste the complete error after removing private data. Do not attach raw backups, PCAPs, sysdiagnose archives, or evidence cases.
+    validations:
+      required: true
+
+  - type: textarea
+    id: capability
+    attributes:
+      label: Relevant Capability Matrix result
+      description: Include the bounded state and remediation text, if the affected workflow has a capability row.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional sanitized context
+      description: Add screenshots or logs only when they contain no sensitive identifiers or evidence.

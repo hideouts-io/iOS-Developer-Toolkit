@@ -1,0 +1,71 @@
+name: Feature request
+description: Propose a focused developer, diagnostic, backup, or evidence workflow.
+title: "[Feature]: "
+labels:
+  - enhancement
+  - needs-triage
+body:
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and reviewed the current workspace guide.
+          required: true
+        - label: The request is for authorized device development, diagnostics, administration, backup, or evidence preservation.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user need without prescribing an implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Desired guided workflow
+      description: Explain the minimum inputs, action, output, and cleanup behavior.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Device connection and pairing
+        - Developer Mode, DDI, or tunnel
+        - Capability Matrix
+        - Commands and Man Pages
+        - Live logs or packet capture
+        - Location Lab
+        - Installed apps or IPA handling
+        - Backup or UFADE
+        - Evidence capture and integrity
+        - Packaging or release
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: upstream
+    attributes:
+      label: Upstream command or documentation
+      description: Link official Apple or upstream pymobiledevice3 documentation when the request depends on a specific service or command.
+
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety, privacy, and cleanup considerations
+      description: Identify mutations, sensitive output, device-version limits, and how the action should be stopped or reversed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

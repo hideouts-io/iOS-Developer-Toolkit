@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use iOS Developer Toolkit in research or published work, cite this software."
+title: "iOS Developer Toolkit"
+type: software
+authors:
+  - name: "hideouts-io"
+repository-code: "https://github.com/hideouts-io/iOS-Developer-Toolkit"
+url: "https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest"
+license: MIT
+version: 0.3.1
+date-released: "2026-08-30"
+abstract: "A safety-focused macOS workbench for Developer Disk Images, pymobiledevice3 and DVT diagnostics, iOS logs, packet capture, location simulation, app inspection, backups, and evidence preservation."
+keywords:
+  - iOS development
+  - pymobiledevice3
+  - Developer Disk Image
+  - device diagnostics
+  - mobile forensics
+  - unified logging
+  - packet capture

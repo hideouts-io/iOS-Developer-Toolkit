@@ -6,13 +6,14 @@
 
 ### iOS Device Workbench: a guided pymobiledevice3 GUI, Developer Disk Image mounter, and evidence workbench for macOS
 
+[![CI](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/hideouts-io/iOS-Developer-Toolkit?display_name=tag)](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white)
 ![Devices](https://img.shields.io/badge/device-iPhone%20%7C%20iPad-0969da)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)
 ![GUI](https://img.shields.io/badge/GUI-PySide6-41cd52)
 ![pymobiledevice3](https://img.shields.io/badge/pymobiledevice3-10.11.0-8250df)
-![Tests](https://img.shields.io/badge/tests-49%20passing-1a7f37)
-![License](https://img.shields.io/badge/license-MIT-2da44e)
+[![License](https://img.shields.io/badge/license-MIT-2da44e)](LICENSE)
 
 > **Scope:** iOS Developer Toolkit is a macOS front end for authorized Apple-device development, diagnostics, testing, backup, and evidence-preservation workflows. It does not jailbreak iOS, bypass a passcode, disable the sandbox, defeat code signing, decrypt protected traffic, or provide unrestricted filesystem access.
 
@@ -51,6 +52,7 @@ The screenshots use an illustrative device name, model, version, build, and UDID
 - [Troubleshooting](#troubleshooting)
 - [Development and packaging](#development-and-packaging)
 - [Project boundaries and credits](#project-boundaries-and-credits)
+- [Contributing, support, and security](#contributing-support-and-security)
 - [License](#license)
 
 ## Start here
@@ -918,6 +920,16 @@ Location Lab uses the pinned `pymobiledevice3` developer-service commands and th
 Apple, iPhone, iPad, iOS, macOS, and Xcode are trademarks of Apple Inc. This project is independent and is not affiliated with or endorsed by Apple.
 
 Use the toolkit only on devices and data you own or are explicitly authorized to test, administer, develop against, or examine.
+
+## Contributing, support, and security
+
+Everyone is welcome to fork the repository, discuss ideas, report reproducible problems, and submit focused pull requests. Contributions from first-time and experienced iOS developers, testers, incident responders, and documentation writers are welcome within the project's authorization and privacy boundaries.
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing code or a new device workflow.
+- Use [GitHub Discussions](https://github.com/hideouts-io/iOS-Developer-Toolkit/discussions) for setup and compatibility help, following [SUPPORT.md](SUPPORT.md).
+- Open a structured [bug report](https://github.com/hideouts-io/iOS-Developer-Toolkit/issues/new?template=bug_report.yml) or [feature request](https://github.com/hideouts-io/iOS-Developer-Toolkit/issues/new?template=feature_request.yml) when appropriate.
+- Report vulnerabilities privately under the [security policy](SECURITY.md); never place sensitive device or evidence data in a public issue.
+- Cite the project with the repository's [CITATION.cff](CITATION.cff) metadata when it supports published research.
 
 ## License
 

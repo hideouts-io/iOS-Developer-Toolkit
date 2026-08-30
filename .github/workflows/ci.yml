@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade pip
+          python -m pip install --disable-pip-version-check --editable .
+      - name: Run test suite
+        run: python -m unittest discover -s tests -v
+      - name: Validate Python modules
+        run: python -m compileall -q ios_developer_toolkit tests
+      - name: Validate command entry points
+        run: |
+          python -m ios_developer_toolkit.collector --help
+          python -m ios_developer_toolkit.local_ddi --help
+          python -m ios_developer_toolkit.ipa_inspector --help
+          python -m ios_developer_toolkit --toolkit-internal-pymobiledevice3 version
+      - name: Validate GUI actions
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m ios_developer_toolkit --toolkit-internal-smoke-test

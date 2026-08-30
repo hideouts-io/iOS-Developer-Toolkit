@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/hideouts-io/iOS-Developer-Toolkit/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Questions and usage help
+    url: https://github.com/hideouts-io/iOS-Developer-Toolkit/discussions
+    about: Ask setup, compatibility, and workflow questions in Discussions.
