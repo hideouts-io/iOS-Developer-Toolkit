@@ -23,15 +23,15 @@ jobs:
             python_architecture: x64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           architecture: ${{ matrix.python_architecture }}
           cache: pip
       - name: Build and verify native application
         run: ./scripts/build_macos_release.sh "${GITHUB_REF_NAME#v}" release-assets python3
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos-${{ matrix.architecture }}
           path: release-assets/*.zip
@@ -44,8 +44,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v5
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: macos-*
           path: release-assets

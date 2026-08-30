@@ -12,6 +12,11 @@ updates:
     directory: "/"
     schedule:
       interval: monthly
+    groups:
+      official-actions:
+        patterns:
+          - "actions/*"
+          - "github/codeql-action"
     labels:
       - dependencies
     open-pull-requests-limit: 5
