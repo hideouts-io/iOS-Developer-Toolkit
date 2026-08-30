@@ -385,7 +385,7 @@ def _probe_xcode_tools() -> CapabilityResult:
     resolved: list[str] = []
     missing: list[str] = []
     for tool in ("devicectl", "xctrace"):
-        outcome = run_command(Path(xcrun), ("--find", tool), environment, 5)
+        outcome = run_command(ExecutableCommand(Path(xcrun), ()), ("--find", tool), environment, 5)
         if command_succeeded(outcome) and outcome.stdout.strip():
             resolved.append(tool)
         else:

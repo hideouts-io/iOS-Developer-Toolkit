@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import unittest
 
 from ios_developer_toolkit.capability_matrix import (
@@ -9,6 +10,7 @@ from ios_developer_toolkit.capability_matrix import (
     CapabilityWorkerCompleted,
     CapabilityWorkerStarted,
     CommandOutcome,
+    _probe_xcode_tools,
     capability_definitions,
     command_succeeded,
     compact_command_detail,
@@ -74,6 +76,13 @@ class CapabilityMatrixTests(unittest.TestCase):
         detail = compact_command_detail(semantic_failure, "PRIVATE-UDID")
         self.assertNotIn("PRIVATE-UDID", detail)
         self.assertIn("<selected-device>", detail)
+
+    @unittest.skipIf(shutil.which("xcrun") is None, "xcrun is unavailable")
+    def test_xcode_tool_probe_uses_the_executable_command_wrapper(self) -> None:
+        result = _probe_xcode_tools()
+
+        self.assertEqual(result.identifier, "xcode-tools")
+        self.assertIn(result.state, ("ready", "attention"))
 
 
 if __name__ == "__main__":

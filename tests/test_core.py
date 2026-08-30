@@ -157,6 +157,11 @@ class GuidedCommandCatalogTests(unittest.TestCase):
                 msg=f"high-impact shortcut exposed by {preset.identifier}",
             )
 
+    def test_streaming_service_presets_require_explicit_stop_controls(self) -> None:
+        for identifier in ("dvt-netstat", "core-apps"):
+            with self.subTest(identifier=identifier):
+                self.assertTrue(preset_by_identifier(identifier).long_running)
+
 
 class EvidenceNamingTests(unittest.TestCase):
     def test_udid_fragment_is_sanitized_and_bounded(self) -> None:

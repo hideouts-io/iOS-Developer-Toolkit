@@ -775,12 +775,17 @@ Mounting a DDI, enabling Developer Mode, installing or uninstalling an app, chan
 
 ### No device detected
 
+- click **Retry Scan** for an immediate usbmux check, or **Reconnect & Retry…** for a guided 30-second detection window;
 - use a known data-capable cable and direct USB port;
-- unlock the device and accept **Trust**;
+- unlock the device and keep its Home Screen visible before reconnecting;
+- on a USB-C iPhone or iPad, review **Settings → Privacy & Security → Wired Accessories** and allow the connection while unlocked;
+- accept **Allow accessory to connect** on macOS, then accept **Trust** on iOS; Finder can also expose the device-level **Trust** action;
 - reconnect after the trust prompt completes;
 - close competing tools that may be holding device services;
 - run `venv/bin/pymobiledevice3 usbmux list` and retain its error output;
 - verify the selected device when more than one is connected.
+
+The toolkit does not use `sudo`, delete pairing records, or restart SIP-protected Apple discovery agents or the root-owned `usbmuxd` service. If the iPhone is absent from both the macOS USB device tree and `usbmux list`, resolve the physical data connection before changing DDIs, tunnels, or developer services.
 
 ### Developer Mode is missing
 
@@ -811,6 +816,7 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 
 - confirm Developer Mode and DDI state;
 - establish the modern tunnel when required by the installed `pymobiledevice3` command;
+- treat **DVT network activity** and **CoreDevice applications** as streams: let them run for the intended observation window, then use **Stop**;
 - read the corresponding live Man Page;
 - remember that client syntax can exist even when an iOS build does not advertise the service;
 - keep the failure as a coverage result.
@@ -890,7 +896,7 @@ The final launcher check opens the application and briefly verifies the process.
 
 ### Release model
 
-Version `0.3.0` is built natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 49 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 78-button offscreen GUI smoke test, verifies the Mach-O architecture, applies an ad-hoc signature, and uploads an architecture-labeled ZIP. The release job publishes both archives with one SHA-256 inventory.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 51 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 79-button offscreen GUI smoke test, verifies the Mach-O architecture, applies an ad-hoc signature, and uploads an architecture-labeled ZIP. The release job publishes both archives with one SHA-256 inventory.
 
 The artifacts are not universal binaries: choose the ZIP matching `uname -m`. They are also not Developer ID signed or Apple-notarized because this repository has no release signing identity. A future signing upgrade should use a narrowly scoped Developer ID Application certificate, hardened runtime, Apple notarization, and stapling without changing the two-architecture verification gates.
 

@@ -153,6 +153,7 @@ XCODE_CANDIDATE_DDI = Path("/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.
 DEVELOPER_DISK_IMAGE_REPOSITORY = "https://github.com/doronz88/DeveloperDiskImage"
 MANPAGE_HELP_TIMEOUT_MS = 15_000
 MANPAGE_HELP_KILL_DELAY_MS = 1_500
+RECONNECT_TIMEOUT_MS = 30_000
 
 
 def application_icon_path() -> Path:
@@ -427,6 +428,10 @@ class MainWindow(QMainWindow):
         self._devices: tuple[IOSDevice, ...] = ()
         self._active_device_identifier: str | None = None
         self._guided_udids: set[str] = set()
+        self._reconnect_active = False
+        self._reconnect_timeout_timer = QTimer(self)
+        self._reconnect_timeout_timer.setSingleShot(True)
+        self._reconnect_timeout_timer.timeout.connect(self._reconnect_timed_out)
         self._action_process: QProcess | None = None
         self._action_context = ""
         self._action_buffer = bytearray()
@@ -541,10 +546,17 @@ class MainWindow(QMainWindow):
         self.device_combo.setMinimumWidth(390)
         self.device_combo.currentIndexChanged.connect(self._device_selected)
         header_layout.addWidget(self.device_combo)
-        refresh_button = QPushButton("Refresh")
-        refresh_button.setObjectName("refreshDevicesButton")
-        refresh_button.clicked.connect(self._scanner_scan)
-        header_layout.addWidget(refresh_button)
+        self.refresh_devices_button = QPushButton("Retry Scan")
+        self.refresh_devices_button.setObjectName("refreshDevicesButton")
+        self.refresh_devices_button.clicked.connect(self._scanner_scan)
+        header_layout.addWidget(self.refresh_devices_button)
+        self.reconnect_device_button = QPushButton("Reconnect & Retry…")
+        self.reconnect_device_button.setObjectName("reconnectDeviceButton")
+        self.reconnect_device_button.setToolTip(
+            "Guide a physical reconnection and retry USB device discovery for 30 seconds."
+        )
+        self.reconnect_device_button.clicked.connect(self._reconnect_device)
+        header_layout.addWidget(self.reconnect_device_button)
         root_layout.addLayout(header_layout)
 
         self.connection_banner = QLabel("Waiting for an unlocked and trusted iPhone or iPad over USB…")
@@ -1983,6 +1995,54 @@ class MainWindow(QMainWindow):
     def _scanner_scan(self) -> None:
         self._scanner.scan()
 
+    def _reconnect_device(self) -> None:
+        if self._reconnect_active:
+            return
+        confirmed = self._confirm(
+            "Start a 30-second reconnect window?",
+            "1. Unlock the iPhone or iPad and keep it on the Home Screen.\n"
+            "2. In iOS Settings → Privacy & Security → Wired Accessories, allow the connection while unlocked.\n"
+            "3. Disconnect and reconnect it directly to the Mac with a known data-capable cable. Avoid a hub.\n"
+            "4. Click Allow if macOS asks to connect the accessory. Then tap Trust on the device and enter its "
+            "passcode if prompted. You can also select the device in the Finder sidebar and click Trust.\n\n"
+            "The toolkit will retry usbmux discovery for 30 seconds. It will not use sudo, delete pairing records, "
+            "restart SIP-protected Apple agents, restart the root-owned usbmuxd service, or change the iOS device.\n\n"
+            "Start retrying?",
+        )
+        if not confirmed:
+            return
+        self._reconnect_active = True
+        self.reconnect_device_button.setEnabled(False)
+        self.connection_banner.setText(
+            "Reconnect window active. Unlock the device, reconnect its data cable directly, and tap Trust if asked; "
+            "retrying usbmux discovery for up to 30 seconds…"
+        )
+        self._reconnect_timeout_timer.start(RECONNECT_TIMEOUT_MS)
+        self._scanner.start()
+
+    def _finish_reconnect_success(self, device_count: int) -> None:
+        self._reconnect_timeout_timer.stop()
+        self._reconnect_active = False
+        self.refresh_devices_button.setEnabled(True)
+        self.reconnect_device_button.setEnabled(True)
+        self.connection_banner.setText(
+            f"Reconnected: usbmux detected {device_count} trusted iOS device(s). "
+            "Keep the selected device unlocked while starting developer streams."
+        )
+
+    def _reconnect_timed_out(self) -> None:
+        if not self._reconnect_active:
+            return
+        self._reconnect_active = False
+        self.refresh_devices_button.setEnabled(True)
+        self.reconnect_device_button.setEnabled(True)
+        self.connection_banner.setText(
+            "usbmux found no device during the 30-second reconnect window. Unlock the phone, try another "
+            "data-capable cable or Mac port, reconnect directly without a hub, and use Finder to complete Trust. "
+            "Retry Scan afterward. The toolkit intentionally did not restart SIP-protected Apple agents or the "
+            "root-owned usbmuxd service."
+        )
+
     def _devices_changed(self, devices_object: object) -> None:
         if not isinstance(devices_object, tuple) or not all(isinstance(item, IOSDevice) for item in devices_object):
             self.connection_banner.setText("Device scanner returned an unexpected result type.")
@@ -2004,10 +2064,24 @@ class MainWindow(QMainWindow):
                 self.device_combo.setCurrentIndex(matching_index)
             self.device_combo.blockSignals(False)
         if not devices:
-            self.connection_banner.setText("No device detected. Connect by USB, unlock it, and tap Trust.")
+            if self._reconnect_active:
+                self.connection_banner.setText(
+                    "Reconnect window active. Waiting for usbmux to see an unlocked device; reconnect the "
+                    "data cable and tap Trust if prompted…"
+                )
+            else:
+                self.connection_banner.setText(
+                    "No usbmux device detected. Unlock the iPhone or iPad, reconnect a data-capable cable, and tap "
+                    "Trust if prompted. Use Reconnect & Retry for a guided 30-second detection window."
+                )
             self._update_device_fields(None)
             return
-        self.connection_banner.setText(f"Detected {len(devices)} trusted iOS device(s). Select the intended target before mounting or collecting.")
+        if self._reconnect_active:
+            self._finish_reconnect_success(len(devices))
+        else:
+            self.connection_banner.setText(
+                f"Detected {len(devices)} trusted iOS device(s). Select the intended target before mounting or collecting."
+            )
         self._update_device_fields(self.selected_device())
         selected = self.selected_device()
         if selected is not None and selected.identifier not in self._guided_udids:
@@ -2015,7 +2089,16 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(350, self.show_developer_mode_guide)
 
     def _scan_error(self, message: str) -> None:
-        self.connection_banner.setText(f"Device discovery error: {message}")
+        if self._reconnect_active:
+            self.connection_banner.setText(
+                f"Reconnect is still retrying after a usbmux discovery error: {message} Keep the device unlocked "
+                "and reconnect its data cable."
+            )
+            return
+        self.connection_banner.setText(
+            f"Device discovery error: {message} Use Retry Scan first. If it repeats, use Reconnect & Retry and "
+            "complete the cable, unlock, and Finder Trust checks."
+        )
 
     def _device_selected(self, index: int) -> None:
         del index
@@ -4730,6 +4813,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         self._scanner.stop()
+        self._reconnect_timeout_timer.stop()
         self._manpage_timeout_timer.stop()
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
