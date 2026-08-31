@@ -32,6 +32,6 @@ The maintainer will acknowledge a complete report when practical, validate scope
 
 The toolkit is a local orchestration interface. It does not jailbreak iOS, bypass a passcode or activation, evade code signing, disable the sandbox, remove supervision, decrypt protected traffic, or provide unrestricted filesystem access. A mounted DDI, successful developer service, entitlement, profile, or surprising log entry is not by itself evidence of compromise.
 
-Published application bundles are currently ad-hoc signed and are not Apple-notarized. Verify `SHA256SUMS.txt` from the release, use the archive matching the Mac architecture, and review the stated signing status before opening it. Never trust an archive whose checksum does not match.
+Published application bundles are currently ad-hoc signed and are not Apple-notarized. Verify `SHA256SUMS.txt` from the release, use the archive matching the Mac architecture, and review the stated signing status before opening it. Releases produced by the current workflow provide GitHub build-provenance and SBOM attestations; when a release contains them, verify with `gh attestation verify ARCHIVE --repo hideouts-io/iOS-Developer-Toolkit`. Never trust an archive whose checksum or available attestation does not match.
 
 Device output can contain highly sensitive information. Store logs, PCAPs, backups, acquisitions, coordinates, screenshots, crash reports, manifests, and evidence cases in access-controlled local storage and apply the user's retention policy.

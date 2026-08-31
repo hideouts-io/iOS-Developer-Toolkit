@@ -26,6 +26,7 @@ Generated Routes/
 location-events.jsonl
 *.backup/
 *.crash
+nuitka-crash-report.xml
 *.ips
 *.log
 *.pcap

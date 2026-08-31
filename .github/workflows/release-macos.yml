@@ -34,7 +34,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: macos-${{ matrix.architecture }}
-          path: release-assets/*.zip
+          path: |
+            release-assets/*.zip
+            release-assets/*.cdx.json
           if-no-files-found: error
 
   release:
@@ -42,7 +44,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      attestations: write
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -52,7 +56,21 @@ jobs:
           merge-multiple: true
       - name: Create checksums
         working-directory: release-assets
-        run: sha256sum *.zip > SHA256SUMS.txt
+        run: sha256sum *.zip *.cdx.json > SHA256SUMS.txt
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: release-assets/*.zip
+      - name: Attest Apple Silicon SBOM
+        uses: actions/attest@v4.2.2
+        with:
+          subject-path: release-assets/iOS-Developer-Toolkit-${{ github.ref_name }}-macOS-arm64.zip
+          sbom-path: release-assets/iOS-Developer-Toolkit-${{ github.ref_name }}-macOS-arm64.cdx.json
+      - name: Attest Intel SBOM
+        uses: actions/attest@v4.2.2
+        with:
+          subject-path: release-assets/iOS-Developer-Toolkit-${{ github.ref_name }}-macOS-x86_64.zip
+          sbom-path: release-assets/iOS-Developer-Toolkit-${{ github.ref_name }}-macOS-x86_64.cdx.json
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,4 +78,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --title "iOS Developer Toolkit $GITHUB_REF_NAME" \
             --generate-notes \
-            --notes "Native Apple Silicon and Intel macOS application bundles. Both builds are ad-hoc signed and are not Apple-notarized. Verify SHA256SUMS.txt before opening."
+            --notes "Native Apple Silicon and Intel macOS application bundles with CycloneDX SBOMs and GitHub build-provenance/SBOM attestations. Both builds are ad-hoc signed and are not Apple-notarized. Verify SHA256SUMS.txt and the GitHub attestation before opening."

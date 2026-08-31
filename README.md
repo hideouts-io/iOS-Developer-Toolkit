@@ -237,6 +237,19 @@ grep "macOS-${toolkit_arch}.zip" SHA256SUMS.txt | shasum -a 256 -c -
 
 The expected result ends in `OK`. If it reports `FAILED`, a missing line, or a different digest, do not open that download. Delete it and download the asset and checksum file again from the release page.
 
+Releases built by the current workflow also publish one CycloneDX SBOM per architecture and record GitHub build-provenance and SBOM attestations for each ZIP. Verify the downloaded archive against GitHub's transparency-backed attestation with the [GitHub CLI](https://cli.github.com/):
+
+```bash
+toolkit_arch="$(uname -m)"
+gh attestation verify \
+  "iOS-Developer-Toolkit-vVERSION-macOS-${toolkit_arch}.zip" \
+  --repo hideouts-io/iOS-Developer-Toolkit
+```
+
+The repository's `v0.3.1` binaries predate this attestation pipeline, so that command becomes applicable to the first subsequent tagged release. For an attested release, a successful result ties the ZIP digest to this repository's GitHub Actions workflow. It does not make the ad-hoc signature a Developer ID signature or an Apple notarization ticket.
+
+The matching `iOS-Developer-Toolkit-vVERSION-macOS-ARCH.cdx.json` is both a downloadable release asset and embedded inside the app at `Contents/Resources/BOM.cdx.json`. License notices, the source-availability statement, and generated installed-package inventory are embedded at `Contents/Resources/Licenses/`.
+
 Extract the verified ZIP in Finder, or use:
 
 ```bash
@@ -957,7 +970,7 @@ The final launcher check opens the application and briefly verifies the process.
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 51 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 79-button offscreen GUI smoke test, verifies the Mach-O architecture, applies an ad-hoc signature, and uploads an architecture-labeled ZIP. The release job publishes both archives with one SHA-256 inventory.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 51 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 79-button offscreen GUI smoke test, verifies the Mach-O architecture, embeds third-party notices and a CycloneDX SBOM, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The artifacts are not universal binaries: choose the ZIP matching `uname -m`. They are also not Developer ID signed or Apple-notarized because this repository has no release signing identity. A future signing upgrade should use a narrowly scoped Developer ID Application certificate, hardened runtime, Apple notarization, and stapling without changing the two-architecture verification gates.
 
@@ -973,6 +986,8 @@ Windows and Linux would require a separate host implementation or deliberately i
 - [`LocationSimulator`](https://github.com/Schlaubischlump/LocationSimulator) informed the offline map/teleport workflow. Its GPL source is not copied or linked, and its public backend does not support iOS 17 or later.
 - [Natural Earth](https://www.naturalearthdata.com/) provides the public-domain 1:110m land geometry rendered into the bundled offline Location Lab map.
 - The project logo is stored at `ios_developer_toolkit/assets/iosdevtoolkit.png` and is used unchanged in the application and documentation.
+
+The release-critical dependency versions, declared licenses, source links, generated inventory, and redistribution boundary are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). [SOURCE_AVAILABILITY.md](SOURCE_AVAILABILITY.md) identifies the matching tagged project source and bundled-component upstream sources. Each packaged app carries its own copies of both documents and the license files supplied by the installed Python distributions.
 
 Location Lab uses the pinned `pymobiledevice3` developer-service commands and this project's own map interaction, link parsing, validation, route, cleanup, and evidence code. Modern devices use the DVT path instead of the incompatible public LocationSimulator backend.
 
@@ -992,4 +1007,4 @@ Everyone is welcome to fork the repository, discuss ideas, report reproducible p
 
 ## License
 
-This repository is released under the [MIT License](LICENSE). External tools and upstream dependencies retain their own licenses.
+This repository's original code is released under the [MIT License](LICENSE). External tools, bundled runtimes, and upstream dependencies retain their own licenses; review [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistributing a prebuilt or modified application.
