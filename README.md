@@ -58,7 +58,7 @@ The screenshots use an illustrative device name, model, version, build, and UDID
 
 ## Start here
 
-Download the native `arm64` build for Apple Silicon or the native `x86_64` build for an Intel Mac from the [latest release](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest). Verify its checksum, extract the ZIP, and open **iOS Developer Toolkit.app**. The release bundle carries its pinned Python, PySide6, pymobiledevice3, and developer-image runtime; a repository checkout is not required. The GUI does not expose an interactive shell. IPython and Jedi remain source-installation tools, while the xonsh runtime is bundled because pymobiledevice3's AFC and backup services import it.
+Start with [Clone the repository and run the app](#clone-the-repository-and-run-the-app) to launch the current source in a project-managed environment. The launcher creates the local virtual environment when needed, stages **iOS Developer Toolkit.app**, and opens it. If you prefer a portable application that does not require a repository checkout, use the architecture-specific downloads later in the Installation section. The GUI does not expose an interactive shell. IPython and Jedi remain source-installation tools, while the xonsh runtime is bundled because pymobiledevice3's AFC and backup services import it.
 
 Connect an unlocked iPhone or iPad with a data-capable USB cable, tap **Trust** on the device, and select the intended target in the top-right device picker. Developer Mode and a mounted DDI are required only for workflows that use Apple developer services; basic pairing, Lockdown, apps, backups, AFC, classic syslog, and many diagnostics can work without them.
 
@@ -186,6 +186,33 @@ The current GUI and launcher are macOS-specific. Although upstream `pymobiledevi
 
 ## Installation
 
+### Clone the repository and run the app
+
+For the current main branch:
+
+```bash
+git clone https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+cd iOS-Developer-Toolkit
+./script/build_and_run.sh
+```
+
+For the published `v0.3.1` source state:
+
+```bash
+git clone --branch v0.3.1 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+cd iOS-Developer-Toolkit
+./script/build_and_run.sh
+```
+
+The launcher:
+
+1. creates `venv/` when needed;
+2. installs the pinned project dependencies into that environment;
+3. stages `dist/iOS Developer Toolkit.app`;
+4. opens the staged app.
+
+The locally staged app is a development wrapper around the repository environment. Use the architecture-specific release asset described below when you need a portable, self-contained application.
+
 ### Download the native application
 
 Release `v0.3.1` provides two independent application bundles. The sizes below are the exact published ZIP sizes; macOS Finder may display rounded values differently.
@@ -243,33 +270,6 @@ codesign --verify --deep --strict --verbose=2 "/Applications/iOS Developer Toolk
 A successful `codesign` check confirms that the extracted bundle is internally consistent with its ad-hoc signature. It does not turn the build into a Developer ID-signed or notarized application; the release checksum is what ties the downloaded ZIP to the asset published by this repository.
 
 Do not disable Gatekeeper globally, alter System Integrity Protection, or run broad commands such as recursive quarantine removal. If the verified app still will not open after the supported exception, retain the exact macOS warning, confirm the Mac architecture, download a fresh copy, and open a sanitized support request.
-
-### Clone the repository
-
-For the current main branch:
-
-```bash
-git clone https://github.com/hideouts-io/iOS-Developer-Toolkit.git
-cd iOS-Developer-Toolkit
-./script/build_and_run.sh
-```
-
-For the published `v0.3.1` source state:
-
-```bash
-git clone --branch v0.3.1 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
-cd iOS-Developer-Toolkit
-./script/build_and_run.sh
-```
-
-The launcher:
-
-1. creates `venv/` when needed;
-2. installs the pinned project dependencies into that environment;
-3. stages `dist/iOS Developer Toolkit.app`;
-4. opens the staged app.
-
-The locally staged app is still a development wrapper around the repository environment. Use the architecture-specific release asset when you need a portable, self-contained application.
 
 ### Use a GitHub source archive
 
