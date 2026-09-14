@@ -421,6 +421,8 @@ Both modern paths normally require Apple TSS access. A cached DDI payload does n
 
 ### Device Capability Matrix
 
+![Device Capability Matrix workspace](docs/screenshots/capability-matrix.png)
+
 The matrix is a manual readiness check for the currently selected device. It never runs merely because a device connects or because you open the workspace. **Run Capability Matrix** starts a separate bounded worker so a slow Apple service or Python import cannot freeze the interface; **Cancel** stops the current probe and preserves every completed result.
 
 The current matrix reports:
