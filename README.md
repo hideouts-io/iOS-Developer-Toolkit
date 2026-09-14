@@ -78,6 +78,9 @@ The application executes the project-pinned binary directly. Guided values becom
 
 Release `v0.3.2` combines the complete 12-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
 
+- **Guided Command Drift** checks the live `pymobiledevice3 --help` surface for all 49 presets before a device command is run, highlighting missing routes, changed options, failed checks, and cancellations without contacting a device;
+- **Action Safety** makes state boundaries explicit: local-output actions require review, device changes require a typed device-bound `RUN` phrase, and high-impact actions additionally require a current-backup acknowledgement and an `IRREVERSIBLE` phrase;
+- **Create Support Bundle…** produces an opt-in local ZIP with sanitized environment, readiness, status, and command-drift metadata plus a SHA-256 manifest; it excludes device identity, captures, backups, logs, command output, credentials, and common host/network identifiers;
 - **Retry Scan** performs an immediate usbmux device check, while **Reconnect & Retry…** opens a guided detection window without attempting to restart SIP-protected Apple services;
 - the manual **Capability Matrix** reports host, trust, Developer Mode, DDI, tunnel, DVT, CoreDevice, and related readiness as separate bounded results, then compares completed local probes across real devices without retaining raw UDIDs;
 - **DVT network activity** and **CoreDevice applications** are handled as long-running streams with explicit Stop controls instead of misleading finite snapshots;
