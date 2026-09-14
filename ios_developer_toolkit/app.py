@@ -23,6 +23,8 @@ from PySide6.QtGui import (
     QPainter,
     QPen,
     QPixmap,
+    QKeySequence,
+    QShortcut,
     QTextCursor,
 )
 from PySide6.QtWidgets import (
@@ -62,7 +64,14 @@ from PySide6.QtWidgets import (
 )
 
 from ios_developer_toolkit import APP_VERSION
+from ios_developer_toolkit.action_safety import (
+    ActionSafetyProfile,
+    advanced_action_safety,
+    confirmation_phrase,
+    guided_action_safety,
+)
 from ios_developer_toolkit.backup_worker import BackupEvent, BackupRequestError, parse_backup_event
+from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case
 from ios_developer_toolkit.capability_matrix import (
     CapabilityMatrixError,
     CapabilityResult,
@@ -74,7 +83,21 @@ from ios_developer_toolkit.capability_matrix import (
     parse_capability_worker_event,
     untested_capability_results,
 )
-from ios_developer_toolkit.catalog import is_potentially_mutating
+from ios_developer_toolkit.device_compatibility import (
+    DeviceCompatibilityError,
+    DeviceCompatibilityObservation,
+    append_observation,
+    compatibility_history_path,
+    create_observation,
+    latest_observations,
+    load_observations,
+)
+from ios_developer_toolkit.gui_pages import (
+    build_home_page,
+    build_live_logs_page,
+    build_safety_page,
+    toolkit_stylesheet,
+)
 from ios_developer_toolkit.command_catalog import (
     CommandCatalogError,
     CommandPreset,
@@ -85,6 +108,12 @@ from ios_developer_toolkit.command_catalog import (
     preset_categories,
     render_preset_arguments,
     risk_title,
+)
+from ios_developer_toolkit.command_drift import (
+    HelpRouteProbe,
+    evaluate_command_drift,
+    help_routes_for_presets,
+    render_command_drift_report,
 )
 from ios_developer_toolkit.installed_apps import (
     InstalledApp,
@@ -133,8 +162,15 @@ from ios_developer_toolkit.runtime import (
     command_argv,
     command_text,
     device_environment,
+    is_frozen_runtime,
     pymobiledevice3_command,
     worker_command,
+)
+from ios_developer_toolkit.support_bundle import (
+    SupportBundleContext,
+    SupportBundleError,
+    SupportStatus,
+    create_sanitized_support_bundle,
 )
 from ios_developer_toolkit.ufade_connector import (
     UFADE_INSTALLATION_URL,
@@ -153,6 +189,7 @@ XCODE_CANDIDATE_DDI = Path("/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.
 DEVELOPER_DISK_IMAGE_REPOSITORY = "https://github.com/doronz88/DeveloperDiskImage"
 MANPAGE_HELP_TIMEOUT_MS = 15_000
 MANPAGE_HELP_KILL_DELAY_MS = 1_500
+COMMAND_DRIFT_HELP_TIMEOUT_MS = 5_000
 RECONNECT_TIMEOUT_MS = 30_000
 
 
@@ -422,6 +459,10 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"iOS Device Workbench {APP_VERSION}")
+        self.setAccessibleName("iOS Developer Toolkit main window")
+        self.setAccessibleDescription(
+            "Keyboard-first workspace for authorized iPhone and iPad development, diagnostics, backup, and evidence collection."
+        )
         self.setWindowIcon(QIcon(str(application_icon_path())))
         self.resize(1280, 840)
         self._pmd3 = pymobiledevice3_command()
@@ -444,6 +485,13 @@ class MainWindow(QMainWindow):
         self._capability_completed_at: str | None = None
         self._capability_cancel_reason: str | None = None
         self._capability_worker_completed = False
+        self._compatibility_history_path = compatibility_history_path(Path.home())
+        self._compatibility_observations: tuple[DeviceCompatibilityObservation, ...] = ()
+        self._compatibility_history_error: str | None = None
+        try:
+            self._compatibility_observations = load_observations(self._compatibility_history_path)
+        except DeviceCompatibilityError as error:
+            self._compatibility_history_error = str(error)
         self._collection_process: QProcess | None = None
         self._ipa_inspection_process: QProcess | None = None
         self._ipa_inspection_stdout = bytearray()
@@ -501,8 +549,24 @@ class MainWindow(QMainWindow):
         self._manpage_timeout_timer = QTimer(self)
         self._manpage_timeout_timer.setSingleShot(True)
         self._manpage_timeout_timer.timeout.connect(self._manpage_timed_out)
+        self._command_drift_process: QProcess | None = None
+        self._command_drift_stdout = bytearray()
+        self._command_drift_stderr = bytearray()
+        self._command_drift_paths: tuple[tuple[str, ...], ...] = ()
+        self._command_drift_index = 0
+        self._command_drift_active_path: tuple[str, ...] | None = None
+        self._command_drift_active_error: str | None = None
+        self._command_drift_cancelled = False
+        self._command_drift_probes: dict[tuple[str, ...], HelpRouteProbe] = {}
+        self._command_drift_timeout_timer = QTimer(self)
+        self._command_drift_timeout_timer.setSingleShot(True)
+        self._command_drift_timeout_timer.timeout.connect(self._command_drift_timed_out)
         self._last_case_path: Path | None = None
+        self._active_case_path: Path | None = None
+        self._keyboard_shortcuts: list[QShortcut] = []
         self._build_ui()
+        self._configure_accessibility()
+        self._configure_keyboard_shortcuts()
         self._scanner = DeviceScanner(self._pmd3)
         self._scanner.devices_changed.connect(self._devices_changed)
         self._scanner.scan_error.connect(self._scan_error)
@@ -557,6 +621,16 @@ class MainWindow(QMainWindow):
         )
         self.reconnect_device_button.clicked.connect(self._reconnect_device)
         header_layout.addWidget(self.reconnect_device_button)
+        self.keyboard_shortcuts_button = QPushButton("Keyboard Shortcuts")
+        self.keyboard_shortcuts_button.setObjectName("keyboardShortcutsButton")
+        self.keyboard_shortcuts_button.setToolTip("Show keyboard shortcuts (⌘/)")
+        self.keyboard_shortcuts_button.clicked.connect(self.show_keyboard_shortcuts)
+        header_layout.addWidget(self.keyboard_shortcuts_button)
+        self.support_bundle_button = QPushButton("Create Support Bundle…")
+        self.support_bundle_button.setObjectName("createSupportBundleButton")
+        self.support_bundle_button.setToolTip("Create a local sanitized ZIP for a support request")
+        self.support_bundle_button.clicked.connect(self.create_support_bundle)
+        header_layout.addWidget(self.support_bundle_button)
         root_layout.addLayout(header_layout)
 
         self.connection_banner = QLabel("Waiting for an unlocked and trusted iPhone or iPad over USB…")
@@ -614,66 +688,278 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         self._apply_style()
 
+    def _configure_accessibility(self) -> None:
+        self.device_combo.setAccessibleName("Selected iPhone or iPad")
+        self.device_combo.setAccessibleDescription(
+            "Choose a detected, trusted device. Use Command L to focus the workspace list instead."
+        )
+        self.refresh_devices_button.setAccessibleName("Retry device scan")
+        self.refresh_devices_button.setAccessibleDescription("Immediately refresh the usbmux device inventory. Shortcut: Command R.")
+        self.reconnect_device_button.setAccessibleName("Reconnect device and retry scan")
+        self.reconnect_device_button.setAccessibleDescription(
+            "Open a guided USB reconnection and trust workflow without restarting macOS services."
+        )
+        self.keyboard_shortcuts_button.setAccessibleName("Keyboard shortcuts")
+        self.keyboard_shortcuts_button.setAccessibleDescription("Open the keyboard shortcut reference. Shortcut: Command Slash.")
+        self.support_bundle_button.setAccessibleName("Create sanitized support bundle")
+        self.support_bundle_button.setAccessibleDescription(
+            "Create a local ZIP that excludes device content and sensitive artifacts. The application never uploads it."
+        )
+        self.connection_banner.setAccessibleName("Device connection status")
+        self.connection_banner.setAccessibleDescription(
+            "Reports whether a trusted iPhone or iPad is currently available to the toolkit."
+        )
+        self.navigation_list.setAccessibleName("Workspace navigation")
+        self.navigation_list.setAccessibleDescription(
+            "Use Up and Down Arrow to choose a workspace, then Tab to enter its controls. Shortcut: Command L."
+        )
+        self.navigation_list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.page_stack.setAccessibleName("Active workspace")
+        self.page_stack.setAccessibleDescription("Contains the controls for the selected workspace.")
+        self.page_stack.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.command_search_field.setAccessibleName("Search guided commands")
+        self.command_search_field.setAccessibleDescription("Filters guided command presets by title, category, summary, or command arguments.")
+        self.command_preset_list.setAccessibleName("Guided command presets")
+        self.command_preset_list.setAccessibleDescription(
+            "Use Up and Down Arrow to choose a preset. Tab reaches its validated values and action buttons."
+        )
+        self.command_preview.setAccessibleName("Guided command preview")
+        self.command_preview.setAccessibleDescription("Read-only exact pymobiledevice3 argument vector for the selected preset.")
+        self.command_drift_output.setAccessibleName("Command drift report")
+        self.command_drift_output.setAccessibleDescription(
+            "Read-only report of installed live-help route and option compatibility for guided presets."
+        )
+        self.manpage_search_field.setAccessibleName("Search live help topics")
+        self.manpage_search_field.setAccessibleDescription("Filters the local index of pymobiledevice3 command routes.")
+        self.manpage_list.setAccessibleName("Live help topic list")
+        self.manpage_list.setAccessibleDescription("Use Up and Down Arrow to choose a command route, then Tab to live-help actions.")
+        self.manpage_output.setAccessibleName("Live help output")
+        self.manpage_output.setAccessibleDescription("Read-only help output from the installed project-local pymobiledevice3 executable.")
+        self.app_filter_field.setAccessibleName("Filter installed applications")
+        self.app_filter_field.setAccessibleDescription("Filters the installed application inventory without changing the device.")
+        self.installed_apps_table.setAccessibleName("Installed application inventory")
+        self.installed_apps_table.setAccessibleDescription("Use Arrow keys to select an application. Actions require explicit confirmation.")
+        self.capability_table.setAccessibleName("Capability Matrix results")
+        self.capability_table.setAccessibleDescription("Use Arrow keys to select a capability and read its detailed evidence below.")
+        self.compatibility_history_table.setAccessibleName("Real-device compatibility history")
+        self.compatibility_history_table.setAccessibleDescription("Local compatibility observations with no raw device identifiers.")
+        self.location_map.setAccessibleDescription(
+            "Offline mouse coordinate picker. For keyboard-first location entry, use the coordinate importer, latitude, and longitude fields."
+        )
+        self.location_map.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        QWidget.setTabOrder(self.device_combo, self.refresh_devices_button)
+        QWidget.setTabOrder(self.refresh_devices_button, self.reconnect_device_button)
+        QWidget.setTabOrder(self.reconnect_device_button, self.keyboard_shortcuts_button)
+        QWidget.setTabOrder(self.keyboard_shortcuts_button, self.support_bundle_button)
+        QWidget.setTabOrder(self.support_bundle_button, self.navigation_list)
+
+    def _configure_keyboard_shortcuts(self) -> None:
+        self._add_application_shortcut("Meta+R", self._scanner_scan, "shortcutRetryDeviceScan")
+        self._add_application_shortcut("Meta+L", self.focus_workspace_navigation, "shortcutFocusWorkspaceNavigation")
+        self._add_application_shortcut("Meta+F", self.focus_workspace_search, "shortcutFocusWorkspaceSearch")
+        self._add_application_shortcut("Meta+/", self.show_keyboard_shortcuts, "shortcutShowKeyboardReference")
+        self._add_application_shortcut("Meta+Alt+Left", self.navigate_previous_workspace, "shortcutPreviousWorkspace")
+        self._add_application_shortcut("Meta+Alt+Right", self.navigate_next_workspace, "shortcutNextWorkspace")
+        workspace_shortcuts = (
+            ("Meta+1", "Home"),
+            ("Meta+2", "Device & DDI"),
+            ("Meta+3", "Capability Matrix"),
+            ("Meta+4", "Location Lab"),
+            ("Meta+5", "Live Logs"),
+            ("Meta+6", "Command Center"),
+            ("Meta+7", "Installed Apps"),
+            ("Meta+8", "Backup"),
+            ("Meta+9", "Sideload IPA"),
+            ("Meta+0", "Evidence Capture"),
+            ("Meta+Shift+M", "Man Pages"),
+            ("Meta+Shift+S", "Scope & Safety"),
+        )
+        for sequence, page_name in workspace_shortcuts:
+            identifier = f"shortcutOpen{page_name.replace(' ', '').replace('&', 'And')}"
+            self._add_application_shortcut(
+                sequence,
+                self._workspace_shortcut_handler(page_name),
+                identifier,
+            )
+
+    def _add_application_shortcut(self, sequence: str, callback: Callable[[], None], identifier: str) -> None:
+        shortcut = QShortcut(QKeySequence(sequence), self)
+        shortcut.setObjectName(identifier)
+        shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        shortcut.activated.connect(callback)
+        self._keyboard_shortcuts.append(shortcut)
+
+    def _workspace_shortcut_handler(self, page_name: str) -> Callable[[], None]:
+        def navigate() -> None:
+            self.navigate_to_page_and_focus(page_name)
+
+        return navigate
+
+    def navigate_to_page_and_focus(self, name: str) -> None:
+        self.navigate_to_page(name)
+        focus_targets: Mapping[str, QWidget] = {
+            "Home": self.findChild(QPushButton, "homeOpenDevice&DDIButton"),
+            "Device & DDI": self.refresh_devices_button,
+            "Capability Matrix": self.refresh_capabilities_button,
+            "Location Lab": self.location_input_field,
+            "Live Logs": self.findChild(QPushButton, "openUnifiedLogButton"),
+            "Command Center": self.command_search_field,
+            "Installed Apps": self.app_filter_field,
+            "Backup": self.backup_destination_field,
+            "Sideload IPA": self.ipa_path_field,
+            "Evidence Capture": self.case_title_field,
+            "Man Pages": self.manpage_search_field,
+            "Scope & Safety": self.navigation_list,
+        }
+        target = focus_targets.get(name)
+        if target is None:
+            raise RuntimeError(f"Workspace focus target is missing: {name}")
+        target.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        if isinstance(target, QLineEdit):
+            target.selectAll()
+
+    def focus_workspace_navigation(self) -> None:
+        self.navigation_list.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def focus_workspace_search(self) -> None:
+        current_item = self.navigation_list.currentItem()
+        if current_item is None:
+            raise RuntimeError("Cannot focus a workspace search without a selected workspace")
+        focus_targets: Mapping[str, QLineEdit] = {
+            "Command Center": self.command_search_field,
+            "Man Pages": self.manpage_search_field,
+            "Installed Apps": self.app_filter_field,
+            "Location Lab": self.location_input_field,
+        }
+        target = focus_targets.get(current_item.text())
+        if target is None:
+            self.focus_workspace_navigation()
+            return
+        target.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        target.selectAll()
+
+    def navigate_previous_workspace(self) -> None:
+        count = self.navigation_list.count()
+        if count == 0:
+            raise RuntimeError("Workspace navigation contains no pages")
+        self.navigation_list.setCurrentRow((self.navigation_list.currentRow() - 1) % count)
+        self.focus_workspace_navigation()
+
+    def navigate_next_workspace(self) -> None:
+        count = self.navigation_list.count()
+        if count == 0:
+            raise RuntimeError("Workspace navigation contains no pages")
+        self.navigation_list.setCurrentRow((self.navigation_list.currentRow() + 1) % count)
+        self.focus_workspace_navigation()
+
+    def show_keyboard_shortcuts(self) -> None:
+        dialog = QDialog(self)
+        dialog.setObjectName("keyboardShortcutsDialog")
+        dialog.setWindowTitle("Keyboard Shortcuts")
+        dialog.setAccessibleName("Keyboard shortcut reference")
+        dialog.setAccessibleDescription("Lists application-wide keyboard shortcuts for workspace navigation and search.")
+        dialog.setMinimumWidth(650)
+        layout = QVBoxLayout(dialog)
+        heading = QLabel("Keyboard-first navigation")
+        heading.setFont(QFont(heading.font().family(), 18, QFont.Weight.DemiBold))
+        layout.addWidget(heading)
+        reference = QTextBrowser()
+        reference.setAccessibleName("Keyboard shortcut list")
+        reference.setHtml(
+            "<table>"
+            "<tr><th align='left'>Shortcut</th><th align='left'>Action</th></tr>"
+            "<tr><td>⌘ R</td><td>Retry device scan</td></tr>"
+            "<tr><td>⌘ L</td><td>Focus workspace navigation</td></tr>"
+            "<tr><td>⌘ F</td><td>Focus search in Command Center, Man Pages, Installed Apps, or Location Lab</td></tr>"
+            "<tr><td>⌘ ⌥ ← / ⌘ ⌥ →</td><td>Previous / next workspace</td></tr>"
+            "<tr><td>⌘ 1–0</td><td>Home through Evidence Capture</td></tr>"
+            "<tr><td>⌘ ⇧ M</td><td>Man Pages</td></tr>"
+            "<tr><td>⌘ ⇧ S</td><td>Scope &amp; Safety</td></tr>"
+            "<tr><td>⌘ /</td><td>Open this reference</td></tr>"
+            "<tr><td>Tab / Shift Tab</td><td>Move through controls</td></tr>"
+            "<tr><td>Space / Return</td><td>Activate the focused control</td></tr>"
+            "<tr><td>Arrow keys</td><td>Move through lists and tables</td></tr>"
+            "</table>"
+            "<p>Shortcuts navigate or focus only. Commands that write files or change device state still require the "
+            "existing review and typed acknowledgements.</p>"
+        )
+        layout.addWidget(reference)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.setAccessibleName("Close keyboard shortcut reference")
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def create_support_bundle(self) -> None:
+        message = (
+            "Create a local sanitized support ZIP?\n\n"
+            "Included: toolkit and dependency versions, macOS/Python metadata, aggregate readiness counts, selected "
+            "workspace, sanitized status summaries, and the command-drift report.\n\n"
+            "Excluded: device identities, pairing records, backups, cases, captures, screenshots, raw logs, PCAPs, "
+            "crash reports, IPA files, command output, passwords, and user-entered values.\n\n"
+            "The application will not upload the ZIP. Review it before sharing."
+        )
+        if not self._confirm("Create Sanitized Support Bundle", message):
+            return
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+        suggested_path = Path.home() / f"iOSDeveloperToolkit-support-{timestamp}.zip"
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Sanitized Support Bundle",
+            str(suggested_path),
+            "ZIP archive (*.zip)",
+        )
+        if not selected:
+            return
+        destination = Path(selected)
+        if destination.suffix.casefold() != ".zip":
+            destination = destination.with_suffix(".zip")
+        try:
+            result = create_sanitized_support_bundle(destination.resolve(), self._support_bundle_context())
+        except SupportBundleError as error:
+            QMessageBox.critical(self, "Could Not Create Support Bundle", str(error))
+            return
+        QMessageBox.information(
+            self,
+            "Sanitized Support Bundle Created",
+            f"Created locally:\n{result.path}\n\nContains {len(result.entries)} reviewed support files. Review the ZIP before sharing.",
+        )
+
+    def _support_bundle_context(self) -> SupportBundleContext:
+        current_item = self.navigation_list.currentItem()
+        if current_item is None:
+            raise RuntimeError("Cannot create a support bundle without a selected workspace")
+        capability_counts = tuple(
+            (state, sum(result.state == state for result in self._capability_results.values()))
+            for state in ("ready", "needs-attention", "unavailable", "blocked", "not-tested", "not-applicable")
+        )
+        statuses = (
+            SupportStatus("connection", self.connection_banner.text()),
+            SupportStatus("developer_mode", self.developer_mode_status.text()),
+            SupportStatus("capability_matrix", self.capability_status.text()),
+            SupportStatus("command_drift", self.command_drift_status.text()),
+        )
+        redactions = tuple(
+            value
+            for device in self._devices
+            for value in (device.identifier, device.name)
+            if value
+        )
+        return SupportBundleContext(
+            APP_VERSION,
+            current_item.text(),
+            len(self._devices),
+            self.selected_device() is not None,
+            capability_counts,
+            self.command_drift_output.toPlainText(),
+            statuses,
+            redactions,
+            is_frozen_runtime(),
+        )
+
     def _build_home_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setSpacing(16)
-
-        hero = QFrame()
-        hero.setObjectName("homeHero")
-        hero_layout = QVBoxLayout(hero)
-        heading = QLabel("One trusted connection. Many Apple device services.")
-        heading.setObjectName("pageTitle")
-        heading.setFont(QFont(heading.font().family(), 22, QFont.Weight.Bold))
-        hero_layout.addWidget(heading)
-        description = QLabel(
-            "Use guided workflows for common work, Command Center for one-click pymobiledevice3 presets, "
-            "and live Man Pages when you need the exact syntax supported by the installed version."
-        )
-        description.setWordWrap(True)
-        hero_layout.addWidget(description)
-        stats = QLabel(
-            f"{len(self._presets)} guided commands  •  {len(self._manpages)} live help topics  •  direct execution without a shell"
-        )
-        stats.setObjectName("homeStats")
-        hero_layout.addWidget(stats)
-        layout.addWidget(hero)
-
-        workflow_grid = QGridLayout()
-        cards = (
-            ("1", "Connect && prepare", "Trust the device, enable Developer Mode, and mount the correct personalized DDI.", "Device & DDI"),
-            ("2", "Verify capabilities", "Test host tools, trust, Developer Mode, the DDI, tunnel, CoreDevice, DVT, and Web Inspector.", "Capability Matrix"),
-            ("3", "Test location", "Set a fixed coordinate or replay a validated GPX route, then explicitly clear the simulated state.", "Location Lab"),
-            ("4", "Run guided commands", "Choose a category and preset; the GUI validates any required fields and shows the exact command.", "Command Center"),
-            ("5", "Collect && preserve", "Create a bounded evidence case, encrypted backup, app inventory, PCAP, logs, and crash-report set.", "Evidence Capture"),
-            ("6", "Learn advanced services", "Browse current help for DVT, CoreDevice, RemoteXPC, Web Inspector, restore, profiles, and more.", "Man Pages"),
-        )
-        for position, (number, title, body, destination) in enumerate(cards):
-            card = QGroupBox(f"{number}. {title}")
-            card_layout = QVBoxLayout(card)
-            body_label = QLabel(body)
-            body_label.setWordWrap(True)
-            card_layout.addWidget(body_label, 1)
-            open_button = QPushButton(f"Open {destination.replace('&', '&&')}")
-            open_button.setObjectName(f"homeOpen{destination.replace(' ', '')}Button")
-            open_button.clicked.connect(self._navigation_handler(destination))
-            card_layout.addWidget(open_button)
-            workflow_grid.addWidget(card, position // 2, position % 2)
-        layout.addLayout(workflow_grid)
-
-        stack_group = QGroupBox("How the command families fit together")
-        stack_layout = QVBoxLayout(stack_group)
-        stack = QLabel(
-            "USB / Wi-Fi pairing → usbmuxd → lockdownd → AFC, apps, backups, diagnostics, syslog\n"
-            "iOS 17+ RemoteXPC / RSD → Developer Disk Image → CoreDevice and DVT instrumentation\n"
-            "Correlate service views: logs + packets + processes + crash reports + backups; no single command is complete evidence."
-        )
-        stack.setObjectName("protocolStackSummary")
-        stack.setWordWrap(True)
-        stack_layout.addWidget(stack)
-        layout.addWidget(stack_group)
-        layout.addStretch()
-        return page
+        return build_home_page(len(self._presets), len(self._manpages), self.navigate_to_page)
 
     def navigate_to_page(self, name: str) -> None:
         index = self._page_indices.get(name)
@@ -847,6 +1133,13 @@ class MainWindow(QMainWindow):
         self.capability_progress.setValue(0)
         layout.addWidget(self.capability_progress)
 
+        matrix_tabs = QTabWidget()
+        matrix_tabs.setObjectName("capabilityMatrixTabs")
+
+        current_matrix_page = QWidget()
+        current_matrix_layout = QVBoxLayout(current_matrix_page)
+        current_matrix_layout.setContentsMargins(0, 0, 0, 0)
+        current_matrix_layout.setSpacing(10)
         self.capability_table = QTableWidget(0, 4)
         self.capability_table.setObjectName("capabilityMatrixTable")
         self.capability_table.setHorizontalHeaderLabels(("Layer", "Capability", "State", "Result"))
@@ -861,7 +1154,7 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.capability_table, 1)
+        current_matrix_layout.addWidget(self.capability_table, 1)
 
         detail_group = QGroupBox("Selected capability evidence and next step")
         detail_layout = QVBoxLayout(detail_group)
@@ -870,7 +1163,42 @@ class MainWindow(QMainWindow):
         self.capability_detail.setOpenExternalLinks(True)
         self.capability_detail.setMaximumHeight(155)
         detail_layout.addWidget(self.capability_detail)
-        layout.addWidget(detail_group)
+        current_matrix_layout.addWidget(detail_group)
+        matrix_tabs.addTab(current_matrix_page, "Current Device")
+
+        compatibility_page = QWidget()
+        compatibility_layout = QVBoxLayout(compatibility_page)
+        compatibility_layout.setContentsMargins(0, 0, 0, 0)
+        compatibility_layout.setSpacing(10)
+        compatibility_explanation = QLabel(
+            "This is a local comparison of completed Capability Matrix probes from physically connected devices. "
+            "It displays the latest result per device fingerprint and never predicts support for an untested model or build."
+        )
+        compatibility_explanation.setWordWrap(True)
+        compatibility_layout.addWidget(compatibility_explanation)
+        compatibility_controls = QHBoxLayout()
+        refresh_history_button = QPushButton("Refresh History")
+        refresh_history_button.setObjectName("refreshCompatibilityHistoryButton")
+        refresh_history_button.clicked.connect(self.refresh_compatibility_history)
+        compatibility_controls.addWidget(refresh_history_button)
+        copy_history_button = QPushButton("Copy Compatibility Matrix")
+        copy_history_button.setObjectName("copyCompatibilityMatrixButton")
+        copy_history_button.clicked.connect(self.copy_compatibility_matrix)
+        compatibility_controls.addWidget(copy_history_button)
+        compatibility_controls.addStretch()
+        compatibility_layout.addLayout(compatibility_controls)
+        self.compatibility_history_status = QLabel()
+        self.compatibility_history_status.setObjectName("compatibilityHistoryStatus")
+        self.compatibility_history_status.setWordWrap(True)
+        compatibility_layout.addWidget(self.compatibility_history_status)
+        self.compatibility_history_table = QTableWidget(0, 0)
+        self.compatibility_history_table.setObjectName("realDeviceCompatibilityTable")
+        self.compatibility_history_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.compatibility_history_table.setAlternatingRowColors(True)
+        self.compatibility_history_table.verticalHeader().setVisible(False)
+        compatibility_layout.addWidget(self.compatibility_history_table, 1)
+        matrix_tabs.addTab(compatibility_page, "Real-Device Compatibility")
+        layout.addWidget(matrix_tabs, 1)
 
         privacy = QLabel(
             "The probes do not mount images, change settings, start captures, or write device data. Results describe "
@@ -880,6 +1208,7 @@ class MainWindow(QMainWindow):
         privacy.setWordWrap(True)
         layout.addWidget(privacy)
         self._populate_capability_matrix()
+        self._populate_compatibility_history()
         self._update_capability_controls()
         return page
 
@@ -1150,82 +1479,50 @@ class MainWindow(QMainWindow):
         return scroll_area
 
     def _build_live_logs_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setSpacing(14)
-
-        heading = QLabel("Live Logs")
-        heading.setObjectName("pageTitle")
-        heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
-        layout.addWidget(heading)
-        explanation = QLabel(
-            "Open independent scrolling log windows for the selected device. Each window continuously spools the "
-            "complete raw byte stream to a private local cache while its visible view can be paused, searched, or "
-            "filtered. Closing a window asks you to save or explicitly discard the capture."
+        return build_live_logs_page(
+            log_stream_specs(),
+            self.open_live_log_window,
+            self._open_log_presets,
+            self.navigate_to_page,
         )
-        explanation.setWordWrap(True)
-        layout.addWidget(explanation)
-
-        stream_grid = QGridLayout()
-        for position, specification in enumerate(log_stream_specs()):
-            group = QGroupBox(specification.title)
-            group_layout = QVBoxLayout(group)
-            summary = QLabel(specification.summary)
-            summary.setWordWrap(True)
-            group_layout.addWidget(summary, 1)
-            requirement = QLabel(
-                "Needs Developer Mode + mounted DDI/tunnel"
-                if specification.requires_developer_services
-                else "Uses the trusted lockdown connection; no DDI required"
-            )
-            requirement.setObjectName("liveLogRequirement")
-            requirement.setWordWrap(True)
-            group_layout.addWidget(requirement)
-            open_button = QPushButton(f"Pop Out {specification.title}")
-            open_button.setObjectName(f"open{specification.identifier.replace('-', '').title()}LogButton")
-            open_button.clicked.connect(
-                lambda checked=False, identifier=specification.identifier: self.open_live_log_window(identifier)
-            )
-            group_layout.addWidget(open_button)
-            stream_grid.addWidget(group, 0, position)
-        layout.addLayout(stream_grid)
-
-        integrity_group = QGroupBox("Capture integrity")
-        integrity_layout = QVBoxLayout(integrity_group)
-        integrity_text = QLabel(
-            "Pause affects only rendering: device output continues into the raw spool. Filters affect only the current "
-            "view and filtered export. Save Raw copies the complete stream and a metadata sidecar containing the exact "
-            "command, target UDID, timestamps, byte/line counts, exit code, and process error. The view retains the newest "
-            "50,000 decoded lines to stay responsive; the raw spool is not truncated by that limit."
-        )
-        integrity_text.setWordWrap(True)
-        integrity_layout.addWidget(integrity_text)
-        layout.addWidget(integrity_group)
-
-        archive_group = QGroupBox("Stored log archive and deeper analysis")
-        archive_layout = QHBoxLayout(archive_group)
-        archive_note = QLabel(
-            "For retained device logs, use the Syslog → collect preset in Command Center to pull a .logarchive for "
-            "Console.app or the macOS log command. Evidence Capture remains the bounded multi-source workflow."
-        )
-        archive_note.setWordWrap(True)
-        archive_layout.addWidget(archive_note, 1)
-        command_button = QPushButton("Open Log Presets")
-        command_button.setObjectName("openLogPresetsButton")
-        command_button.clicked.connect(self._open_log_presets)
-        archive_layout.addWidget(command_button)
-        evidence_button = QPushButton("Open Evidence Capture")
-        evidence_button.setObjectName("openEvidenceCaptureButton")
-        evidence_button.clicked.connect(self._navigation_handler("Evidence Capture"))
-        archive_layout.addWidget(evidence_button)
-        layout.addWidget(archive_group)
-        layout.addStretch()
-        return page
 
     def _build_collection_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setSpacing(14)
+
+        intake_group = QGroupBox("1. Guided case intake")
+        intake_layout = QFormLayout(intake_group)
+        self.case_title_field = QLineEdit()
+        self.case_title_field.setObjectName("caseTitle")
+        self.case_title_field.setPlaceholderText("Example: Pre-release device validation")
+        intake_layout.addRow("Case title", self.case_title_field)
+        self.case_purpose_field = QPlainTextEdit()
+        self.case_purpose_field.setObjectName("casePurpose")
+        self.case_purpose_field.setPlaceholderText("Optional local note about the authorized purpose and scope.")
+        self.case_purpose_field.setMaximumHeight(72)
+        intake_layout.addRow("Purpose / scope", self.case_purpose_field)
+        self.case_authorization_checkbox = QCheckBox("I own this device or am authorized to examine it.")
+        self.case_authorization_checkbox.setObjectName("caseAuthorizationAcknowledgement")
+        intake_layout.addRow("Authorization", self.case_authorization_checkbox)
+        case_actions = QHBoxLayout()
+        self.case_readiness_button = QPushButton("Run Device Readiness Check")
+        self.case_readiness_button.setObjectName("guidedCaseReadinessButton")
+        self.case_readiness_button.clicked.connect(self.run_guided_case_readiness_check)
+        self.case_readiness_button.setToolTip(
+            "Run the bounded, read-only Capability Matrix for the selected device before creating or collecting a case."
+        )
+        case_actions.addWidget(self.case_readiness_button)
+        self.create_case_button = QPushButton("Create Guided Case")
+        self.create_case_button.setObjectName("createGuidedCaseButton")
+        self.create_case_button.clicked.connect(self.create_guided_case)
+        case_actions.addWidget(self.create_case_button)
+        self.case_status = QLabel("No active case. Create one before collection to retain intake and scope metadata.")
+        self.case_status.setObjectName("guidedCaseStatus")
+        self.case_status.setWordWrap(True)
+        case_actions.addWidget(self.case_status, 1)
+        intake_layout.addRow(case_actions)
+        layout.addWidget(intake_group)
 
         destination_group = QGroupBox("Evidence case")
         destination_layout = QFormLayout(destination_group)
@@ -1811,6 +2108,42 @@ class MainWindow(QMainWindow):
         browser_splitter.setStretchFactor(1, 2)
         layout.addWidget(browser_splitter)
 
+        drift_group = QGroupBox("Command-drift detection")
+        drift_layout = QVBoxLayout(drift_group)
+        drift_explanation = QLabel(
+            "Read-only: checks each guided preset's installed pymobiledevice3 --help route and expected option flags. "
+            "It never runs a preset or contacts a connected device."
+        )
+        drift_explanation.setWordWrap(True)
+        drift_layout.addWidget(drift_explanation)
+        drift_actions = QHBoxLayout()
+        self.command_drift_check_button = QPushButton("Check Guided Command Drift")
+        self.command_drift_check_button.setObjectName("checkCommandDriftButton")
+        self.command_drift_check_button.clicked.connect(self.start_command_drift_check)
+        drift_actions.addWidget(self.command_drift_check_button)
+        self.command_drift_cancel_button = QPushButton("Cancel Drift Check")
+        self.command_drift_cancel_button.setObjectName("cancelCommandDriftButton")
+        self.command_drift_cancel_button.clicked.connect(self.cancel_command_drift_check)
+        drift_actions.addWidget(self.command_drift_cancel_button)
+        self.command_drift_copy_button = QPushButton("Copy Drift Report")
+        self.command_drift_copy_button.setObjectName("copyCommandDriftReportButton")
+        self.command_drift_copy_button.clicked.connect(self.copy_command_drift_report)
+        drift_actions.addWidget(self.command_drift_copy_button)
+        drift_actions.addStretch()
+        drift_layout.addLayout(drift_actions)
+        self.command_drift_status = QLabel("Not checked in this app session.")
+        self.command_drift_status.setObjectName("commandDriftStatus")
+        self.command_drift_status.setWordWrap(True)
+        drift_layout.addWidget(self.command_drift_status)
+        self.command_drift_output = QPlainTextEdit()
+        self.command_drift_output.setObjectName("commandDriftOutput")
+        self.command_drift_output.setReadOnly(True)
+        self.command_drift_output.setMaximumBlockCount(250)
+        self.command_drift_output.setMaximumHeight(130)
+        self.command_drift_output.setPlaceholderText("The drift report will identify unavailable help routes or missing expected option flags.")
+        drift_layout.addWidget(self.command_drift_output)
+        layout.addWidget(drift_group)
+
         advanced_group = QGroupBox("Advanced arguments")
         advanced_layout = QHBoxLayout(advanced_group)
         self.console_input = QLineEdit()
@@ -1824,6 +2157,12 @@ class MainWindow(QMainWindow):
         self.console_run_button.clicked.connect(self.run_console_command)
         advanced_layout.addWidget(self.console_run_button)
         layout.addWidget(advanced_group)
+        self.advanced_safety_note = QLabel(
+            "Advanced commands are classified before execution. State-changing commands require a typed acknowledgement."
+        )
+        self.advanced_safety_note.setObjectName("advancedCommandSafetyNote")
+        self.advanced_safety_note.setWordWrap(True)
+        layout.addWidget(self.advanced_safety_note)
 
         self.console_output = QPlainTextEdit()
         self.console_output.setObjectName("consoleOutput")
@@ -1833,6 +2172,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.console_output, 1)
         self._filter_command_presets()
         self._update_command_controls()
+        self._update_command_drift_controls()
         return page
 
     def _build_manpages_page(self) -> QWidget:
@@ -1911,80 +2251,10 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_safety_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        browser = QTextBrowser()
-        browser.setOpenExternalLinks(True)
-        browser.setHtml(
-            f"""
-            <h2>What this app does</h2>
-            <p>It is a guided macOS workbench for <code>pymobiledevice3</code>: pairing-visible device inspection,
-            apps and AFC, backups, diagnostics, logging, packet capture, crash reports, Web Inspector, RemoteXPC,
-            Developer Disk Images, location simulation and GPX testing, CoreDevice, DVT instrumentation, and
-            evidence-oriented collection.</p>
-            <p>Command Center minimizes typing with validated presets. Man Pages runs the installed binary's
-            <code>--help</code>, so exact syntax and service availability remain version-specific and reviewable.</p>
-            <h2>What a personalized DDI is</h2>
-            <p>For iOS 17 and later, the image is an APFS payload plus <code>BuildManifest.plist</code> and a trust cache.
-            Apple TSS personalizes it for the device ECID and nonce. It is mounted at <code>/System/Developer</code>.</p>
-            <h2>Important limits</h2>
-            <ul>
-              <li>This is not a jailbreak and does not bypass the passcode, Secure Enclave, sandbox, or entitlements.</li>
-              <li><code>developer dvt ls /</code> is a developer-service view, not unrestricted raw filesystem acquisition.</li>
-              <li>TLS remains encrypted in PCAP. A hostname, owner, or DNS answer is not proof of application purpose.</li>
-              <li>A failed or empty command is a coverage gap, not proof that data or activity is absent.</li>
-              <li>Mounting a DDI and enabling Developer Mode change device state and create timestamps.</li>
-              <li>Simulated location is a developer-service override, not a GPS hardware change. Clear it after testing;
-              some apps may ignore it or prohibit its use.</li>
-              <li>Restore, erase, activation, supervision, reboot, shutdown, and nonce-roll commands can be high impact.
-              They are documented in Man Pages but are not promoted as guided presets.</li>
-              <li>A command existing in pymobiledevice3 does not guarantee the selected iOS build advertises its Apple service.</li>
-            </ul>
-            <h2>Sources</h2>
-            <p><a href="{DEVELOPER_DISK_IMAGE_REPOSITORY}">DeveloperDiskImage repository</a><br>
-            <a href="https://doronz88.github.io/pymobiledevice3/">pymobiledevice3 documentation</a><br>
-            <a href="https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device">Apple Developer Mode guidance</a></p>
-            """
-        )
-        layout.addWidget(browser)
-        return tab
+        return build_safety_page(DEVELOPER_DISK_IMAGE_REPOSITORY)
 
     def _apply_style(self) -> None:
-        self.setStyleSheet(
-            """
-            QWidget { color: #1d2633; }
-            QMainWindow { background: #f4f6fa; }
-            QGroupBox { background: white; border: 1px solid #d9dee8; border-radius: 10px; margin-top: 12px; padding: 12px; font-weight: 600; }
-            QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 5px; }
-            QPushButton { min-height: 30px; padding: 3px 12px; border: 1px solid #c7ceda; border-radius: 7px; background: white; }
-            QPushButton:hover { background: #eef4ff; border-color: #7aa7ef; }
-            QPushButton:disabled { color: #9299a5; background: #eef0f4; }
-            QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextBrowser, QTableWidget, QListWidget { border: 1px solid #cfd5df; border-radius: 7px; background: white; padding: 5px; }
-            #workspaceSidebar { background: #172033; border: 1px solid #25314a; border-radius: 11px; }
-            #workspaceSidebar QLabel { color: #dbe7ff; }
-            #sidebarSectionLabel { color: #89a8dc; font-size: 11px; font-weight: 700; padding: 3px 7px; }
-            #sidebarVersion { color: #91a2be; font-size: 11px; padding: 8px; }
-            #workspaceNavigation { background: transparent; border: none; color: #dce6f7; outline: none; }
-            #workspaceNavigation::item { min-height: 34px; border-radius: 7px; padding: 4px 9px; }
-            #workspaceNavigation::item:hover { background: #24324b; }
-            #workspaceNavigation::item:selected { background: #3567b7; color: white; }
-            #homeHero { background: #e8f1ff; border: 1px solid #a9c9f6; border-radius: 12px; padding: 12px; }
-            #homeStats { color: #315f9e; font-weight: 600; }
-            #commandPresetBrowser, #commandPresetDetail { background: white; border: 1px solid #d9dee8; border-radius: 10px; }
-            #commandPresetTitle, #manpageTitle { color: #162033; }
-            #commandAdvancedNotes, #commandPrerequisites { color: #566176; }
-            #commandRiskBadge { border-radius: 8px; padding: 5px 9px; font-size: 11px; font-weight: 700; }
-            #commandRiskBadge[risk="read-only"] { background: #e4f6e9; color: #236b36; }
-            #commandRiskBadge[risk="host-write"] { background: #fff1ce; color: #765400; }
-            #commandRiskBadge[risk="device-change"] { background: #ffe2df; color: #8b2d24; }
-            #protocolStackSummary { font-family: Menlo; color: #34435a; }
-            #connectionBanner { background: #e9f2ff; border: 1px solid #afcff8; border-radius: 8px; padding: 10px; }
-            #collectionPrivacyWarning { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
-            #installedAppsPrivacyWarning, #backupEncryptionWarning, #locationPrivacyWarning, #capabilityMatrixBoundary { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
-            #capabilityMatrixStatus { background: #e9f2ff; border: 1px solid #afcff8; border-radius: 8px; padding: 9px; }
-            #appSubtitle { color: #596273; }
-            """
-        )
+        self.setStyleSheet(toolkit_stylesheet())
 
     def selected_device(self) -> IOSDevice | None:
         index = self.device_combo.currentIndex()
@@ -2109,6 +2379,12 @@ class MainWindow(QMainWindow):
     def _update_device_fields(self, device: IOSDevice | None) -> None:
         identifier = device.identifier if device is not None else None
         if identifier != self._active_device_identifier:
+            if self._active_case_path is not None:
+                previous_case_path = self._active_case_path
+                self._active_case_path = None
+                self.case_status.setText(
+                    f"Selected device changed. Guided case remains at {previous_case_path}; create a case for the new device."
+                )
             if self._capability_process is not None:
                 self._discard_capability_process_for_device_change()
             self._active_device_identifier = identifier
@@ -2126,6 +2402,8 @@ class MainWindow(QMainWindow):
         self.mount_button.setEnabled(enabled)
         self.remove_button.setEnabled(enabled)
         self.start_collection_button.setEnabled(enabled and self._collection_process is None)
+        self.create_case_button.setEnabled(enabled and self._collection_process is None and self._active_case_path is None)
+        self.case_readiness_button.setEnabled(enabled and self._capability_process is None)
         self._update_apps_controls()
         self._update_backup_controls()
         self._update_command_controls()
@@ -2204,6 +2482,105 @@ class MainWindow(QMainWindow):
             self.capability_table.selectRow(selected_row)
         self._capability_selection_changed()
 
+    def _populate_compatibility_history(self) -> None:
+        if self._compatibility_history_error is not None:
+            self.compatibility_history_status.setText(
+                f"Compatibility history is unavailable: {self._compatibility_history_error}"
+            )
+            self.compatibility_history_table.setRowCount(0)
+            self.compatibility_history_table.setColumnCount(0)
+            return
+        observations = latest_observations(self._compatibility_observations)
+        displayed_observations = observations[-8:]
+        self.compatibility_history_status.setText(
+            f"{len(observations)} locally observed physical device(s); showing the latest {len(displayed_observations)}. "
+            f"Raw UDIDs are not retained. History: {self._compatibility_history_path}"
+        )
+        definitions = capability_definitions()
+        self.compatibility_history_table.setRowCount(len(definitions))
+        self.compatibility_history_table.setColumnCount(len(displayed_observations) + 1)
+        headers = ["Capability"]
+        for observation in displayed_observations:
+            headers.append(
+                f"{observation.product_type}\niOS {observation.product_version} ({observation.build_version})\n"
+                f"{observation.connection_type} • {observation.device_fingerprint}"
+            )
+        self.compatibility_history_table.setHorizontalHeaderLabels(headers)
+        for row, definition in enumerate(definitions):
+            title_item = QTableWidgetItem(definition.title)
+            title_item.setData(Qt.ItemDataRole.UserRole, definition.identifier)
+            self.compatibility_history_table.setItem(row, 0, title_item)
+            for column, observation in enumerate(displayed_observations, start=1):
+                results = {result.identifier: result for result in observation.results}
+                result = results.get(definition.identifier)
+                if result is None:
+                    item = QTableWidgetItem("Not observed")
+                    item.setBackground(self._capability_state_brush("not-tested"))
+                else:
+                    item = QTableWidgetItem(capability_state_label(result.state))
+                    item.setToolTip(
+                        f"Observed: {observation.recorded_at}\n\nResult: {result.summary}\n\nEvidence: {result.evidence}"
+                    )
+                    item.setBackground(self._capability_state_brush(result.state))
+                self.compatibility_history_table.setItem(row, column, item)
+        header = self.compatibility_history_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        for column in range(1, len(displayed_observations) + 1):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+
+    def refresh_compatibility_history(self) -> None:
+        try:
+            self._compatibility_observations = load_observations(self._compatibility_history_path)
+        except DeviceCompatibilityError as error:
+            self._compatibility_history_error = str(error)
+        else:
+            self._compatibility_history_error = None
+        self._populate_compatibility_history()
+
+    def _record_compatibility_observation(self, device: IOSDevice) -> None:
+        try:
+            observation = create_observation(
+                self._capability_completed_at or datetime.now(timezone.utc).isoformat(),
+                device,
+                tuple(self._capability_results.values()),
+            )
+            append_observation(self._compatibility_history_path, observation)
+        except DeviceCompatibilityError as error:
+            self._compatibility_history_error = str(error)
+            self._populate_compatibility_history()
+            return
+        self._compatibility_history_error = None
+        self._compatibility_observations = (*self._compatibility_observations, observation)
+        self._populate_compatibility_history()
+
+    def copy_compatibility_matrix(self) -> None:
+        if self._compatibility_history_error is not None:
+            QMessageBox.warning(self, "Compatibility History Unavailable", self._compatibility_history_error)
+            return
+        observations = latest_observations(self._compatibility_observations)
+        if not observations:
+            QMessageBox.information(
+                self,
+                "No Real-Device Observations",
+                "Complete a Capability Matrix run against a connected device before copying compatibility results.",
+            )
+            return
+        lines = [
+            "iOS Developer Toolkit — Real-Device Compatibility Matrix",
+            "Only completed local Capability Matrix observations are included. Raw UDIDs are not retained.",
+            "",
+        ]
+        for observation in observations:
+            lines.append(
+                f"{observation.product_type}; iOS {observation.product_version}; build {observation.build_version}; "
+                f"{observation.connection_type}; device fingerprint {observation.device_fingerprint}; observed {observation.recorded_at}"
+            )
+            for result in observation.results:
+                lines.append(f"  [{capability_state_label(result.state)}] {result.title}: {result.summary}")
+            lines.append("")
+        QApplication.clipboard().setText("\n".join(lines).rstrip() + "\n")
+        self.compatibility_history_status.setText("Copied local real-device compatibility observations to the clipboard.")
+
     def _capability_selection_changed(self) -> None:
         selected_rows = self.capability_table.selectionModel().selectedRows()
         if len(selected_rows) != 1:
@@ -2265,6 +2642,7 @@ class MainWindow(QMainWindow):
         process.finished.connect(self._capability_finished)
         process.errorOccurred.connect(self._capability_error)
         self._capability_process = process
+        self.case_readiness_button.setEnabled(False)
         self._update_capability_controls()
         process.start()
 
@@ -2325,12 +2703,26 @@ class MainWindow(QMainWindow):
                 f"Capability refresh completed: {ready} ready, {attention} requiring attention, "
                 f"{len(self._capability_results) - ready - attention} informational."
             )
+            device = self.selected_device()
+            if device is None:
+                raise CapabilityMatrixError("Capability worker completed without a selected device")
+            self._record_compatibility_observation(device)
         else:
             stderr = self._capability_stderr.decode("utf-8", errors="replace").strip()
             detail = stderr[-800:] if stderr else "The worker exited without a diagnostic message."
             self.capability_status.setText(f"Capability refresh failed with exit code {exit_code}: {detail}")
         self._capability_process = None
         self._capability_cancel_reason = None
+        self.case_readiness_button.setEnabled(self.selected_device() is not None)
+        if self._active_case_path is not None:
+            ready = sum(result.state == "ready" for result in self._capability_results.values())
+            attention = sum(
+                result.state in ("attention", "unavailable", "blocked")
+                for result in self._capability_results.values()
+            )
+            self.case_status.setText(
+                f"Readiness check completed: {ready} ready, {attention} requiring attention. Review Capability Matrix before collection."
+            )
         self._populate_capability_matrix()
         self._update_capability_controls()
 
@@ -2340,6 +2732,7 @@ class MainWindow(QMainWindow):
         self.capability_status.setText(f"Capability worker error: {self._capability_process.errorString()}")
         if process_error == QProcess.ProcessError.FailedToStart:
             self._capability_process = None
+            self.case_readiness_button.setEnabled(self.selected_device() is not None)
             self._update_capability_controls()
 
     def cancel_capability_matrix(self) -> None:
@@ -2462,14 +2855,16 @@ class MainWindow(QMainWindow):
         if device is None:
             self._show_no_device()
             return
+        profile = guided_action_safety("device-change")
         if self.personalized_radio.isChecked():
             prompt = (
                 "Mount the downloaded personalized Developer Disk Image?\n\n"
                 "This downloads files from GitHub, sends personalization identifiers and a nonce to Apple TSS, "
                 "uploads the image, and changes the device's mounted state."
             )
-            if not self._confirm("Mount Personalized DDI", prompt):
+            if not self._confirm_action("Mount Personalized DDI", prompt, profile, device.identifier):
                 return
+            self._record_action_approval(self.action_output, "Mount Personalized DDI", profile)
             self._run_pmd3_action(("mounter", "auto-mount"), "mount-personalized")
             return
         if not XCODE_CANDIDATE_DDI.is_file():
@@ -2480,8 +2875,9 @@ class MainWindow(QMainWindow):
             "The Apple DMG is attached read-only on this Mac, its Restore payload is personalized through Apple TSS, "
             "and com.apple.MobileAsset.DDI is installed on the selected device."
         )
-        if not self._confirm("Install Local Xcode DDI", prompt):
+        if not self._confirm_action("Install Local Xcode DDI", prompt, profile, device.identifier):
             return
+        self._record_action_approval(self.action_output, "Install Local Xcode DDI", profile)
         self._start_action(
             worker_command("local-ddi"),
             ("--candidate", str(XCODE_CANDIDATE_DDI), "--udid", device.identifier),
@@ -2490,14 +2886,28 @@ class MainWindow(QMainWindow):
         )
 
     def remove_selected_ddi(self) -> None:
+        device = self.selected_device()
+        if device is None:
+            self._show_no_device()
+            return
+        profile = guided_action_safety("device-change")
         if self.personalized_radio.isChecked():
-            if self._confirm("Unmount Personalized DDI", "Unmount the personalized image from /System/Developer?"):
+            if self._confirm_action(
+                "Unmount Personalized DDI",
+                "Unmount the personalized image from /System/Developer?",
+                profile,
+                device.identifier,
+            ):
+                self._record_action_approval(self.action_output, "Unmount Personalized DDI", profile)
                 self._run_pmd3_action(("mounter", "umount-personalized"), "unmount-personalized")
             return
-        if self._confirm(
+        if self._confirm_action(
             "Uninstall Local DDI Cryptex",
             "Uninstall com.apple.MobileAsset.DDI from the selected device?",
+            profile,
+            device.identifier,
         ):
+            self._record_action_approval(self.action_output, "Uninstall Local DDI Cryptex", profile)
             self._run_pmd3_action(("cryptex", "uninstall", "com.apple.MobileAsset.DDI"), "uninstall-local-cryptex")
 
     def list_mounted_images(self) -> None:
@@ -3081,7 +3491,12 @@ class MainWindow(QMainWindow):
             "This changes device-visible location for participating software. Keep this window open and use Stop & Clear "
             "when testing ends. The toolkit cannot independently verify what every app reports."
         )
-        if not self._confirm("Set Simulated Location", warning):
+        if not self._confirm_action(
+            "Set Simulated Location",
+            warning,
+            guided_action_safety("device-change"),
+            device.identifier,
+        ):
             return
         self._start_location_process(
             "set",
@@ -3123,7 +3538,12 @@ class MainWindow(QMainWindow):
             "GPX timestamps control pacing unless fast playback is selected. Stop & Clear restores normal location "
             "after the route or when you stop it early."
         )
-        if not self._confirm("Play GPX Route", warning):
+        if not self._confirm_action(
+            "Play GPX Route",
+            warning,
+            guided_action_safety("device-change"),
+            device.identifier,
+        ):
             return
         self._start_location_process(
             "play",
@@ -3227,6 +3647,49 @@ class MainWindow(QMainWindow):
         if selected:
             self.output_root.setText(selected)
 
+    def create_guided_case(self) -> None:
+        device = self.selected_device()
+        if device is None:
+            self._show_no_device()
+            return
+        if self._collection_process is not None:
+            QMessageBox.warning(self, "Collection Running", "Wait for the active collection to finish before creating another case.")
+            return
+        if self._active_case_path is not None:
+            QMessageBox.warning(self, "Guided Case Active", "This case is ready for collection. Start it or create a new case after it is finalized.")
+            return
+        try:
+            case_path, _ = create_guided_case(
+                Path(self.output_root.text()),
+                device.identifier,
+                self.case_title_field.text(),
+                self.case_purpose_field.toPlainText(),
+                self.case_authorization_checkbox.isChecked(),
+            )
+        except CaseWorkflowError as error:
+            QMessageBox.warning(self, "Unable to Create Guided Case", str(error))
+            return
+        self._active_case_path = case_path
+        self._last_case_path = case_path
+        self.open_case_button.setEnabled(True)
+        self.create_case_button.setEnabled(False)
+        self.case_status.setText(f"Active case: {case_path}. Configure coverage, then start collection.")
+        self.collection_output.setPlainText(f"Guided case created:\n{case_path}\n\nCollection will attach to this case and finalize it once.")
+
+    def run_guided_case_readiness_check(self) -> None:
+        device = self.selected_device()
+        if device is None:
+            self._show_no_device()
+            return
+        if self._capability_process is not None:
+            QMessageBox.warning(self, "Readiness Check Running", "Cancel or wait for the current Device Capability Matrix check.")
+            return
+        self.case_status.setText(
+            f"Running a bounded, read-only readiness check for {device.display_name()}. Results are shown in Capability Matrix."
+        )
+        self.navigate_to_page("Capability Matrix")
+        self.refresh_capability_matrix()
+
     def start_collection(self) -> None:
         device = self.selected_device()
         if device is None:
@@ -3245,14 +3708,12 @@ class MainWindow(QMainWindow):
         )
         if not self._confirm("Start Evidence Collection", warning):
             return
-        arguments = [
-            "--udid",
-            device.identifier,
-            "--output-root",
-            self.output_root.text(),
-            "--duration",
-            str(self.capture_duration.value()),
-        ]
+        arguments = ["--udid", device.identifier]
+        if self._active_case_path is None:
+            arguments.extend(("--output-root", self.output_root.text()))
+        else:
+            arguments.extend(("--case-directory", str(self._active_case_path)))
+        arguments.extend(("--duration", str(self.capture_duration.value())))
         for enabled, flag in (
             (self.include_syslog.isChecked(), "--include-syslog"),
             (self.include_oslog.isChecked(), "--include-oslog"),
@@ -3296,7 +3757,13 @@ class MainWindow(QMainWindow):
         del exit_status
         self.collection_output.appendPlainText(f"\nCollection process finished with exit code {exit_code}.")
         self._collection_process = None
+        if self._active_case_path is not None:
+            self.case_status.setText(
+                f"Guided case finalized at {self._active_case_path}. Create a new case before another collection."
+            )
+            self._active_case_path = None
         self.start_collection_button.setEnabled(self.selected_device() is not None)
+        self.create_case_button.setEnabled(self.selected_device() is not None)
         self.stop_collection_button.setEnabled(False)
 
     def _collection_error(self, process_error: QProcess.ProcessError) -> None:
@@ -3435,8 +3902,14 @@ class MainWindow(QMainWindow):
             f"Mode: {install_mode}\n\n"
             "This changes device state. iOS will still enforce provisioning, signing, Developer Mode, and trust policy."
         )
-        if not self._confirm("Install IPA", warning):
+        if not self._confirm_action(
+            "Install IPA",
+            warning,
+            guided_action_safety("device-change"),
+            device.identifier,
+        ):
             return
+        self._record_action_approval(self.sideload_output, "Install IPA", guided_action_safety("device-change"))
         arguments = ["apps", "install"]
         if developer_install:
             arguments.append("--developer")
@@ -3667,7 +4140,13 @@ class MainWindow(QMainWindow):
             f"Uninstall {bundle_identifier} from {device.display_name()}?\n\n"
             "This removes the application and may remove its local app data. This action cannot be undone by the toolkit."
         )
-        if self._confirm("Uninstall Application", warning):
+        if self._confirm_action(
+            "Uninstall Application",
+            warning,
+            guided_action_safety("device-change"),
+            device.identifier,
+        ):
+            self._record_action_approval(self.apps_output, "Uninstall Application", guided_action_safety("device-change"))
             self._start_apps_action(("apps", "uninstall", bundle_identifier), "uninstall")
 
     def stop_apps_action(self) -> None:
@@ -3760,8 +4239,14 @@ class MainWindow(QMainWindow):
             "Backups can contain messages, account data, Health data when encrypted, identifiers, and other private information. "
             "Keep the destination protected."
         )
-        if not self._confirm("Start Device Backup", warning):
+        profile = (
+            guided_action_safety("device-change")
+            if require_encryption and self._backup_encryption_state is not True
+            else guided_action_safety("host-write")
+        )
+        if not self._confirm_action("Start Device Backup", warning, profile, device.identifier):
             return
+        self._record_action_approval(self.backup_output, "Start Device Backup", profile)
         request: dict[str, str | bool] = {
             "udid": device.identifier,
             "destination": str(destination),
@@ -4213,6 +4698,8 @@ class MainWindow(QMainWindow):
             field = QLineEdit(spec.initial_value)
             field.setObjectName(f"presetParameter_{spec.identifier}")
             field.setPlaceholderText(spec.description)
+            field.setAccessibleName(spec.label)
+            field.setAccessibleDescription(spec.description)
             field.textChanged.connect(self._update_command_preview)
             self._preset_parameter_fields[spec.identifier] = field
             if spec.kind in ("local-directory", "output-file"):
@@ -4221,6 +4708,8 @@ class MainWindow(QMainWindow):
                 row_layout.setContentsMargins(0, 0, 0, 0)
                 row_layout.addWidget(field, 1)
                 choose_button = QPushButton("Choose…")
+                choose_button.setAccessibleName(f"Choose {spec.label}")
+                choose_button.setAccessibleDescription(spec.description)
                 choose_button.clicked.connect(self._preset_path_handler(spec))
                 row_layout.addWidget(choose_button)
                 self.preset_parameters_layout.addRow(spec.label, row)
@@ -4286,6 +4775,34 @@ class MainWindow(QMainWindow):
         self.command_search_field.setEnabled(not running)
         self.preset_parameters_group.setEnabled(not running)
         self.console_input.setEnabled(not running)
+        if preset is not None:
+            self.preset_run_button.setText(
+                "Run Guided Command" if preset.risk == "read-only" else "Review && Run Guided Command"
+            )
+        self._update_advanced_safety_note()
+
+    def _update_advanced_safety_note(self) -> None:
+        raw_arguments = self.console_input.text().strip()
+        if not raw_arguments:
+            self.advanced_safety_note.setText(
+                "Advanced commands are classified before execution. State-changing commands require a typed acknowledgement."
+            )
+            return
+        try:
+            arguments = tuple(shlex.split(raw_arguments))
+        except ValueError as error:
+            self.advanced_safety_note.setText(f"Correct command quoting before safety classification: {error}")
+            return
+        if arguments and Path(arguments[0]).name == "pymobiledevice3":
+            arguments = arguments[1:]
+        if not arguments:
+            self.advanced_safety_note.setText("Enter pymobiledevice3 arguments to classify the action.")
+            return
+        profile = advanced_action_safety(arguments)
+        acknowledgement = "typed acknowledgement required" if profile.requires_typed_acknowledgement else "review confirmation required"
+        self.advanced_safety_note.setText(
+            f"Safety: {profile.level.replace('-', ' ')} — {profile.impact} {acknowledgement.capitalize()}."
+        )
 
     def run_selected_preset(self) -> None:
         preset = self._current_preset
@@ -4300,20 +4817,17 @@ class MainWindow(QMainWindow):
         if preset.requires_device and self.selected_device() is None:
             self._show_no_device()
             return
-        if preset.risk != "read-only":
-            impact = (
-                "This command writes device-derived data to the Mac."
-                if preset.risk == "host-write"
-                else "This command changes device application, UI, location, or process state."
-            )
+        profile = guided_action_safety(preset.risk)
+        if profile.level != "read-only":
             warning = (
-                f"Run {preset.title}?\n\n{impact}\n\n"
+                f"Run {preset.title}?\n\n{profile.impact}\n\n"
                 f"pymobiledevice3 {shlex.join(arguments)}\n\n"
                 "Review the selected target and destination before continuing."
             )
-            if not self._confirm("Confirm Guided Command", warning):
+            device = self.selected_device()
+            if not self._confirm_action("Confirm Guided Command", warning, profile, device.identifier if device else None):
                 return
-        self._run_console_arguments(arguments, preset.title, preset.requires_device)
+        self._run_console_arguments(arguments, preset.title, preset.requires_device, profile)
 
     def open_selected_preset_help(self) -> None:
         preset = self._current_preset
@@ -4340,26 +4854,25 @@ class MainWindow(QMainWindow):
         if requires_device and self.selected_device() is None:
             self._show_no_device()
             return
-        high_impact = self._is_high_impact_command(parsed)
-        if high_impact:
+        profile = advanced_action_safety(parsed)
+        if profile.level != "read-only":
             warning = (
-                "This advanced command can erase data, restore firmware, alter activation, reboot, shut down, "
-                "or make another high-impact device change:\n\n"
+                f"{profile.impact}\n\n"
                 f"pymobiledevice3 {shlex.join(parsed)}\n\n"
-                "The toolkit cannot undo the result. Run it only with a current verified backup and exact authorization."
+                "The exact command above will run without a shell. Review its target and local output path before continuing."
             )
-            if not self._confirm("High-Impact Command", warning):
+            device = self.selected_device()
+            if not self._confirm_action("Confirm Advanced Command", warning, profile, device.identifier if device else None):
                 return
-        elif is_potentially_mutating(parsed):
-            warning = (
-                "This command is not in the read-only allowlist and may change device or host state:\n\n"
-                f"pymobiledevice3 {shlex.join(parsed)}\n\nRun it anyway?"
-            )
-            if not self._confirm("Potentially State-Changing Command", warning):
-                return
-        self._run_console_arguments(parsed, "Advanced command", requires_device)
+        self._run_console_arguments(parsed, "Advanced command", requires_device, profile)
 
-    def _run_console_arguments(self, arguments: tuple[str, ...], title: str, requires_device: bool) -> None:
+    def _run_console_arguments(
+        self,
+        arguments: tuple[str, ...],
+        title: str,
+        requires_device: bool,
+        profile: ActionSafetyProfile,
+    ) -> None:
         if self._console_process is not None:
             QMessageBox.warning(self, "Command Running", "Stop the active console command first.")
             return
@@ -4367,7 +4880,8 @@ class MainWindow(QMainWindow):
         if requires_device and device is None:
             self._show_no_device()
             return
-        self.console_output.appendPlainText(f"\n[{title}]\n$ pymobiledevice3 {shlex.join(arguments)}\n")
+        approval = "" if profile.level == "read-only" else f"\n[safety approval: {profile.level}; acknowledgement accepted]"
+        self.console_output.appendPlainText(f"\n[{title}]{approval}\n$ pymobiledevice3 {shlex.join(arguments)}\n")
         process = QProcess(self)
         process.setProgram(str(self._pmd3.program))
         process.setArguments(list(command_arguments(self._pmd3, arguments)))
@@ -4388,22 +4902,6 @@ class MainWindow(QMainWindow):
             ("bonjour",),
             ("remote", "browse"),
             ("version",),
-        )
-        return any(arguments[: len(prefix)] == prefix for prefix in prefixes)
-
-    def _is_high_impact_command(self, arguments: tuple[str, ...]) -> bool:
-        prefixes = (
-            ("restore",),
-            ("profile", "erase-device"),
-            ("profile", "supervise"),
-            ("backup2", "erase-device"),
-            ("backup2", "restore"),
-            ("diagnostics", "restart"),
-            ("diagnostics", "shutdown"),
-            ("activation", "activate"),
-            ("activation", "deactivate"),
-            ("mounter", "roll-personalization-nonce"),
-            ("mounter", "roll-cryptex-nonce"),
         )
         return any(arguments[: len(prefix)] == prefix for prefix in prefixes)
 
@@ -4431,6 +4929,140 @@ class MainWindow(QMainWindow):
         if self._console_process is not None:
             self.console_output.appendPlainText("\nRequesting command stop…")
             self._console_process.terminate()
+
+    def start_command_drift_check(self) -> None:
+        if self._command_drift_process is not None:
+            QMessageBox.information(self, "Command Drift Check", "The live-help drift check is already running.")
+            return
+        self._command_drift_paths = help_routes_for_presets(self._presets)
+        self._command_drift_index = 0
+        self._command_drift_active_path = None
+        self._command_drift_active_error = None
+        self._command_drift_cancelled = False
+        self._command_drift_probes = {}
+        self.command_drift_output.clear()
+        self.command_drift_status.setText(
+            f"Checking {len(self._command_drift_paths)} live-help routes without contacting a device…"
+        )
+        self._update_command_drift_controls()
+        self._start_next_command_drift_probe()
+
+    def _start_next_command_drift_probe(self) -> None:
+        if self._command_drift_cancelled:
+            self._finish_command_drift_check()
+            return
+        if self._command_drift_index >= len(self._command_drift_paths):
+            self._finish_command_drift_check()
+            return
+        command_path = self._command_drift_paths[self._command_drift_index]
+        self._command_drift_active_path = command_path
+        self._command_drift_active_error = None
+        self._command_drift_stdout.clear()
+        self._command_drift_stderr.clear()
+        self.command_drift_status.setText(
+            f"Checking {self._command_drift_index + 1}/{len(self._command_drift_paths)}: "
+            f"pymobiledevice3 {shlex.join(command_path)} --help"
+        )
+        process = QProcess(self)
+        process.setProgram(str(self._pmd3.program))
+        process.setArguments(list(command_arguments(self._pmd3, (*command_path, "--help"))))
+        process.setProcessEnvironment(qprocess_environment(base_environment()))
+        process.readyReadStandardOutput.connect(self._read_command_drift_stdout)
+        process.readyReadStandardError.connect(self._read_command_drift_stderr)
+        process.finished.connect(self._command_drift_probe_finished)
+        process.errorOccurred.connect(self._command_drift_probe_error)
+        self._command_drift_process = process
+        self._update_command_drift_controls()
+        process.start()
+        self._command_drift_timeout_timer.start(COMMAND_DRIFT_HELP_TIMEOUT_MS)
+
+    def _read_command_drift_stdout(self) -> None:
+        if self._command_drift_process is not None:
+            self._command_drift_stdout.extend(bytes(self._command_drift_process.readAllStandardOutput()))
+
+    def _read_command_drift_stderr(self) -> None:
+        if self._command_drift_process is not None:
+            self._command_drift_stderr.extend(bytes(self._command_drift_process.readAllStandardError()))
+
+    def _command_drift_probe_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        del exit_status
+        if self.sender() is not self._command_drift_process:
+            return
+        self._complete_command_drift_probe(exit_code, self._command_drift_active_error)
+
+    def _command_drift_probe_error(self, process_error: QProcess.ProcessError) -> None:
+        if self.sender() is not self._command_drift_process:
+            return
+        if process_error == QProcess.ProcessError.FailedToStart and self._command_drift_process is not None:
+            self._complete_command_drift_probe(None, self._command_drift_process.errorString())
+
+    def _command_drift_timed_out(self) -> None:
+        process = self._command_drift_process
+        if process is None:
+            return
+        self._command_drift_active_error = (
+            f"Live help exceeded the {COMMAND_DRIFT_HELP_TIMEOUT_MS // 1000}-second per-route limit."
+        )
+        process.kill()
+
+    def _complete_command_drift_probe(self, exit_code: int | None, error: str | None) -> None:
+        command_path = self._command_drift_active_path
+        process = self._command_drift_process
+        if command_path is None or process is None:
+            return
+        self._command_drift_timeout_timer.stop()
+        self._read_command_drift_stdout()
+        self._read_command_drift_stderr()
+        self._command_drift_probes[command_path] = HelpRouteProbe(
+            command_path,
+            exit_code,
+            self._command_drift_stdout.decode("utf-8", errors="replace"),
+            self._command_drift_stderr.decode("utf-8", errors="replace"),
+            error,
+        )
+        self._command_drift_process = None
+        self._command_drift_active_path = None
+        self._command_drift_active_error = None
+        self._command_drift_index += 1
+        self._update_command_drift_controls()
+        QTimer.singleShot(0, self._start_next_command_drift_probe)
+
+    def cancel_command_drift_check(self) -> None:
+        process = self._command_drift_process
+        if process is None:
+            return
+        self._command_drift_cancelled = True
+        self._command_drift_active_error = "Live-help drift check was cancelled by the user."
+        self.command_drift_status.setText("Cancelling the current live-help check…")
+        process.kill()
+
+    def _finish_command_drift_check(self) -> None:
+        self._command_drift_timeout_timer.stop()
+        results = evaluate_command_drift(self._presets, tuple(self._command_drift_probes.values()))
+        report = render_command_drift_report(results)
+        self.command_drift_output.setPlainText(report)
+        checked_count = len(self._command_drift_probes)
+        if self._command_drift_cancelled:
+            self.command_drift_status.setText(
+                f"Cancelled after checking {checked_count}/{len(self._command_drift_paths)} live-help routes."
+            )
+        else:
+            issue_count = sum(result.state != "verified" for result in results)
+            self.command_drift_status.setText(
+                f"Completed {checked_count} live-help routes; {issue_count} preset result(s) need review."
+            )
+        self._update_command_drift_controls()
+
+    def _update_command_drift_controls(self) -> None:
+        running = self._command_drift_process is not None
+        self.command_drift_check_button.setEnabled(not running)
+        self.command_drift_cancel_button.setEnabled(running)
+        self.command_drift_copy_button.setEnabled(bool(self.command_drift_output.toPlainText().strip()) and not running)
+
+    def copy_command_drift_report(self) -> None:
+        report = self.command_drift_output.toPlainText().strip()
+        if report:
+            QApplication.clipboard().setText(report)
 
     def _filter_manpages(self) -> None:
         selected_path = self.selected_manpage_entry().command_path if self.selected_manpage_entry() is not None else None
@@ -4645,6 +5277,73 @@ class MainWindow(QMainWindow):
         )
         return answer == QMessageBox.StandardButton.Yes
 
+    def _confirm_action(
+        self,
+        title: str,
+        message: str,
+        profile: ActionSafetyProfile,
+        device_identifier: str | None,
+    ) -> bool:
+        if not profile.requires_typed_acknowledgement:
+            return self._confirm(title, message)
+        phrase = confirmation_phrase(profile, device_identifier)
+        dialog = QDialog(self)
+        dialog.setObjectName("actionSafetyConfirmationDialog")
+        dialog.setWindowTitle(title)
+        dialog.setMinimumWidth(560)
+        layout = QVBoxLayout(dialog)
+        warning = QLabel(message)
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+        typed_instruction = QLabel(
+            f"Type <b>{phrase}</b> exactly to authorize this action. The acknowledgement phrase is not retained."
+        )
+        typed_instruction.setWordWrap(True)
+        layout.addWidget(typed_instruction)
+        acknowledgement_field = QLineEdit()
+        acknowledgement_field.setObjectName("actionSafetyAcknowledgement")
+        acknowledgement_field.setPlaceholderText(phrase)
+        layout.addWidget(acknowledgement_field)
+        backup_acknowledgement: QCheckBox | None = None
+        if profile.requires_backup_acknowledgement:
+            backup_acknowledgement = QCheckBox(
+                "I have current verified backup coverage and exact authorization for this high-impact action."
+            )
+            backup_acknowledgement.setObjectName("highImpactBackupAcknowledgement")
+            backup_acknowledgement.setWordWrap(True)
+            layout.addWidget(backup_acknowledgement)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
+        buttons.setObjectName("actionSafetyConfirmationButtons")
+        approve_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        if approve_button is None:
+            raise RuntimeError("Action safety confirmation dialog is missing its approval button")
+        approve_button.setText("Authorize Action")
+        approve_button.setEnabled(False)
+
+        def update_approval_button(value: str) -> None:
+            backup_acknowledged = backup_acknowledgement is None or backup_acknowledgement.isChecked()
+            approve_button.setEnabled(value == phrase and backup_acknowledged)
+
+        def update_backup_acknowledgement(checked: bool) -> None:
+            del checked
+            update_approval_button(acknowledgement_field.text())
+
+        acknowledgement_field.textChanged.connect(update_approval_button)
+        if backup_acknowledgement is not None:
+            backup_acknowledgement.toggled.connect(update_backup_acknowledgement)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def _record_action_approval(
+        self,
+        output: QPlainTextEdit,
+        title: str,
+        profile: ActionSafetyProfile,
+    ) -> None:
+        output.appendPlainText(f"[safety approval: {profile.level}; acknowledgement accepted for {title}]")
+
     def _show_no_device(self) -> None:
         QMessageBox.warning(self, "No Device", "Connect, unlock, and trust an iPhone or iPad first.")
 
@@ -4815,6 +5514,7 @@ class MainWindow(QMainWindow):
         self._scanner.stop()
         self._reconnect_timeout_timer.stop()
         self._manpage_timeout_timer.stop()
+        self._command_drift_timeout_timer.stop()
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
             self._terminate_capability_children(capability_process)
@@ -4828,7 +5528,7 @@ class MainWindow(QMainWindow):
             if not process.waitForFinished(10000):
                 process.kill()
                 process.waitForFinished(3000)
-        for process in (self._ipa_inspection_process, self._manpage_process):
+        for process in (self._ipa_inspection_process, self._manpage_process, self._command_drift_process):
             if process is not None and process.state() != QProcess.ProcessState.NotRunning:
                 process.terminate()
         event.accept()

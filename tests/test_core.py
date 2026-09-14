@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import plistlib
 import shutil
 import subprocess
@@ -9,6 +10,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ios_developer_toolkit.action_safety import advanced_action_safety, confirmation_phrase, guided_action_safety
 from ios_developer_toolkit.backup_worker import BackupRequestError, parse_backup_event, parse_backup_request
 from ios_developer_toolkit.catalog import is_potentially_mutating, snapshot_commands
 from ios_developer_toolkit.command_catalog import (
@@ -18,6 +20,13 @@ from ios_developer_toolkit.command_catalog import (
     preset_by_identifier,
     render_preset_arguments,
 )
+from ios_developer_toolkit.command_drift import (
+    HelpRouteProbe,
+    evaluate_command_drift,
+    expected_option_tokens,
+    help_routes_for_presets,
+)
+from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case, validate_collection_case
 from ios_developer_toolkit.collector import safe_udid_fragment
 from ios_developer_toolkit.installed_apps import InstalledAppsDataError, format_byte_count, parse_installed_apps_json
 from ios_developer_toolkit.ipa_inspector import (
@@ -45,13 +54,26 @@ from ios_developer_toolkit.location_lab import (
     validate_coordinates,
 )
 from ios_developer_toolkit.live_logs import (
+    LiveLogInvestigationReport,
     LiveLogError,
+    append_finding,
+    annotation_path_for,
     compile_line_filter,
+    create_finding,
+    parse_finding_tags,
+    render_investigation_report,
     create_spool_paths,
     line_matches,
+    sha256_file,
     stream_spec,
 )
 from ios_developer_toolkit.models import DeviceDataError, parse_devices_json
+from ios_developer_toolkit.support_bundle import (
+    SupportBundleContext,
+    SupportBundleError,
+    SupportStatus,
+    create_sanitized_support_bundle,
+)
 from ios_developer_toolkit.ufade_connector import (
     UFADEValidationError,
     checkout_python_path,
@@ -99,6 +121,25 @@ class CommandPolicyTests(unittest.TestCase):
     def test_collection_catalog_contains_requested_coverage(self) -> None:
         identifiers = {spec.identifier for spec in snapshot_commands(True, True)}
         self.assertTrue({"dvt-device", "dvt-processes", "dvt-filesystem", "screenshot", "crash-pull"} <= identifiers)
+
+
+class ActionSafetyTests(unittest.TestCase):
+    def test_classifies_read_only_host_write_device_change_and_high_impact_actions(self) -> None:
+        self.assertEqual(advanced_action_safety(("apps", "list")).level, "read-only")
+        self.assertEqual(advanced_action_safety(("pcap", "--out", "/tmp/capture.pcap")).level, "host-write")
+        self.assertEqual(advanced_action_safety(("apps", "install", "/tmp/application.ipa")).level, "device-change")
+        self.assertEqual(advanced_action_safety(("restore", "update")).level, "high-impact")
+
+    def test_typed_acknowledgement_binds_to_the_selected_device_suffix(self) -> None:
+        device_identifier = "00008110-001122334455001E"
+        self.assertEqual(
+            confirmation_phrase(guided_action_safety("device-change"), device_identifier),
+            "RUN 55001E",
+        )
+        self.assertEqual(
+            confirmation_phrase(advanced_action_safety(("restore", "update")), device_identifier),
+            "IRREVERSIBLE 55001E",
+        )
 
 
 class GuidedCommandCatalogTests(unittest.TestCase):
@@ -163,9 +204,64 @@ class GuidedCommandCatalogTests(unittest.TestCase):
                 self.assertTrue(preset_by_identifier(identifier).long_running)
 
 
+class CommandDriftTests(unittest.TestCase):
+    def test_live_help_evaluation_flags_missing_options_and_routes_without_running_a_preset(self) -> None:
+        pcap = preset_by_identifier("pcap")
+        apps = preset_by_identifier("apps-list")
+        probes = (
+            HelpRouteProbe(("pcap",), 0, "Usage: pcap [--capture FILE]", "", None),
+            HelpRouteProbe(("apps", "list"), 2, "", "No such command", None),
+        )
+        results = evaluate_command_drift((pcap, apps), probes)
+        self.assertEqual(expected_option_tokens(pcap), ("--out",))
+        self.assertEqual(help_routes_for_presets((pcap, apps)), (("pcap",), ("apps", "list")))
+        self.assertEqual(results[0].state, "option-mismatch")
+        self.assertEqual(results[1].state, "route-missing")
+
+    def test_live_help_evaluation_accepts_exact_option_boundaries(self) -> None:
+        pcap = preset_by_identifier("pcap")
+        matching = HelpRouteProbe(("pcap",), 0, "Usage: pcap --out=PATH", "", None)
+        nonmatching = HelpRouteProbe(("pcap",), 0, "Usage: pcap --output=PATH", "", None)
+        self.assertEqual(evaluate_command_drift((pcap,), (matching,))[0].state, "verified")
+        self.assertEqual(evaluate_command_drift((pcap,), (nonmatching,))[0].state, "option-mismatch")
+
+
 class EvidenceNamingTests(unittest.TestCase):
     def test_udid_fragment_is_sanitized_and_bounded(self) -> None:
         self.assertEqual(safe_udid_fragment("00008110-001122334455001E"), "22334455001E")
+
+    def test_guided_case_records_authorized_intake_and_validates_target(self) -> None:
+        temporary_directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temporary_directory)
+        udid = "00008110-001122334455001E"
+        case_path, intake = create_guided_case(
+            temporary_directory,
+            udid,
+            "  Device   validation  ",
+            "Authorized release testing.",
+            True,
+        )
+        self.assertEqual(intake.title, "Device validation")
+        self.assertEqual(validate_collection_case(case_path, udid), case_path)
+        self.assertTrue((case_path / "case-intake.json").is_file())
+        self.assertTrue((case_path / "snapshots").is_dir())
+
+    def test_guided_case_requires_authorization_and_matching_target(self) -> None:
+        temporary_directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temporary_directory)
+        with self.assertRaises(CaseWorkflowError):
+            create_guided_case(temporary_directory, "TARGET1", "Case", "", False)
+        case_path, _ = create_guided_case(temporary_directory, "TARGET1", "Case", "", True)
+        with self.assertRaises(CaseWorkflowError):
+            validate_collection_case(case_path, "TARGET2")
+
+    def test_guided_case_cannot_be_reused_after_finalization(self) -> None:
+        temporary_directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temporary_directory)
+        case_path, _ = create_guided_case(temporary_directory, "TARGET1", "Case", "", True)
+        (case_path / "manifest.json").write_text("{}\n", encoding="utf-8")
+        with self.assertRaises(CaseWorkflowError):
+            validate_collection_case(case_path, "TARGET1")
 
 
 class OutputValidationTests(unittest.TestCase):
@@ -176,6 +272,53 @@ class OutputValidationTests(unittest.TestCase):
     def test_success_information_is_not_an_error(self) -> None:
         output = "INFO DeveloperDiskImage mounted successfully"
         self.assertFalse(output_indicates_failure(output))
+
+
+class SupportBundleTests(unittest.TestCase):
+    def test_creates_a_reviewable_zip_without_known_device_or_host_identifiers(self) -> None:
+        temporary_directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temporary_directory)
+        destination = temporary_directory / "support.zip"
+        context = SupportBundleContext(
+            "0.3.1",
+            "Command Center",
+            1,
+            True,
+            (("ready", 2), ("not-tested", 8)),
+            "Verified: 49. Device 00008110-001122334455001E at 192.168.1.8.",
+            (
+                SupportStatus("connection", "Julian iPhone 00008110-001122334455001E"),
+                SupportStatus("capability_matrix", "Saved in /Users/julian/Private/diagnostics"),
+            ),
+            ("00008110-001122334455001E", "Julian iPhone"),
+            False,
+        )
+        result = create_sanitized_support_bundle(destination, context)
+        self.assertEqual(result.path, destination)
+        self.assertEqual(
+            result.entries,
+            ("README.txt", "environment.json", "context.json", "command-drift.txt", "SHA256SUMS.json"),
+        )
+        with zipfile.ZipFile(destination) as archive:
+            combined = "\n".join(archive.read(name).decode("utf-8") for name in archive.namelist())
+        self.assertNotIn("00008110-001122334455001E", combined)
+        self.assertNotIn("Julian iPhone", combined)
+        self.assertNotIn("192.168.1.8", combined)
+        self.assertNotIn("/Users/julian", combined)
+        self.assertIn("<device-identifier>", combined)
+        self.assertIn("<ipv4-address>", combined)
+        self.assertIn("<local-path>", combined)
+
+    def test_refuses_to_overwrite_an_existing_support_zip(self) -> None:
+        temporary_directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temporary_directory)
+        destination = temporary_directory / "support.zip"
+        destination.write_bytes(b"existing")
+        context = SupportBundleContext(
+            "0.3.1", "Home", 0, False, (), "", (), (), False,
+        )
+        with self.assertRaises(SupportBundleError):
+            create_sanitized_support_bundle(destination, context)
 
 
 class LocalDDITests(unittest.TestCase):
@@ -341,6 +484,80 @@ class LiveLogTests(unittest.TestCase):
         self.assertEqual(raw.suffix, ".jsonl")
         self.assertNotIn("/../", str(raw))
         self.assertEqual(metadata.suffixes, [".meta", ".json"])
+
+    def test_finding_preserves_selected_text_and_context_separately_from_raw_log(self) -> None:
+        temporary_directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temporary_directory)
+        raw_path = temporary_directory / "capture.jsonl"
+        findings_path = annotation_path_for(raw_path)
+        finding = create_finding(
+            "Investigate this authentication failure.",
+            "2026-09-14 authd: failed login",
+            "unified",
+            "DEVICE-1",
+            384,
+            "authd",
+            False,
+            False,
+            "lead",
+            ("authentication", "review"),
+        )
+        append_finding(findings_path, finding)
+        record = json.loads(findings_path.read_text(encoding="utf-8"))
+        self.assertEqual(record["note"], "Investigate this authentication failure.")
+        self.assertEqual(record["raw_bytes_observed"], 384)
+        self.assertEqual(record["assessment"], "lead")
+        self.assertEqual(record["tags"], ["authentication", "review"])
+
+    def test_finding_requires_a_note_and_selection(self) -> None:
+        with self.assertRaises(LiveLogError):
+            create_finding("", "line", "unified", "DEVICE-1", 0, "", False, False, "observation", ())
+        with self.assertRaises(LiveLogError):
+            create_finding("note", "", "unified", "DEVICE-1", 0, "", False, False, "observation", ())
+
+    def test_finding_tags_are_normalized_and_invalid_tags_are_rejected(self) -> None:
+        self.assertEqual(parse_finding_tags("Auth, network, auth"), ("auth", "network"))
+        with self.assertRaises(LiveLogError):
+            parse_finding_tags("contains spaces")
+
+    def test_investigation_report_separates_capture_facts_from_analyst_annotations(self) -> None:
+        finding = create_finding(
+            "Correlate with the application crash report.",
+            "2026-09-14 process[12]: failed request",
+            "unified",
+            "DEVICE-1",
+            512,
+            "failed",
+            False,
+            False,
+            "needs-corroboration",
+            ("network",),
+        )
+        report = LiveLogInvestigationReport(
+            stream="unified",
+            stream_title="Unified Logs",
+            device_name="Research iPhone",
+            device_identifier="DEVICE-1",
+            started_at="2026-09-14T00:00:00+00:00",
+            finished_at="2026-09-14T00:02:00+00:00",
+            raw_filename="capture.jsonl",
+            raw_sha256="a" * 64,
+            raw_bytes=1024,
+            decoded_lines=7,
+            investigation_reference="CASE-42",
+        )
+        rendered = render_investigation_report(report, (finding,))
+        self.assertIn("## Capture facts", rendered)
+        self.assertIn("## Analyst findings", rendered)
+        self.assertIn("not device-generated facts", rendered)
+        self.assertIn("CASE-42", rendered)
+
+    def test_hashes_raw_log_bytes(self) -> None:
+        temporary_directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temporary_directory)
+        raw_path = temporary_directory / "capture.log"
+        raw_path.write_bytes(b"forensic log bytes\n")
+        self.assertEqual(sha256_file(raw_path), "2f64c1a1b0a217c8dbaca08eeaedee479eedb04f3acafaa8b063c3c77dcf4a86")
 
 
 class IPAInspectionTests(unittest.TestCase):

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 import unittest
+from pathlib import Path
 
 from ios_developer_toolkit.capability_matrix import (
     CapabilityMatrixError,
@@ -19,6 +21,15 @@ from ios_developer_toolkit.capability_matrix import (
     parse_capability_worker_event,
     untested_capability_results,
 )
+from ios_developer_toolkit.device_compatibility import (
+    DeviceCompatibilityError,
+    append_observation,
+    compatibility_history_path,
+    create_observation,
+    latest_observations,
+    load_observations,
+)
+from ios_developer_toolkit.models import IOSDevice
 
 
 class CapabilityMatrixTests(unittest.TestCase):
@@ -76,6 +87,40 @@ class CapabilityMatrixTests(unittest.TestCase):
         detail = compact_command_detail(semantic_failure, "PRIVATE-UDID")
         self.assertNotIn("PRIVATE-UDID", detail)
         self.assertIn("<selected-device>", detail)
+
+    def test_real_device_observations_are_local_and_keep_only_a_fingerprint(self) -> None:
+        temporary_directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temporary_directory)
+        history_path = compatibility_history_path(temporary_directory)
+        device = IOSDevice("PRIVATE-UDID", "Private iPhone", "iPhone14,5", "26.3.1", "23D123", "USB")
+        result = CapabilityResult(
+            "device-connection",
+            "Connection",
+            "Selected device",
+            "ready",
+            "Connected PRIVATE-UDID",
+            "Observed PRIVATE-UDID over USB",
+            "No action required",
+        )
+        observation = create_observation("2026-09-14T12:00:00+00:00", device, (result,))
+        append_observation(history_path, observation)
+        persisted = history_path.read_text(encoding="utf-8")
+        self.assertNotIn("PRIVATE-UDID", persisted)
+        self.assertNotIn("Private iPhone", persisted)
+        self.assertEqual(load_observations(history_path), (observation,))
+
+    def test_latest_real_device_observation_wins_without_mixing_devices(self) -> None:
+        device_one = IOSDevice("DEVICE-ONE", "One", "iPhone14,5", "26.3.1", "23D123", "USB")
+        device_two = IOSDevice("DEVICE-TWO", "Two", "iPad14,3", "26.3.1", "23D123", "USB")
+        first = create_observation("2026-09-14T10:00:00+00:00", device_one, untested_capability_results())
+        newer = create_observation("2026-09-14T11:00:00+00:00", device_one, untested_capability_results())
+        other = create_observation("2026-09-14T09:00:00+00:00", device_two, untested_capability_results())
+        self.assertEqual(latest_observations((first, newer, other)), (other, newer))
+
+    def test_real_device_observation_rejects_duplicate_capabilities(self) -> None:
+        device = IOSDevice("DEVICE", "One", "iPhone14,5", "26.3.1", "23D123", "USB")
+        with self.assertRaises(DeviceCompatibilityError):
+            create_observation("2026-09-14T10:00:00+00:00", device, (untested_capability_results()[0],) * 2)
 
     @unittest.skipIf(shutil.which("xcrun") is None, "xcrun is unavailable")
     def test_xcode_tool_probe_uses_the_executable_command_wrapper(self) -> None:

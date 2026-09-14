@@ -92,6 +92,52 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError(f"GUI buttons are missing stable identifiers: {missing_identifiers}")
     if disconnected:
         raise RuntimeError(f"GUI buttons are missing click handlers: {disconnected}")
+    navigation_actions = {
+        "homeOpenDevice&DDIButton": "Device & DDI",
+        "homeOpenCapabilityMatrixButton": "Capability Matrix",
+        "homeOpenLocationLabButton": "Location Lab",
+        "homeOpenCommandCenterButton": "Command Center",
+        "homeOpenEvidenceCaptureButton": "Evidence Capture",
+        "homeOpenManPagesButton": "Man Pages",
+        "openLogPresetsButton": "Command Center",
+        "openEvidenceCaptureButton": "Evidence Capture",
+    }
+    for button_name, destination in navigation_actions.items():
+        button = window.findChild(QPushButton, button_name)
+        if button is None:
+            raise RuntimeError(f"GUI navigation action is missing: {button_name}")
+        button.click()
+        application.processEvents()
+        selected_item = window.navigation_list.currentItem()
+        if selected_item is None or selected_item.text() != destination:
+            actual_destination = None if selected_item is None else selected_item.text()
+            raise RuntimeError(
+                f"GUI navigation action {button_name} reached {actual_destination!r}, expected {destination!r}"
+            )
+    for button_name in ("cancelCommandDriftButton", "copyCommandDriftReportButton"):
+        button = window.findChild(QPushButton, button_name)
+        if button is None:
+            raise RuntimeError(f"GUI command-drift action is missing: {button_name}")
+        if button.isEnabled():
+            raise RuntimeError(f"GUI command-drift action should be disabled before a drift check: {button_name}")
+    expected_shortcuts = {
+        "shortcutRetryDeviceScan",
+        "shortcutFocusWorkspaceNavigation",
+        "shortcutFocusWorkspaceSearch",
+        "shortcutShowKeyboardReference",
+        "shortcutPreviousWorkspace",
+        "shortcutNextWorkspace",
+        "shortcutOpenCommandCenter",
+        "shortcutOpenManPages",
+        "shortcutOpenScopeAndSafety",
+    }
+    actual_shortcuts = {shortcut.objectName() for shortcut in window._keyboard_shortcuts}
+    missing_shortcuts = expected_shortcuts - actual_shortcuts
+    if missing_shortcuts:
+        raise RuntimeError(f"GUI keyboard shortcuts are missing: {sorted(missing_shortcuts)}")
+    support_bundle_button = window.findChild(QPushButton, "createSupportBundleButton")
+    if support_bundle_button is None:
+        raise RuntimeError("GUI support-bundle action is missing")
     window.close()
     application.processEvents()
     print(f"GUI smoke test passed with {len(buttons)} action buttons", flush=True)

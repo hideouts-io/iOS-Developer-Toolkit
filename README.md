@@ -76,15 +76,15 @@ The application executes the project-pinned binary directly. Guided values becom
 
 ## Current release additions and visual tour
 
-Release `v0.3.1` combines the complete 12-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
+Release `v0.3.2` combines the complete 12-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
 
 - **Retry Scan** performs an immediate usbmux device check, while **Reconnect & Retry…** opens a guided detection window without attempting to restart SIP-protected Apple services;
-- the manual **Capability Matrix** reports host, trust, Developer Mode, DDI, tunnel, DVT, CoreDevice, and related readiness as separate bounded results;
+- the manual **Capability Matrix** reports host, trust, Developer Mode, DDI, tunnel, DVT, CoreDevice, and related readiness as separate bounded results, then compares completed local probes across real devices without retaining raw UDIDs;
 - **DVT network activity** and **CoreDevice applications** are handled as long-running streams with explicit Stop controls instead of misleading finite snapshots;
 - Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
 - Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
 - app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one selected-device workflow;
-- native Apple Silicon and Intel release ZIPs are built separately and verified with 51 tests, embedded CLI checks, a 79-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 70 tests, embedded CLI checks, an 88-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
 The README contains 15 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
@@ -103,7 +103,7 @@ The README contains 15 sanitized screenshots. The six views below provide a quic
 |---|---|---:|---|
 | **Home** | Understand the workflow and jump to a task | No | Service-layer overview and guided entry points |
 | **Device & DDI** | Check Developer Mode; mount, list, or remove a developer image | For mounting | Explicit device target and image source |
-| **Capability Matrix** | Test host, connection, trust, DDI, tunnel, and developer-service readiness | Only for the developer-service rows | Bounded per-capability state, evidence, and remediation |
+| **Capability Matrix** | Test host, connection, trust, DDI, tunnel, and developer-service readiness | Only for the developer-service rows | Bounded per-capability state, evidence, remediation, and real-device comparison |
 | **Location Lab** | Set a coordinate or replay a validated GPX track | Usually | Structured location-event evidence and explicit Clear |
 | **Live Logs** | Open independent Unified Logs, classic syslog, and DVT OSLog windows | Only DVT OSLog | Complete raw spool plus filtered working view |
 | **Command Center** | Run 49 guided commands or explicit advanced arguments | Command-specific | Validated parameters, risk label, exact preview, exit output |
@@ -113,6 +113,18 @@ The README contains 15 sanitized screenshots. The six views below provide a quic
 | **Evidence Capture** | Correlate snapshots, timed streams, screenshots, crashes, and PCAP | Partial coverage without it | Timestamped case, coverage states, manifest, SHA-256 inventory |
 | **Man Pages** | Browse 59 command routes instantly and request live help on demand | No | Version-matched syntax rather than copied examples |
 | **Scope & Safety** | Keep access and interpretation limits visible | No | Operational boundaries inside the app |
+
+### Accessibility and keyboard-first use
+
+The interface gives named controls and descriptions to the primary device picker, workspace navigation, command and help browsers, app inventory, capability results, reports, and the keyboard alternative to Location Lab's mouse map. The offline map is intentionally skipped in keyboard tab order; use the coordinate importer or latitude and longitude fields instead.
+
+Use **Keyboard Shortcuts** in the window header, or press `⌘ /`, for the complete reference. The most useful shortcuts are `⌘ L` to focus workspace navigation, `⌘ F` to focus contextual search, `⌘ R` to retry discovery, `⌘ 1` through `⌘ 0` to open the first ten workspaces, `⌘ ⇧ M` for Man Pages, and `⌘ ⇧ S` for Scope & Safety. `⌘ ⌥ ←` and `⌘ ⌥ →` move between workspaces. Tab, Shift-Tab, Space, Return, and Arrow keys retain their standard Qt behavior. Shortcuts never skip device-action confirmation or typed acknowledgements.
+
+### Sanitized support bundle
+
+**Create Support Bundle…** in the window header creates a local ZIP for a bug report or support request. It is opt-in and never uploads anything. The ZIP contains toolkit and dependency versions, macOS/Python metadata, selected workspace, device count without identity, aggregate Capability Matrix states, sanitized status summaries, the sanitized Command Drift report, and a SHA-256 manifest.
+
+It explicitly excludes device names, UDIDs, serial numbers, pairing records, backups, cases, screenshots, raw logs, PCAPs, crash reports, IPA files, command output, live-log payloads, passwords, typed confirmations, user-entered values, host names, user names, home directories, full filesystem paths, network addresses, and email addresses. The generator also redacts known connected-device identifiers and names plus common identifier, local-path, IP, MAC, and email patterns. Review the ZIP before sharing; sanitization reduces exposure but cannot make a support artifact risk-free.
 
 Highlights of the current build:
 
@@ -180,7 +192,7 @@ Current pinned runtime:
 | PySide6 | `6.11.2` |
 | pymobiledevice3 | `10.11.0` |
 | Local Xcode candidate | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` |
-| Toolkit release | `0.3.1` |
+| Toolkit release | `0.3.2` |
 
 The current GUI and launcher are macOS-specific. Although upstream `pymobiledevice3` supports other host platforms, this application currently depends on macOS tools and conventions such as Xcode/CoreDevice, `hdiutil`, `security`, `codesign`, `.app` bundles, and macOS user-library paths.
 
@@ -196,10 +208,10 @@ cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
 
-For the published `v0.3.1` source state:
+For the published `v0.3.2` source state:
 
 ```bash
-git clone --branch v0.3.1 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+git clone --branch v0.3.2 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
 cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
@@ -215,12 +227,12 @@ The locally staged app is a development wrapper around the repository environmen
 
 ### Download the native application
 
-Release `v0.3.1` provides two independent application bundles. The sizes below are the exact published ZIP sizes; macOS Finder may display rounded values differently.
+Each release provides two independent application bundles. Download the ZIP whose architecture matches the current Mac, plus `SHA256SUMS.txt`. The manifest published with that release is the source of truth for its exact asset sizes and SHA-256 digests.
 
-| Mac | Release asset | Download size | SHA-256 |
-|---|---|---:|---|
-| Apple Silicon (`arm64`) | `iOS-Developer-Toolkit-v0.3.1-macOS-arm64.zip` | 99,200,585 bytes (94.6 MiB) | `7cde4de0547acb8d8e8446ac02d96f4a1f2789dabc5d1c0087dcf5db42406614` |
-| Intel (`x86_64`) | `iOS-Developer-Toolkit-v0.3.1-macOS-x86_64.zip` | 107,416,160 bytes (102.4 MiB) | `aa6da8fd816c5a94b81ac089bcb84c6184e85e41b54f750bef76f8647d61e1ab` |
+| Mac | Release asset pattern |
+|---|---|
+| Apple Silicon (`arm64`) | `iOS-Developer-Toolkit-vVERSION-macOS-arm64.zip` |
+| Intel (`x86_64`) | `iOS-Developer-Toolkit-vVERSION-macOS-x86_64.zip` |
 
 Check the Mac architecture before downloading:
 
@@ -228,7 +240,7 @@ Check the Mac architecture before downloading:
 uname -m
 ```
 
-Download the matching ZIP and `SHA256SUMS.txt` from the [release page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/tag/v0.3.1) and place them in the same directory. Verify only the archive for the current Mac; the manifest contains entries for both architectures, so checking the complete manifest after downloading only one ZIP would correctly report the other archive as missing.
+Download the matching ZIP and `SHA256SUMS.txt` from the [latest release page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest) and place them in the same directory. Verify only the archive for the current Mac; the manifest contains entries for both architectures, so checking the complete manifest after downloading only one ZIP would correctly report the other archive as missing.
 
 ```bash
 toolkit_arch="$(uname -m)"
@@ -246,7 +258,7 @@ gh attestation verify \
   --repo hideouts-io/iOS-Developer-Toolkit
 ```
 
-The repository's `v0.3.1` binaries predate this attestation pipeline, so that command becomes applicable to the first subsequent tagged release. For an attested release, a successful result ties the ZIP digest to this repository's GitHub Actions workflow. It does not make the ad-hoc signature a Developer ID signature or an Apple notarization ticket.
+Current tagged releases are built and attested through GitHub Actions. A successful verification ties the ZIP digest to this repository's GitHub Actions workflow. It does not make the ad-hoc signature a Developer ID signature or an Apple notarization ticket.
 
 The matching `iOS-Developer-Toolkit-vVERSION-macOS-ARCH.cdx.json` is both a downloadable release asset and embedded inside the app at `Contents/Resources/BOM.cdx.json`. License notices, the source-availability statement, and generated installed-package inventory are embedded at `Contents/Resources/Licenses/`.
 
@@ -254,7 +266,8 @@ Extract the verified ZIP in Finder, or use:
 
 ```bash
 toolkit_arch="$(uname -m)"
-ditto -x -k "iOS-Developer-Toolkit-v0.3.1-macOS-${toolkit_arch}.zip" "iOS Developer Toolkit v0.3.1"
+toolkit_version="v0.3.2"
+ditto -x -k "iOS-Developer-Toolkit-${toolkit_version}-macOS-${toolkit_arch}.zip" "iOS Developer Toolkit ${toolkit_version}"
 ```
 
 Open the extracted folder and drag **iOS Developer Toolkit.app** into `/Applications`. The application is self-contained; Python and the pinned runtime do not need to be installed separately.
@@ -422,6 +435,8 @@ The current matrix reports:
 
 Every row uses one of six explicit states: **Ready**, **Needs attention**, **Unavailable**, **Blocked**, **Not tested**, or **Not applicable**. Select a row to see the bounded evidence and its next step. **Copy Report** creates a plain-text snapshot for a bug report or development note; command errors redact the selected device identifier.
 
+The **Real-Device Compatibility** tab retains a local, append-only observation only after the worker completes a Capability Matrix run against a connected device. It compares the latest observed result for each locally tested device across model, iOS version, build, connection type, and individual capabilities. The history stores a one-way device fingerprint rather than the raw UDID or device name, and it never predicts compatibility for untested hardware or builds. It lives at `~/Library/Application Support/iOS Developer Toolkit/Compatibility/real-device-observations.jsonl`.
+
 The matrix does not mount a DDI, enable Developer Mode, start a tunnel daemon, change Safari settings, or unlock the device. A service being reachable at refresh time is not proof that every command in that family will succeed, and an empty Web Inspector tab list is different from a failed Web Inspector request.
 
 ### Location Lab
@@ -476,11 +491,15 @@ Each window provides:
 - follow-tail control;
 - literal or regular-expression filtering;
 - case-sensitive filtering;
+- optional local case or ticket reference stored with capture metadata;
+- selected-line **Mark Finding** annotations with an explicit assessment (**Observation**, **Lead to correlate**, or **Needs corroboration**), tags, analyst note, filter context, capture byte position, and timestamp;
+- a separate **Review Findings** register, so analyst annotations remain visibly distinct from raw device output;
 - copy-visible, save-filtered, and save-raw actions;
+- **Export Evidence Bundle** for the raw capture, metadata, findings, a readable `investigation-report.md`, and a SHA-256 inventory in one local folder;
 - an explicit Stop Capture action;
 - save, discard, or cancel when closing an unsaved stream.
 
-The complete raw byte stream is spooled below `~/Library/Caches/iOS Developer Toolkit/Live Logs`. A metadata sidecar records the exact command, target UDID, timestamps, byte and line counts, exit code, and process error. The responsive working view retains the latest 50,000 decoded lines and renders at most 20,000 blocks; those display limits do not truncate the raw spool.
+The complete raw byte stream is spooled below `~/Library/Caches/iOS Developer Toolkit/Live Logs`. A metadata sidecar records the exact command, target UDID, timestamps, byte and line counts, exit code, process error, raw SHA-256 once finalized, investigation reference, and the number of findings. Findings are append-only local annotations in `*.findings.jsonl`; they preserve an analyst-selected visible excerpt and context but are not device-generated facts or proof of causality. `investigation-report.md` makes the same boundary explicit in the export: capture facts first, then analyst annotations and selected snippets. The responsive working view retains the latest 50,000 decoded lines and renders at most 20,000 blocks; those display limits do not truncate the raw spool.
 
 For retained system log archives, use the applicable `syslog collect` command through Command Center/Advanced Mode and analyze the resulting `.logarchive` with Console.app or the macOS `log` tool.
 
@@ -488,7 +507,7 @@ For retained system log archives, use the applicable `syslog collect` command th
 
 ![Command Center](docs/screenshots/pymobiledevice3-console.png)
 
-Command Center is the low-typing interface to the pinned `pymobiledevice3` runtime. Search or filter a preset, review its description and prerequisites, fill only the required parameters, inspect the exact command, and run it directly.
+Command Center is the low-typing interface to the pinned `pymobiledevice3` runtime. Search or filter a preset, review its description and prerequisites, fill only the required parameters, inspect the exact command, and run it directly. **Check Guided Command Drift** is a read-only preflight that calls the installed CLI's `--help` for every guided route and verifies any preset option flags such as `--out`; it does not run a preset or contact a device. It reports unavailable routes, changed option syntax, timeouts, and any routes not completed before cancellation.
 
 Every preset has a visible risk class:
 
@@ -496,7 +515,7 @@ Every preset has a visible risk class:
 - **Writes output** creates a host-side artifact, such as a screenshot, crash pull, or PCAP.
 - **Changes device state** launches an app, opens a URL, changes a simulated location, or performs another explicit device action.
 
-Advanced Mode accepts a `pymobiledevice3` argument string. It never invokes a shell, but it can still reach high-impact upstream commands. Restore, erase, activation, supervision, reboot, shutdown, and nonce-related operations receive stronger confirmation and are intentionally not promoted as guided one-click actions.
+Advanced Mode accepts a `pymobiledevice3` argument string. It never invokes a shell, but it can still reach high-impact upstream commands. The workbench classifies commands before execution: read-only commands run normally; local-output commands require a review dialog; device-state changes require typing `RUN` plus the selected device's final six alphanumeric identifier characters; and restore, erase, activation, supervision, reboot, shutdown, and nonce-related actions also require a current-backup acknowledgement and typing `IRREVERSIBLE` plus that suffix. The typed phrase prevents an accidental click and binds the approval to the selected device; it does not authenticate the user, override iOS security, or make an unsafe command safe. These high-impact operations are intentionally not promoted as guided one-click actions.
 
 Long-running commands remain attached to a visible Stop control. Stopping a process requests termination; always inspect the command output to determine whether the device or host operation completed before it stopped.
 
@@ -605,7 +624,11 @@ Successful installation refreshes the Installed Apps inventory. Removal is a sep
 
 ![Evidence Capture workspace](docs/screenshots/evidence-collection.png)
 
-Evidence Capture creates a new timestamped case for the selected UDID. Every run includes the core snapshot set and can add timed streams or larger artifacts.
+Evidence Capture starts with an optional guided case intake. Start with **Run Device Readiness Check** to launch the existing bounded, read-only Capability Matrix for the selected device, then enter a title and a local-purpose note, acknowledge that you own the device or are authorized to examine it, and create the case. The readiness shortcut does not mount images, change device settings, start a capture, or write device data; it opens the full matrix so every prerequisite and its remediation remain visible. The intake is stored locally as `case-intake.json`; it records the selected UDID, creation time, authorization acknowledgement, title, and purpose without transmitting anything.
+
+Start collection from an active guided case to attach the normal bounded snapshot, stream, manifest, and hash workflow to that folder. A guided case finalizes once; create another case for another collection. The standard **Start Evidence Collection** path remains available when an intake is not needed and creates a timestamped case immediately.
+
+Every run includes the core snapshot set and can add timed streams or larger artifacts.
 
 Core snapshots:
 
@@ -725,6 +748,7 @@ A finalized case follows this shape:
 
 ```text
 ios-case-YYYYMMDDTHHMMSSZ-<udid-suffix>/
+├── case-intake.json             # optional guided title, scope, target, and acknowledgement
 ├── artifacts/
 │   ├── crashes/                 # optional
 │   ├── network.pcap             # optional
@@ -792,6 +816,18 @@ venv/bin/ios-developer-collect \
   --include-screenshot \
   --include-crash-pull
 ```
+
+To attach collection to a guided case created in the app, use that case folder instead of `--output-root`:
+
+```bash
+venv/bin/ios-developer-collect \
+  --udid 00008110-0000000000000000 \
+  --case-directory /absolute/path/to/ios-case-YYYYMMDDTHHMMSSZ-UDIDSUFFIX \
+  --duration 300 \
+  --include-syslog
+```
+
+`--output-root` and `--case-directory` are mutually exclusive. A supplied guided case must contain a valid `case-intake.json`, match the selected UDID, and not already contain `manifest.json`.
 
 Use only the optional flags needed for the task. PCAP, screenshots, app lists, crash reports, profiles, and logs can contain private information.
 
@@ -928,12 +964,16 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 .
 ├── ios_developer_toolkit/
 │   ├── app.py                  # PySide6 workbench and workflow orchestration
+│   ├── action_safety.py        # typed confirmation policy for state-changing actions
 │   ├── backup_worker.py        # MobileBackup2 worker and password-input protocol
 │   ├── capability_matrix.py    # typed readiness catalog, probes, and result validation
 │   ├── capability_matrix_worker.py # bounded NDJSON capability worker
+│   ├── case_workflow.py        # guided evidence-case intake and validation
 │   ├── catalog.py              # evidence snapshot catalog and mutation classification
 │   ├── collector.py            # case creation, streams, retries, manifest, hashes
 │   ├── command_catalog.py      # guided presets and live-help routes
+│   ├── device_compatibility.py # redacted local real-device readiness history
+│   ├── gui_pages.py            # stateless Home, Live Logs, Safety pages and styling
 │   ├── installed_apps.py       # app inventory validation and formatting
 │   ├── ipa_inspector.py        # safe IPA extraction, provisioning, signature checks
 │   ├── live_logs.py            # independent raw-spooling log windows
@@ -970,7 +1010,7 @@ The final launcher check opens the application and briefly verifies the process.
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 51 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 79-button offscreen GUI smoke test, verifies the Mach-O architecture, embeds third-party notices and a CycloneDX SBOM, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 70 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 88-button offscreen GUI smoke test, verifies the Mach-O architecture, embeds third-party notices and a CycloneDX SBOM, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The artifacts are not universal binaries: choose the ZIP matching `uname -m`. They are also not Developer ID signed or Apple-notarized because this repository has no release signing identity. A future signing upgrade should use a narrowly scoped Developer ID Application certificate, hardened runtime, Apple notarization, and stapling without changing the two-architecture verification gates.
 
