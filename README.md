@@ -90,7 +90,7 @@ Release `v0.3.2` combines the complete 12-workspace interface with the latest co
 - native Apple Silicon and Intel release ZIPs are built separately and verified with 70 tests, embedded CLI checks, an 88-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
-The README contains 15 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
+The README contains 17 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
 
 | Prepare the device and DDI | Observe live services | Run guided commands |
 |---|---|---|
@@ -99,6 +99,19 @@ The README contains 15 sanitized screenshots. The six views below provide a quic
 | Simulate test locations | Create protected backups | Preserve correlated evidence |
 |---|---|---|
 | [![Location Lab workspace](docs/screenshots/location-lab.png)](docs/screenshots/location-lab.png) | [![Backup workspace](docs/screenshots/backup.png)](docs/screenshots/backup.png) | [![Evidence Capture workspace](docs/screenshots/evidence-collection.png)](docs/screenshots/evidence-collection.png) |
+
+### New in v0.3.2
+
+| Function | What it does | Safety boundary |
+|---|---|---|
+| Guided Command Drift | Checks the installed help surface for all 49 presets before device work and reports changed routes, options, failures, timeouts, or cancellation. | Read-only; does not run a preset or contact a device. |
+| Action Safety | Classifies every guided and advanced command as read-only, host-write, device-change, or high-impact. | Device changes require a typed device-bound acknowledgement; high-impact actions additionally require backup acknowledgement and `IRREVERSIBLE`. |
+| Reconnect & Retry | Opens a bounded, guided 30-second device-detection window. | Does not restart SIP-protected Apple services. |
+| Real-Device Compatibility | Compares completed Capability Matrix observations across locally tested devices, builds, and connection types. | Stores a one-way device fingerprint, not raw UDIDs or names. |
+| Guided Cases | Records authorized purpose and scope before a bounded evidence collection. | Creates local intake metadata only; collection remains explicit. |
+| Investigative Live Logs | Adds references, annotated findings, reviewed findings, raw hashing, and evidence-bundle export to pop-out streams. | Keeps raw output distinct from analyst annotations and does not upload captures. |
+| Keyboard-first access | Adds named controls, standard navigation, and application-wide workspace shortcuts. | Shortcuts never bypass action confirmation. |
+| Sanitized Support Bundle | Creates a reviewable local ZIP with environment/readiness summaries and a SHA-256 manifest. | Excludes device identity, captures, backups, command output, credentials, and common host/network identifiers. |
 
 ## What the workbench covers
 
@@ -128,6 +141,8 @@ Use **Keyboard Shortcuts** in the window header, or press `⌘ /`, for the compl
 **Create Support Bundle…** in the window header creates a local ZIP for a bug report or support request. It is opt-in and never uploads anything. The ZIP contains toolkit and dependency versions, macOS/Python metadata, selected workspace, device count without identity, aggregate Capability Matrix states, sanitized status summaries, the sanitized Command Drift report, and a SHA-256 manifest.
 
 It explicitly excludes device names, UDIDs, serial numbers, pairing records, backups, cases, screenshots, raw logs, PCAPs, crash reports, IPA files, command output, live-log payloads, passwords, typed confirmations, user-entered values, host names, user names, home directories, full filesystem paths, network addresses, and email addresses. The generator also redacts known connected-device identifiers and names plus common identifier, local-path, IP, MAC, and email patterns. Review the ZIP before sharing; sanitization reduces exposure but cannot make a support artifact risk-free.
+
+![Sanitized support bundle confirmation](docs/screenshots/support-bundle.png)
 
 Highlights of the current build:
 
