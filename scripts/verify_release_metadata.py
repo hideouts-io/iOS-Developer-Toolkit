@@ -57,6 +57,9 @@ def verify_release_metadata(application_path: Path, sbom_path: Path, release_ver
         raise ReleaseMetadataError("Release SBOM does not declare CycloneDX format")
     if sbom.get("specVersion") != "1.6":
         raise ReleaseMetadataError("Release SBOM does not declare CycloneDX 1.6")
+    serial_number = sbom.get("serialNumber")
+    if not isinstance(serial_number, str) or not serial_number:
+        raise ReleaseMetadataError("Release SBOM does not define a CycloneDX serial number for attestation")
     component = metadata_component(sbom)
     if component.get("name") != "ios-developer-toolkit":
         raise ReleaseMetadataError("Release SBOM metadata does not identify ios-developer-toolkit")

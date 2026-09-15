@@ -92,6 +92,7 @@ from ios_developer_toolkit.device_compatibility import (
     latest_observations,
     load_observations,
 )
+from ios_developer_toolkit.demo_mode import demo_connection_banner, demo_device
 from ios_developer_toolkit.gui_pages import (
     build_home_page,
     build_live_logs_page,
@@ -467,6 +468,8 @@ class MainWindow(QMainWindow):
         self.resize(1280, 840)
         self._pmd3 = pymobiledevice3_command()
         self._devices: tuple[IOSDevice, ...] = ()
+        self._demo_mode = False
+        self._demo_device = demo_device()
         self._active_device_identifier: str | None = None
         self._guided_udids: set[str] = set()
         self._reconnect_active = False
@@ -610,6 +613,11 @@ class MainWindow(QMainWindow):
         self.device_combo.setMinimumWidth(390)
         self.device_combo.currentIndexChanged.connect(self._device_selected)
         header_layout.addWidget(self.device_combo)
+        self.demo_mode_button = QPushButton("Demo Mode")
+        self.demo_mode_button.setObjectName("demoModeButton")
+        self.demo_mode_button.setToolTip("Show a clearly simulated iPhone without connecting to a device")
+        self.demo_mode_button.clicked.connect(self.toggle_demo_mode)
+        header_layout.addWidget(self.demo_mode_button)
         self.refresh_devices_button = QPushButton("Retry Scan")
         self.refresh_devices_button.setObjectName("refreshDevicesButton")
         self.refresh_devices_button.clicked.connect(self._scanner_scan)
@@ -693,6 +701,10 @@ class MainWindow(QMainWindow):
         self.device_combo.setAccessibleDescription(
             "Choose a detected, trusted device. Use Command L to focus the workspace list instead."
         )
+        self.demo_mode_button.setAccessibleName("Toggle simulated device demo mode")
+        self.demo_mode_button.setAccessibleDescription(
+            "Show or hide a clearly labeled simulated iPhone. Demo mode never runs device-affecting actions."
+        )
         self.refresh_devices_button.setAccessibleName("Retry device scan")
         self.refresh_devices_button.setAccessibleDescription("Immediately refresh the usbmux device inventory. Shortcut: Command R.")
         self.reconnect_device_button.setAccessibleName("Reconnect device and retry scan")
@@ -747,7 +759,8 @@ class MainWindow(QMainWindow):
             "Offline mouse coordinate picker. For keyboard-first location entry, use the coordinate importer, latitude, and longitude fields."
         )
         self.location_map.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        QWidget.setTabOrder(self.device_combo, self.refresh_devices_button)
+        QWidget.setTabOrder(self.device_combo, self.demo_mode_button)
+        QWidget.setTabOrder(self.demo_mode_button, self.refresh_devices_button)
         QWidget.setTabOrder(self.refresh_devices_button, self.reconnect_device_button)
         QWidget.setTabOrder(self.reconnect_device_button, self.keyboard_shortcuts_button)
         QWidget.setTabOrder(self.keyboard_shortcuts_button, self.support_bundle_button)
@@ -2257,15 +2270,21 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(toolkit_stylesheet())
 
     def selected_device(self) -> IOSDevice | None:
+        if self._demo_mode:
+            return None
         index = self.device_combo.currentIndex()
         if index < 0 or index >= len(self._devices):
             return None
         return self._devices[index]
 
     def _scanner_scan(self) -> None:
+        if self._demo_mode:
+            return
         self._scanner.scan()
 
     def _reconnect_device(self) -> None:
+        if self._demo_mode:
+            return
         if self._reconnect_active:
             return
         confirmed = self._confirm(
@@ -2321,18 +2340,10 @@ class MainWindow(QMainWindow):
         previous_identifier = self.selected_device().identifier if self.selected_device() is not None else None
         changed = devices != self._devices
         self._devices = devices
+        if self._demo_mode:
+            return
         if changed:
-            self.device_combo.blockSignals(True)
-            self.device_combo.clear()
-            for device in devices:
-                self.device_combo.addItem(device.display_name(), device.identifier)
-            if previous_identifier is not None:
-                matching_index = next(
-                    (index for index, device in enumerate(devices) if device.identifier == previous_identifier),
-                    0,
-                )
-                self.device_combo.setCurrentIndex(matching_index)
-            self.device_combo.blockSignals(False)
+            self._render_device_picker(devices, previous_identifier)
         if not devices:
             if self._reconnect_active:
                 self.connection_banner.setText(
@@ -2359,6 +2370,8 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(350, self.show_developer_mode_guide)
 
     def _scan_error(self, message: str) -> None:
+        if self._demo_mode:
+            return
         if self._reconnect_active:
             self.connection_banner.setText(
                 f"Reconnect is still retrying after a usbmux discovery error: {message} Keep the device unlocked "
@@ -2372,9 +2385,72 @@ class MainWindow(QMainWindow):
 
     def _device_selected(self, index: int) -> None:
         del index
-        self._update_device_fields(self.selected_device())
+        self._update_device_fields(self._displayed_device())
         self.developer_mode_status.setText("Status not checked for this device")
         self._update_location_controls()
+
+    def toggle_demo_mode(self) -> None:
+        if self._demo_mode:
+            self._exit_demo_mode()
+            return
+        self._enter_demo_mode()
+
+    def _enter_demo_mode(self) -> None:
+        if self.selected_device() is not None:
+            QMessageBox.information(
+                self,
+                "Demo Mode Requires No Selected Device",
+                "Disconnect the physical device before starting the simulated walkthrough. "
+                "Demo Mode never replaces a real connected device.",
+            )
+            return
+        self._demo_mode = True
+        self._reconnect_timeout_timer.stop()
+        self._reconnect_active = False
+        self.device_combo.blockSignals(True)
+        self.device_combo.clear()
+        self.device_combo.addItem(self._demo_device.display_name(), self._demo_device.identifier)
+        self.device_combo.setCurrentIndex(0)
+        self.device_combo.blockSignals(False)
+        self.device_combo.setEnabled(False)
+        self.demo_mode_button.setText("Exit Demo")
+        self.refresh_devices_button.setEnabled(False)
+        self.reconnect_device_button.setEnabled(False)
+        self.connection_banner.setText(demo_connection_banner())
+        self._update_device_fields(self._demo_device)
+        self.developer_mode_status.setText("Demo Mode: not checked; no device service was contacted")
+
+    def _exit_demo_mode(self) -> None:
+        self._demo_mode = False
+        self.device_combo.setEnabled(True)
+        self.demo_mode_button.setText("Demo Mode")
+        self.refresh_devices_button.setEnabled(True)
+        self.reconnect_device_button.setEnabled(True)
+        self._render_device_picker(self._devices, None)
+        self._devices_changed(self._devices)
+        self._scanner.scan()
+
+    def _render_device_picker(
+        self,
+        devices: tuple[IOSDevice, ...],
+        previous_identifier: str | None,
+    ) -> None:
+        self.device_combo.blockSignals(True)
+        self.device_combo.clear()
+        for device in devices:
+            self.device_combo.addItem(device.display_name(), device.identifier)
+        if previous_identifier is not None:
+            matching_index = next(
+                (index for index, device in enumerate(devices) if device.identifier == previous_identifier),
+                0,
+            )
+            self.device_combo.setCurrentIndex(matching_index)
+        self.device_combo.blockSignals(False)
+
+    def _displayed_device(self) -> IOSDevice | None:
+        if self._demo_mode:
+            return self._demo_device
+        return self.selected_device()
 
     def _update_device_fields(self, device: IOSDevice | None) -> None:
         identifier = device.identifier if device is not None else None
@@ -2398,12 +2474,13 @@ class MainWindow(QMainWindow):
                 if device is not None
                 else "Connect a trusted device, then refresh the inventory."
             )
-        enabled = device is not None
+        enabled = device is not None and not self._demo_mode
         self.mount_button.setEnabled(enabled)
         self.remove_button.setEnabled(enabled)
         self.start_collection_button.setEnabled(enabled and self._collection_process is None)
         self.create_case_button.setEnabled(enabled and self._collection_process is None and self._active_case_path is None)
         self.case_readiness_button.setEnabled(enabled and self._capability_process is None)
+        self._update_live_log_controls()
         self._update_apps_controls()
         self._update_backup_controls()
         self._update_command_controls()
@@ -2420,6 +2497,14 @@ class MainWindow(QMainWindow):
         self.device_model_value.setText(device.product_type)
         self.device_udid_value.setText(device.identifier)
         self._update_sideload_controls()
+
+    def _update_live_log_controls(self) -> None:
+        for specification in log_stream_specs():
+            identifier = f"open{specification.identifier.replace('-', '').title()}LogButton"
+            button = self.findChild(QPushButton, identifier)
+            if button is None:
+                raise RuntimeError(f"Live log action is missing: {identifier}")
+            button.setEnabled(not self._demo_mode)
 
     def _reset_capability_matrix(self, device: IOSDevice | None) -> None:
         self._capability_results = {result.identifier: result for result in untested_capability_results()}

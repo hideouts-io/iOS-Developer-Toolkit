@@ -75,7 +75,6 @@ fi
   --pyproject "$repository_root/pyproject.toml" \
   --mc-type application \
   --sv 1.6 \
-  --output-reproducible \
   --of JSON \
   -o "$sbom_path"
 "$build_environment/bin/python" scripts/collect_third_party_licenses.py "$sbom_requirements" "$license_directory"

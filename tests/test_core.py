@@ -28,6 +28,7 @@ from ios_developer_toolkit.command_drift import (
 )
 from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case, validate_collection_case
 from ios_developer_toolkit.collector import safe_udid_fragment
+from ios_developer_toolkit.demo_mode import DEMO_DEVICE_IDENTIFIER, demo_connection_banner, demo_device
 from ios_developer_toolkit.installed_apps import InstalledAppsDataError, format_byte_count, parse_installed_apps_json
 from ios_developer_toolkit.ipa_inspector import (
     IPAInspectionError,
@@ -107,6 +108,15 @@ class DeviceParsingTests(unittest.TestCase):
     def test_rejects_missing_identifier(self) -> None:
         with self.assertRaises(DeviceDataError):
             parse_devices_json('[{"DeviceName": "Unnamed"}]')
+
+
+class DemoModeTests(unittest.TestCase):
+    def test_simulated_device_is_visibly_labeled_and_never_looks_like_usbmux_data(self) -> None:
+        device = demo_device()
+        self.assertEqual(device.identifier, DEMO_DEVICE_IDENTIFIER)
+        self.assertIn("simulated", device.name)
+        self.assertEqual(device.connection_type, "Demo")
+        self.assertTrue(demo_connection_banner().startswith("DEMO MODE"))
 
 
 class CommandPolicyTests(unittest.TestCase):

@@ -21,6 +21,7 @@ def create_release_fixture(root: Path, release_version: str) -> tuple[Path, Path
     sbom = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
+        "serialNumber": "urn:uuid:12345678-1234-1234-1234-123456789012",
         "metadata": {"component": {"name": "ios-developer-toolkit", "version": release_version}},
     }
     sbom_path = root / "release.cdx.json"
@@ -61,6 +62,22 @@ class ReleaseMetadataTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("differs from Contents/Resources/BOM.cdx.json", result.stderr)
+
+    def test_rejects_an_sbom_without_the_required_attestation_serial_number(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            application_path, sbom_path = create_release_fixture(Path(temporary_directory), "0.3.1")
+            sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
+            del sbom["serialNumber"]
+            serialized_sbom = json.dumps(sbom, sort_keys=True)
+            sbom_path.write_text(serialized_sbom, encoding="utf-8")
+            (application_path / "Contents" / "Resources" / "BOM.cdx.json").write_text(
+                serialized_sbom,
+                encoding="utf-8",
+            )
+            result = self.run_verifier(application_path, sbom_path, "0.3.1")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not define a CycloneDX serial number", result.stderr)
 
 
 if __name__ == "__main__":

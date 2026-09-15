@@ -138,6 +138,22 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     support_bundle_button = window.findChild(QPushButton, "createSupportBundleButton")
     if support_bundle_button is None:
         raise RuntimeError("GUI support-bundle action is missing")
+    demo_mode_button = window.findChild(QPushButton, "demoModeButton")
+    if demo_mode_button is None:
+        raise RuntimeError("GUI demo-mode action is missing")
+    demo_mode_button.click()
+    application.processEvents()
+    if window.selected_device() is not None:
+        raise RuntimeError("Demo mode must not expose a simulated device to operational actions")
+    if not window.connection_banner.text().startswith("DEMO MODE"):
+        raise RuntimeError("Demo mode must visibly identify the simulated connection")
+    if window.mount_button.isEnabled():
+        raise RuntimeError("Demo mode must disable device-affecting actions")
+    live_log_button = window.findChild(QPushButton, "openUnifiedLogButton")
+    if live_log_button is None or live_log_button.isEnabled():
+        raise RuntimeError("Demo mode must disable live-device log collection")
+    demo_mode_button.click()
+    application.processEvents()
     window.close()
     application.processEvents()
     print(f"GUI smoke test passed with {len(buttons)} action buttons", flush=True)

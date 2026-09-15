@@ -76,18 +76,19 @@ The application executes the project-pinned binary directly. Guided values becom
 
 ## Current release additions and visual tour
 
-Release `v0.3.2` combines the complete 12-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
+Release `v0.3.3` combines the complete 12-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
 
 - **Guided Command Drift** checks the live `pymobiledevice3 --help` surface for all 49 presets before a device command is run, highlighting missing routes, changed options, failed checks, and cancellations without contacting a device;
 - **Action Safety** makes state boundaries explicit: local-output actions require review, device changes require a typed device-bound `RUN` phrase, and high-impact actions additionally require a current-backup acknowledgement and an `IRREVERSIBLE` phrase;
 - **Create Support Bundle…** produces an opt-in local ZIP with sanitized environment, readiness, status, and command-drift metadata plus a SHA-256 manifest; it excludes device identity, captures, backups, logs, command output, credentials, and common host/network identifiers;
 - **Retry Scan** performs an immediate usbmux device check, while **Reconnect & Retry…** opens a guided detection window without attempting to restart SIP-protected Apple services;
+- **Demo Mode** shows a prominently labeled simulated iPhone for walkthroughs and screenshots, while deliberately withholding a selected physical-device target and disabling device operations;
 - the manual **Capability Matrix** reports host, trust, Developer Mode, DDI, tunnel, DVT, CoreDevice, and related readiness as separate bounded results, then compares completed local probes across real devices without retaining raw UDIDs;
 - **DVT network activity** and **CoreDevice applications** are handled as long-running streams with explicit Stop controls instead of misleading finite snapshots;
 - Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
 - Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
 - app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one selected-device workflow;
-- native Apple Silicon and Intel release ZIPs are built separately and verified with 70 tests, embedded CLI checks, an 88-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 72 tests, embedded CLI checks, an 89-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
 The README contains 17 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
@@ -100,7 +101,7 @@ The README contains 17 sanitized screenshots. The six views below provide a quic
 |---|---|---|
 | [![Location Lab workspace](docs/screenshots/location-lab.png)](docs/screenshots/location-lab.png) | [![Backup workspace](docs/screenshots/backup.png)](docs/screenshots/backup.png) | [![Evidence Capture workspace](docs/screenshots/evidence-collection.png)](docs/screenshots/evidence-collection.png) |
 
-### New in v0.3.2
+### New in v0.3.3
 
 | Function | What it does | Safety boundary |
 |---|---|---|
@@ -112,6 +113,7 @@ The README contains 17 sanitized screenshots. The six views below provide a quic
 | Investigative Live Logs | Adds references, annotated findings, reviewed findings, raw hashing, and evidence-bundle export to pop-out streams. | Keeps raw output distinct from analyst annotations and does not upload captures. |
 | Keyboard-first access | Adds named controls, standard navigation, and application-wide workspace shortcuts. | Shortcuts never bypass action confirmation. |
 | Sanitized Support Bundle | Creates a reviewable local ZIP with environment/readiness summaries and a SHA-256 manifest. | Excludes device identity, captures, backups, command output, credentials, and common host/network identifiers. |
+| Demo Mode | Shows a local simulated iPhone for an honest product walkthrough or screenshot. | The banner identifies the simulation and no device service, command, mount, capture, backup, or location operation can run. |
 
 ## What the workbench covers
 
@@ -210,7 +212,7 @@ Current pinned runtime:
 | PySide6 | `6.11.2` |
 | pymobiledevice3 | `10.11.0` |
 | Local Xcode candidate | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` |
-| Toolkit release | `0.3.2` |
+| Toolkit release | `0.3.3` |
 
 The current GUI and launcher are macOS-specific. Although upstream `pymobiledevice3` supports other host platforms, this application currently depends on macOS tools and conventions such as Xcode/CoreDevice, `hdiutil`, `security`, `codesign`, `.app` bundles, and macOS user-library paths.
 
@@ -226,10 +228,10 @@ cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
 
-For the published `v0.3.2` source state:
+For the published `v0.3.3` source state:
 
 ```bash
-git clone --branch v0.3.2 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+git clone --branch v0.3.3 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
 cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
@@ -284,7 +286,7 @@ Extract the verified ZIP in Finder, or use:
 
 ```bash
 toolkit_arch="$(uname -m)"
-toolkit_version="v0.3.2"
+toolkit_version="v0.3.3"
 ditto -x -k "iOS-Developer-Toolkit-${toolkit_version}-macOS-${toolkit_arch}.zip" "iOS Developer Toolkit ${toolkit_version}"
 ```
 
@@ -1030,7 +1032,7 @@ The final launcher check opens the application and briefly verifies the process.
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 70 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 88-button offscreen GUI smoke test, verifies the Mach-O architecture, embeds third-party notices and a CycloneDX SBOM, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 72 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 89-button offscreen GUI smoke test, verifies the Mach-O architecture, embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The artifacts are not universal binaries: choose the ZIP matching `uname -m`. They are also not Developer ID signed or Apple-notarized because this repository has no release signing identity. A future signing upgrade should use a narrowly scoped Developer ID Application certificate, hardened runtime, Apple notarization, and stapling without changing the two-architecture verification gates.
 
