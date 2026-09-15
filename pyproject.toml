@@ -15,7 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 release = [
-    "Nuitka==4.1.1",
+    "Nuitka==4.2.1",
 ]
 
 [project.scripts]
