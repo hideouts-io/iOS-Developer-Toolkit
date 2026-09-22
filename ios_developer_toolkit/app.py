@@ -70,6 +70,12 @@ from ios_developer_toolkit.action_safety import (
     confirmation_phrase,
     guided_action_safety,
 )
+from ios_developer_toolkit.action_palette import (
+    ActionPaletteDialog,
+    ActionPaletteEntry,
+    action_palette_entry,
+    validate_action_palette,
+)
 from ios_developer_toolkit.backup_process import BackupProcessController
 from ios_developer_toolkit.backup_protocol import BackupAction, BackupEvent, BackupRequest, BackupRequestError
 from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case
@@ -724,6 +730,11 @@ class MainWindow(QMainWindow):
         self.navigation_list.setObjectName("workspaceNavigation")
         self.navigation_list.setSpacing(2)
         sidebar_layout.addWidget(self.navigation_list, 1)
+        self.action_palette_button = QPushButton("Action Palette (⌘K)")
+        self.action_palette_button.setObjectName("actionPaletteButton")
+        self.action_palette_button.setToolTip("Search workspaces, guided commands, and currently eligible actions")
+        self.action_palette_button.clicked.connect(self.show_action_palette)
+        sidebar_layout.addWidget(self.action_palette_button)
         self.session_activity_button = QPushButton("Session Activity (0)")
         self.session_activity_button.setObjectName("sessionActivityButton")
         self.session_activity_button.setToolTip(
@@ -791,6 +802,10 @@ class MainWindow(QMainWindow):
         self.session_activity_button.setAccessibleDescription(
             "Review completed typed operations and explicitly export a selected structured manifest."
         )
+        self.action_palette_button.setAccessibleName("Action palette")
+        self.action_palette_button.setAccessibleDescription(
+            "Search workspaces, guided commands, and actions eligible in the current app state. Shortcut: Command K."
+        )
         self.connection_banner.setAccessibleName("Device connection status")
         self.connection_banner.setAccessibleDescription(
             "Reports whether a trusted iPhone or iPad is currently available to the toolkit."
@@ -839,10 +854,12 @@ class MainWindow(QMainWindow):
         QWidget.setTabOrder(self.reconnect_device_button, self.keyboard_shortcuts_button)
         QWidget.setTabOrder(self.keyboard_shortcuts_button, self.support_bundle_button)
         QWidget.setTabOrder(self.support_bundle_button, self.navigation_list)
-        QWidget.setTabOrder(self.navigation_list, self.session_activity_button)
+        QWidget.setTabOrder(self.navigation_list, self.action_palette_button)
+        QWidget.setTabOrder(self.action_palette_button, self.session_activity_button)
 
     def _configure_keyboard_shortcuts(self) -> None:
         self._add_application_shortcut("Meta+R", self._scanner_scan, "shortcutRetryDeviceScan")
+        self._add_application_shortcut("Meta+K", self.show_action_palette, "shortcutShowActionPalette")
         self._add_application_shortcut("Meta+L", self.focus_workspace_navigation, "shortcutFocusWorkspaceNavigation")
         self._add_application_shortcut("Meta+F", self.focus_workspace_search, "shortcutFocusWorkspaceSearch")
         self._add_application_shortcut("Meta+/", self.show_keyboard_shortcuts, "shortcutShowKeyboardReference")
@@ -957,6 +974,7 @@ class MainWindow(QMainWindow):
             "<table>"
             "<tr><th align='left'>Shortcut</th><th align='left'>Action</th></tr>"
             "<tr><td>⌘ R</td><td>Retry device scan</td></tr>"
+            "<tr><td>⌘ K</td><td>Open the eligible Action Palette</td></tr>"
             "<tr><td>⌘ L</td><td>Focus workspace navigation</td></tr>"
             "<tr><td>⌘ F</td><td>Focus search in Command Center, Man Pages, Installed Apps, or Location Lab</td></tr>"
             "<tr><td>⌘ ⌥ ← / ⌘ ⌥ →</td><td>Previous / next workspace</td></tr>"
@@ -978,6 +996,207 @@ class MainWindow(QMainWindow):
         buttons.accepted.connect(dialog.accept)
         layout.addWidget(buttons)
         dialog.exec()
+
+    def show_action_palette(self) -> None:
+        dialog = ActionPaletteDialog(self._eligible_action_palette_entries(), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._execute_action_palette_entry(dialog.selected_identifier())
+
+    def _eligible_action_palette_entries(self) -> tuple[ActionPaletteEntry, ...]:
+        workspace_summaries = {
+            "Home": "Open the guided workflow overview.",
+            "Device & DDI": "Review the selected device, Developer Mode, DDI, and Apple tool handoffs.",
+            "Capability Matrix": "Inspect bounded connection and developer-service readiness evidence.",
+            "Location Lab": "Prepare explicit, clearable location simulation for app testing.",
+            "Live Logs": "Open independent raw-spooling log windows.",
+            "Command Center": "Choose a validated guided command or explicit advanced arguments.",
+            "Installed Apps": "Inspect the service-visible app inventory.",
+            "Backup": "Prepare MobileBackup2 or an external UFADE handoff.",
+            "Sideload IPA": "Inspect a local IPA before an eligible installation attempt.",
+            "Evidence Capture": "Prepare a scoped case and bounded evidence collection.",
+            "Man Pages": "Browse version-matched command routes and live help.",
+            "Scope & Safety": "Review authorization, privacy, and interpretation boundaries.",
+        }
+        entries: list[ActionPaletteEntry] = [
+            action_palette_entry(
+                f"navigate:{workspace}",
+                f"Open {workspace}",
+                "Workspace",
+                workspace_summaries[workspace],
+                ("navigate", "workspace", workspace),
+            )
+            for workspace in self._page_indices
+        ]
+        entries.extend(
+            (
+                action_palette_entry(
+                    "utility:session-activity",
+                    "Open Session Activity",
+                    "Utility",
+                    "Review completed typed operations and explicitly export a selected JSON manifest.",
+                    ("history", "journal", "manifest", "operations"),
+                ),
+                action_palette_entry(
+                    "utility:keyboard-shortcuts",
+                    "Open Keyboard Shortcuts",
+                    "Utility",
+                    "Review keyboard-first navigation without running a device action.",
+                    ("accessibility", "keyboard", "hotkeys"),
+                ),
+            )
+        )
+        if self.refresh_devices_button.isEnabled() and not self._demo_mode:
+            entries.append(
+                action_palette_entry(
+                    "action:retry-device-scan",
+                    "Retry Device Scan",
+                    "Eligible read action",
+                    "Run one usbmux discovery refresh without restarting macOS services.",
+                    ("connect", "detect", "usbmux", "iphone", "ipad"),
+                )
+            )
+        eligible_actions = (
+            (
+                "action:developer-mode-status",
+                "Check Developer Mode",
+                "Query the selected device's current Developer Mode status.",
+                ("developer", "amfi", "ddi"),
+                self.selected_device() is not None and not self._action_controller.is_running(),
+            ),
+            (
+                "action:list-developer-images",
+                "List Developer Images",
+                "List mounted or installed developer support for the selected device.",
+                ("ddi", "mounter", "cryptex"),
+                self.selected_device() is not None and not self._action_controller.is_running(),
+            ),
+            (
+                "action:coredevice-details",
+                "Show CoreDevice Details",
+                "Run bounded Apple devicectl details for the selected device.",
+                ("xcode", "devicectl", "coredevice"),
+                self.coredevice_details_button.isEnabled(),
+            ),
+            (
+                "action:rvi-status",
+                "List RVI Interfaces",
+                "List current Apple Remote Virtual Interfaces without changing them.",
+                ("network", "pcap", "rvictl"),
+                self.rvi_status_button.isEnabled(),
+            ),
+            (
+                "action:capability-matrix",
+                "Run Device Readiness Check",
+                "Run the bounded read-only Capability Matrix for the selected device.",
+                ("readiness", "trust", "ddi", "rsd", "dvt"),
+                self.refresh_capabilities_button.isEnabled(),
+            ),
+            (
+                "action:refresh-installed-apps",
+                "Refresh Installed Apps",
+                "Load the service-visible application inventory for the selected device.",
+                ("apps", "inventory", "bundle"),
+                self.refresh_apps_button.isEnabled(),
+            ),
+            (
+                "action:backup-encryption-status",
+                "Check Backup Encryption",
+                "Read the selected device's MobileBackup2 encryption state.",
+                ("backup", "mobilebackup2", "encrypted"),
+                self.check_encryption_button.isEnabled(),
+            ),
+            (
+                "action:command-drift",
+                "Check Guided Command Drift",
+                "Verify every guided route against the installed CLI help without contacting a device.",
+                ("help", "syntax", "pymobiledevice3", "presets"),
+                self.command_drift_check_button.isEnabled(),
+            ),
+            (
+                "action:refresh-live-help",
+                "Refresh Selected Live Help",
+                "Load live help for the currently selected Man Pages route.",
+                ("manpage", "documentation", "syntax"),
+                self.refresh_manpage_button.isEnabled(),
+            ),
+        )
+        entries.extend(
+            action_palette_entry(identifier, title, "Eligible read action", summary, keywords)
+            for identifier, title, summary, keywords, eligible in eligible_actions
+            if eligible
+        )
+        if not self._console_controller.is_running():
+            device_available = self.selected_device() is not None
+            entries.extend(
+                action_palette_entry(
+                    f"preset:{preset.identifier}",
+                    f"Choose {preset.title}",
+                    "Guided command",
+                    f"Open this reviewed preset in Command Center without running it. {preset.summary}",
+                    (preset.category, *preset.argument_template, "preset", preset.risk),
+                )
+                for preset in self._presets
+                if not preset.requires_device or device_available
+            )
+        return validate_action_palette(tuple(entries))
+
+    def _execute_action_palette_entry(self, identifier: str) -> None:
+        if identifier.startswith("navigate:"):
+            self.navigate_to_page_and_focus(identifier.removeprefix("navigate:"))
+            return
+        if identifier.startswith("preset:"):
+            self._select_palette_preset(identifier.removeprefix("preset:"))
+            return
+        actions: Mapping[str, Callable[[], None]] = {
+            "utility:session-activity": self.show_session_activity,
+            "utility:keyboard-shortcuts": self.show_keyboard_shortcuts,
+            "action:retry-device-scan": self._scanner_scan,
+            "action:developer-mode-status": self.check_developer_mode,
+            "action:list-developer-images": self.list_mounted_images,
+            "action:coredevice-details": self.show_coredevice_details,
+            "action:rvi-status": self.list_rvi_interfaces,
+            "action:capability-matrix": self.refresh_capability_matrix,
+            "action:refresh-installed-apps": self.refresh_app_inventory,
+            "action:backup-encryption-status": self.check_backup_encryption,
+            "action:command-drift": self.start_command_drift_check,
+            "action:refresh-live-help": self.refresh_selected_manpage,
+        }
+        action = actions.get(identifier)
+        if action is None:
+            raise KeyError(f"Unknown action palette entry: {identifier}")
+        current_identifiers = {entry.identifier for entry in self._eligible_action_palette_entries()}
+        if identifier not in current_identifiers:
+            QMessageBox.information(
+                self,
+                "Action No Longer Eligible",
+                "The device or operation state changed while the palette was open. Reopen the palette to refresh it.",
+            )
+            return
+        action()
+
+    def _select_palette_preset(self, identifier: str) -> None:
+        matching = tuple(preset for preset in self._presets if preset.identifier == identifier)
+        if len(matching) != 1:
+            raise CommandCatalogError(f"Expected one action-palette preset for {identifier!r}, found {len(matching)}")
+        preset = matching[0]
+        if self._console_controller.is_running() or (preset.requires_device and self.selected_device() is None):
+            QMessageBox.information(
+                self,
+                "Preset No Longer Eligible",
+                "The selected preset is no longer eligible in the current device or operation state.",
+            )
+            return
+        self.navigate_to_page("Command Center")
+        self.command_category_combo.setCurrentText("All categories")
+        self.command_search_field.clear()
+        for row in range(self.command_preset_list.count()):
+            item = self.command_preset_list.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == preset.identifier:
+                self.command_preset_list.setCurrentRow(row)
+                self.preset_run_button.setFocus(Qt.FocusReason.ShortcutFocusReason)
+                return
+        raise CommandCatalogError(f"Eligible action-palette preset is missing from Command Center: {identifier}")
 
     def show_session_activity(self) -> None:
         dialog = OperationHistoryDialog(self._operation_records, self)

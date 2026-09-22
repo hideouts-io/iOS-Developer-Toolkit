@@ -121,7 +121,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 
 ### P2 — deepen expert workflows without scope creep
 
-* Maintain the session-local typed-operation journal and explicit structured JSON manifests. Add a universal command/action palette that only exposes eligible operations.
+* Maintain the session-local typed-operation journal, explicit structured JSON manifests, and universal Action Palette that exposes only eligible operations.
 * Implement a guided MVT backup-analysis handoff with explicit consent, no password persistence, output isolation, and no “clean device” conclusion.
 * Add optional user-configured adapters for `go-ios`, `idb`, and `ipsw`, each with executable provenance and version display.
 * Publish a small documentation site split into quick start, architecture, safety, troubleshooting, release verification, and contributor paths.
@@ -177,6 +177,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | 2026-09-22 | Added native Apple developer-tool handoffs for selected-device CoreDevice details, RVI status, Xcode projects, test results, and Instruments traces. | 106 tests and a 94-action GUI smoke passed; tests validate the exact selected-device and RVI commands and reject missing or unrelated local targets. | The toolkit displays native output and opens native formats; it does not claim a stable schema for human `devicectl` output or reimplement Xcode. |
 | 2026-09-22 | Migrated Command Center guided, advanced, finite, and streaming commands to a typed interactive-process lifecycle. | 109 tests and the 94-action GUI smoke passed; real child-process tests cover final stdout/stderr draining, launch failure, idempotent cancellation, and no arbitrary runtime limit. | Command output remains session-local unless the user explicitly preserves it through a task-specific evidence workflow. |
 | 2026-09-22 | Added a session-local operation journal and explicit per-operation JSON manifests across the primary typed workflows. | 113 tests and a 95-action GUI smoke passed; tests cover immutable bounded history, exact argument retention, output hashing without raw-output embedding, owner-only export, and overwrite refusal. | Capability Matrix, Location Lab, Live Logs, and Command Drift retain their stronger workflow-specific records rather than duplicating raw or high-volume events into this journal. |
+| 2026-09-22 | Added a keyboard-first Action Palette computed from current device and process eligibility. | 116 tests and a 96-action GUI smoke passed; smoke coverage verifies disconnected-state preset filtering, host-preset access, search behavior, stable control identity, and the `⌘ K` shortcut. | Guided presets are selected for review rather than executed, and eligibility is checked again at activation. |
 
 ## Research sources
 

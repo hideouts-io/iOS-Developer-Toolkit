@@ -79,9 +79,10 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     if arguments:
         raise ValueError(f"Internal smoke test does not accept arguments: {tuple(arguments)}")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    from PySide6.QtCore import SIGNAL
+    from PySide6.QtCore import SIGNAL, Qt
     from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QPushButton, QTableWidget
 
+    from ios_developer_toolkit.action_palette import ActionPaletteDialog
     from ios_developer_toolkit.app import MainWindow
     from ios_developer_toolkit.backup_protocol import BackupRequest
     from ios_developer_toolkit.operation_history import OperationHistoryDialog
@@ -183,8 +184,34 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError("GUI live-help action did not complete within its bounded smoke-test window")
     if selected_manpage.command_path not in window._manpage_cache:
         raise RuntimeError(f"GUI live-help action did not cache successful output: {window.manpage_output.toPlainText()}")
+    action_palette_button = window.findChild(QPushButton, "actionPaletteButton")
+    if action_palette_button is None:
+        raise RuntimeError("GUI action-palette launcher is missing")
+    action_palette_entries = window._eligible_action_palette_entries()
+    action_palette_identifiers = {entry.identifier for entry in action_palette_entries}
+    if "preset:devices" not in action_palette_identifiers:
+        raise RuntimeError("GUI action palette omitted the host-only devices preset")
+    device_only_presets = {
+        f"preset:{preset.identifier}" for preset in window._presets if preset.requires_device
+    }
+    exposed_device_only_presets = device_only_presets & action_palette_identifiers
+    if exposed_device_only_presets:
+        raise RuntimeError(
+            f"GUI action palette exposed device-only presets without a selected device: "
+            f"{sorted(exposed_device_only_presets)}"
+        )
+    action_palette_dialog = ActionPaletteDialog(action_palette_entries, window)
+    action_palette_dialog.search.setText("session manifest")
+    application.processEvents()
+    if action_palette_dialog.results.count() != 1:
+        raise RuntimeError("GUI action-palette search did not isolate the session-manifest utility")
+    action_palette_item = action_palette_dialog.results.item(0)
+    if action_palette_item.data(Qt.ItemDataRole.UserRole) != "utility:session-activity":
+        raise RuntimeError("GUI action-palette search selected an unexpected entry")
+    action_palette_dialog.close()
     expected_shortcuts = {
         "shortcutRetryDeviceScan",
+        "shortcutShowActionPalette",
         "shortcutFocusWorkspaceNavigation",
         "shortcutFocusWorkspaceSearch",
         "shortcutShowKeyboardReference",

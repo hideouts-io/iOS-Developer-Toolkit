@@ -45,6 +45,7 @@ The screenshots use an illustrative device name, model, version, build, and UDID
   - [Evidence Capture](#evidence-capture)
   - [Man Pages](#man-pages)
   - [Scope and Safety](#scope-and-safety)
+  - [Eligible Action Palette](#eligible-action-palette)
   - [Session Activity and operation manifests](#session-activity-and-operation-manifests)
 - [Developer Disk Images explained](#developer-disk-images-explained)
 - [Guided command catalog](#guided-command-catalog)
@@ -85,6 +86,7 @@ Release `v0.3.4` combines the complete 12-workspace interface with the latest co
 - **Retry Scan** performs an immediate usbmux device check, while **Reconnect & Retry…** opens a guided detection window without attempting to restart SIP-protected Apple services;
 - **Connection diagnostic** records whether usbmux did not launch, failed, returned malformed output, found no devices, or returned selectable devices; its privacy-safe summary is visible in Device & DDI and included in a sanitized support bundle;
 - **Selected command readiness** maps each guided Command Center action to the exact connection, trust, Developer Mode, DDI, tunnel, CoreDevice, DVT, or Web Inspector checks it needs, with a one-click route to the bounded read-only matrix;
+- **Action Palette** (`⌘ K`) searches all workspaces, guided presets, utilities, and currently eligible read actions while withholding device-only operations until a physical target is selected;
 - **Session Activity** correlates completed typed operations with workspace, target, transport, exact argument vector, timing, terminal status, prerequisite snapshot, output paths, and output hashes without automatically persisting raw command output;
 - the desktop UI starts independently of the MobileBackup2 transport, and device discovery consumes output both while the child process runs and after it exits, so a fast successful `usbmux list` result is not lost before the picker is updated;
 - **Demo Mode** shows a prominently labeled simulated iPhone for walkthroughs and screenshots, while deliberately withholding a selected physical-device target and disabling device operations;
@@ -93,10 +95,10 @@ Release `v0.3.4` combines the complete 12-workspace interface with the latest co
 - Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
 - Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
 - app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one selected-device workflow;
-- native Apple Silicon and Intel release ZIPs are built separately and verified with 113 tests, embedded CLI checks, a 95-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 116 tests, embedded CLI checks, a 96-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
-The README contains 19 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
+The README contains 20 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
 
 | Prepare the device and DDI | Observe live services | Run guided commands |
 |---|---|---|
@@ -119,6 +121,7 @@ The README contains 19 sanitized screenshots. The six views below provide a quic
 | Keyboard-first access | Adds named controls, standard navigation, and application-wide workspace shortcuts. | Shortcuts never bypass action confirmation. |
 | Sanitized Support Bundle | Creates a reviewable local ZIP with environment/readiness summaries and a SHA-256 manifest. | Excludes device identity, captures, backups, command output, credentials, and common host/network identifiers. |
 | Demo Mode | Shows a local simulated iPhone for an honest product walkthrough or screenshot. | The banner identifies the simulation and no device service, command, mount, capture, backup, or location operation can run. |
+| Eligible Action Palette | Searches workspaces, utilities, guided presets, and read actions that are valid for the current device and process state. | Selecting a preset opens it for review; it never runs automatically or bypasses confirmation. |
 | Session Activity | Correlates completed typed operations and previews an exportable structured JSON manifest. | Session-only by default; raw output is omitted, and explicit exports can still contain identifiers and local paths. |
 
 ## What the workbench covers
@@ -142,7 +145,15 @@ The README contains 19 sanitized screenshots. The six views below provide a quic
 
 The interface gives named controls and descriptions to the primary device picker, workspace navigation, command and help browsers, app inventory, capability results, reports, and the keyboard alternative to Location Lab's mouse map. The offline map is intentionally skipped in keyboard tab order; use the coordinate importer or latitude and longitude fields instead.
 
-Use **Keyboard Shortcuts** in the window header, or press `⌘ /`, for the complete reference. The most useful shortcuts are `⌘ L` to focus workspace navigation, `⌘ F` to focus contextual search, `⌘ R` to retry discovery, `⌘ 1` through `⌘ 0` to open the first ten workspaces, `⌘ ⇧ M` for Man Pages, and `⌘ ⇧ S` for Scope & Safety. `⌘ ⌥ ←` and `⌘ ⌥ →` move between workspaces. Tab, Shift-Tab, Space, Return, and Arrow keys retain their standard Qt behavior. Shortcuts never skip device-action confirmation or typed acknowledgements.
+Use **Keyboard Shortcuts** in the window header, or press `⌘ /`, for the complete reference. The most useful shortcuts are `⌘ K` to open the eligible Action Palette, `⌘ L` to focus workspace navigation, `⌘ F` to focus contextual search, `⌘ R` to retry discovery, `⌘ 1` through `⌘ 0` to open the first ten workspaces, `⌘ ⇧ M` for Man Pages, and `⌘ ⇧ S` for Scope & Safety. `⌘ ⌥ ←` and `⌘ ⌥ →` move between workspaces. Tab, Shift-Tab, Space, Return, and Arrow keys retain their standard Qt behavior. Shortcuts never skip device-action confirmation or typed acknowledgements.
+
+### Eligible Action Palette
+
+![Eligible Action Palette](docs/screenshots/action-palette.png)
+
+Press `⌘ K` or use **Action Palette** below the workspace list to search the interface without memorizing where an operation lives. The result set is computed from the current app state: host-only presets remain available while disconnected, device-only presets appear only after a physical target is selected, and actions disappear while their process controller is busy. Workspace and utility navigation is always available.
+
+Choosing a guided preset opens Command Center with that preset selected and its exact command, prerequisites, risk, and confirmation path visible. It does not execute the command. Direct entries are limited to eligible read actions such as discovery, Developer Mode status, developer-image listing, CoreDevice or RVI details, the Capability Matrix, app inventory, backup-encryption status, Command Drift, and Man Pages help. State is checked again at activation so a device disconnect or newly busy controller cannot use a stale palette result.
 
 ### Session Activity and operation manifests
 
@@ -1023,6 +1034,7 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 .
 ├── ios_developer_toolkit/
 │   ├── app.py                  # PySide6 workbench and workflow orchestration
+│   ├── action_palette.py       # searchable state-eligible navigation and actions
 │   ├── action_safety.py        # typed confirmation policy for state-changing actions
 │   ├── backup_process.py       # password-safe backup-worker lifecycle controller
 │   ├── backup_protocol.py      # dependency-free backup request/event schema
@@ -1079,7 +1091,7 @@ Physical-device validation is opt-in and is not required for pull requests. Use 
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 113 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 95-button offscreen GUI smoke test, verifies live help from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 116 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 96-button offscreen GUI smoke test, verifies live help from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The builder requires `MACOSX_DEPLOYMENT_TARGET=13.0`. It rejects any bundled executable, library, extension, or framework slice that requires a newer macOS version or omits the native release architecture. A component may support an older minimum because the application still advertises macOS 13 as its supported floor. PySide6 is pinned to the newest validated line whose actual Shiboken load commands satisfy that floor; wheel filenames alone are not treated as compatibility evidence. Local release builds should use a Python toolchain capable of producing macOS 13-compatible binaries; GitHub release CI supplies the target explicitly.
 
