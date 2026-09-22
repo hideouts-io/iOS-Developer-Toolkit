@@ -120,6 +120,14 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
             raise RuntimeError(f"GUI command-drift action is missing: {button_name}")
         if button.isEnabled():
             raise RuntimeError(f"GUI command-drift action should be disabled before a drift check: {button_name}")
+    command_readiness = window.findChild(QLabel, "commandReadinessStatus")
+    if command_readiness is None or not command_readiness.text().strip():
+        raise RuntimeError("GUI selected-command readiness has no visible state")
+    command_readiness_button = window.findChild(QPushButton, "runCommandReadinessButton")
+    if command_readiness_button is None:
+        raise RuntimeError("GUI selected-command readiness action is missing")
+    if command_readiness_button.isEnabled():
+        raise RuntimeError("GUI selected-command readiness must remain disabled without a selected device")
     expected_shortcuts = {
         "shortcutRetryDeviceScan",
         "shortcutFocusWorkspaceNavigation",

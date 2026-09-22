@@ -83,6 +83,7 @@ Release `v0.3.4` combines the complete 12-workspace interface with the latest co
 - **Create Support Bundle…** produces an opt-in local ZIP with sanitized environment, readiness, status, and command-drift metadata plus a SHA-256 manifest; it excludes device identity, captures, backups, logs, command output, credentials, and common host/network identifiers;
 - **Retry Scan** performs an immediate usbmux device check, while **Reconnect & Retry…** opens a guided detection window without attempting to restart SIP-protected Apple services;
 - **Connection diagnostic** records whether usbmux did not launch, failed, returned malformed output, found no devices, or returned selectable devices; its privacy-safe summary is visible in Device & DDI and included in a sanitized support bundle;
+- **Selected command readiness** maps each guided Command Center action to the exact connection, trust, Developer Mode, DDI, tunnel, CoreDevice, DVT, or Web Inspector checks it needs, with a one-click route to the bounded read-only matrix;
 - the desktop UI starts independently of the MobileBackup2 transport, and device discovery consumes output both while the child process runs and after it exits, so a fast successful `usbmux list` result is not lost before the picker is updated;
 - **Demo Mode** shows a prominently labeled simulated iPhone for walkthroughs and screenshots, while deliberately withholding a selected physical-device target and disabling device operations;
 - the manual **Capability Matrix** reports host, trust, Developer Mode, DDI, tunnel, DVT, CoreDevice, and related readiness as separate bounded results, then compares completed local probes across real devices without retaining raw UDIDs;
@@ -90,7 +91,7 @@ Release `v0.3.4` combines the complete 12-workspace interface with the latest co
 - Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
 - Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
 - app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one selected-device workflow;
-- native Apple Silicon and Intel release ZIPs are built separately and verified with 81 tests, embedded CLI checks, an 89-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 83 tests, embedded CLI checks, a 90-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
 The README contains 17 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
@@ -531,7 +532,7 @@ For retained system log archives, use the applicable `syslog collect` command th
 
 ![Command Center](docs/screenshots/pymobiledevice3-console.png)
 
-Command Center is the low-typing interface to the pinned `pymobiledevice3` runtime. Search or filter a preset, review its description and prerequisites, fill only the required parameters, inspect the exact command, and run it directly. **Check Guided Command Drift** is a read-only preflight that calls the installed CLI's `--help` for every guided route and verifies any preset option flags such as `--out`; it does not run a preset or contact a device. It reports unavailable routes, changed option syntax, timeouts, and any routes not completed before cancellation.
+Command Center is the low-typing interface to the pinned `pymobiledevice3` runtime. Search or filter a preset, review its description and prerequisites, fill only the required parameters, inspect the exact command, and run it directly. The **Selected command readiness** pane evaluates only the capabilities that preset needs. **Run Device Readiness Check** opens the existing bounded, read-only Capability Matrix; it does not execute the selected command or repair the device automatically. **Check Guided Command Drift** is a separate host-only preflight that calls the installed CLI's `--help` for every guided route and verifies any preset option flags such as `--out`; it does not run a preset or contact a device. It reports unavailable routes, changed option syntax, timeouts, and any routes not completed before cancellation.
 
 Every preset has a visible risk class:
 
@@ -1040,7 +1041,7 @@ Physical-device validation is opt-in and is not required for pull requests. Use 
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 81 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 89-button offscreen GUI smoke test, verifies the Mach-O architecture and its macOS 13.0 load-command floor, embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 83 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 90-button offscreen GUI smoke test, verifies the Mach-O architecture and its macOS 13.0 load-command floor, embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The builder requires `MACOSX_DEPLOYMENT_TARGET=13.0`. It rejects a bundle whose executable targets a newer macOS version, so local release builds should use a Python toolchain that can produce macOS 13 binaries; GitHub release CI supplies this target explicitly.
 

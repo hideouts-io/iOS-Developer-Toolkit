@@ -14,13 +14,18 @@ from ios_developer_toolkit.capability_matrix import (
     CommandOutcome,
     _probe_xcode_tools,
     capability_definitions,
+    capability_state_counts,
     command_succeeded,
     compact_command_detail,
+    evaluate_preset_readiness,
     lock_state_from_payload,
     mounted_image_summary,
     parse_capability_worker_event,
+    preset_capability_identifiers,
+    result_for,
     untested_capability_results,
 )
+from ios_developer_toolkit.command_catalog import command_presets
 from ios_developer_toolkit.device_compatibility import (
     DeviceCompatibilityError,
     append_observation,
@@ -43,6 +48,40 @@ class CapabilityMatrixTests(unittest.TestCase):
             {item.identifier for item in results},
         )
         self.assertTrue(all(item.state == "not-tested" for item in results))
+
+    def test_counts_every_supported_capability_state_including_attention(self) -> None:
+        results = (
+            result_for("pymobiledevice3", "ready", "ready", "tested"),
+            result_for("xcode-tools", "attention", "attention", "tested"),
+        )
+
+        counts = dict(capability_state_counts(results))
+
+        self.assertEqual(counts["ready"], 1)
+        self.assertEqual(counts["attention"], 1)
+        self.assertEqual(set(counts), {"ready", "attention", "unavailable", "blocked", "not-tested", "not-applicable"})
+
+    def test_evaluates_command_specific_readiness_without_mutating_matrix_results(self) -> None:
+        dvt = next(preset for preset in command_presets() if preset.identifier == "dvt-device")
+        initial = {result.identifier: result for result in untested_capability_results()}
+        self.assertEqual(
+            preset_capability_identifiers(dvt),
+            ("device-connection", "pairing-trust", "developer-mode", "developer-image", "rsd-tunnel", "dvt"),
+        )
+        self.assertEqual(evaluate_preset_readiness(dvt, initial).state, "not-tested")
+
+        ready = dict(initial)
+        for identifier in preset_capability_identifiers(dvt):
+            state = "not-applicable" if identifier == "rsd-tunnel" else "ready"
+            ready[identifier] = result_for(identifier, state, "tested", "evidence")
+        self.assertEqual(evaluate_preset_readiness(dvt, ready).state, "ready")
+
+        attention = dict(ready)
+        attention["developer-mode"] = result_for("developer-mode", "attention", "disabled", "tested")
+        evaluation = evaluate_preset_readiness(dvt, attention)
+        self.assertEqual(evaluation.state, "needs-attention")
+        self.assertIn("Enable Settings", evaluation.remediation[0])
+        self.assertTrue(all(result.state == "not-tested" for result in initial.values()))
 
     def test_parses_strict_worker_events(self) -> None:
         started = parse_capability_worker_event('{"event":"started","total":11}')

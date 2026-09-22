@@ -79,7 +79,9 @@ from ios_developer_toolkit.capability_matrix import (
     CapabilityWorkerCompleted,
     CapabilityWorkerStarted,
     capability_definitions,
+    capability_state_counts,
     capability_state_label,
+    evaluate_preset_readiness,
     parse_capability_worker_event,
     untested_capability_results,
 )
@@ -971,10 +973,7 @@ class MainWindow(QMainWindow):
         current_item = self.navigation_list.currentItem()
         if current_item is None:
             raise RuntimeError("Cannot create a support bundle without a selected workspace")
-        capability_counts = tuple(
-            (state, sum(result.state == state for result in self._capability_results.values()))
-            for state in ("ready", "needs-attention", "unavailable", "blocked", "not-tested", "not-applicable")
-        )
+        capability_counts = capability_state_counts(self._capability_results.values())
         statuses = (
             SupportStatus("connection", self.connection_banner.text()),
             SupportStatus("connection_diagnostic", self._connection_diagnostic.report()),
@@ -2087,7 +2086,7 @@ class MainWindow(QMainWindow):
 
         browser_splitter = QSplitter(Qt.Orientation.Horizontal)
         browser_splitter.setObjectName("commandBrowserSplitter")
-        browser_splitter.setMaximumHeight(390)
+        browser_splitter.setMaximumHeight(470)
 
         preset_browser = QFrame()
         preset_browser.setObjectName("commandPresetBrowser")
@@ -2133,6 +2132,22 @@ class MainWindow(QMainWindow):
         self.command_prerequisites.setObjectName("commandPrerequisites")
         self.command_prerequisites.setWordWrap(True)
         detail_layout.addWidget(self.command_prerequisites)
+
+        readiness_group = QGroupBox("Selected command readiness")
+        readiness_layout = QHBoxLayout(readiness_group)
+        self.command_readiness_status = QLabel("Choose a preset to evaluate its device requirements.")
+        self.command_readiness_status.setObjectName("commandReadinessStatus")
+        self.command_readiness_status.setWordWrap(True)
+        self.command_readiness_status.setAccessibleName("Selected command readiness")
+        readiness_layout.addWidget(self.command_readiness_status, 1)
+        self.command_readiness_button = QPushButton("Run Device Readiness Check")
+        self.command_readiness_button.setObjectName("runCommandReadinessButton")
+        self.command_readiness_button.setAccessibleDescription(
+            "Runs the bounded read-only Capability Matrix for the selected physical device."
+        )
+        self.command_readiness_button.clicked.connect(self.run_selected_command_readiness_check)
+        readiness_layout.addWidget(self.command_readiness_button)
+        detail_layout.addWidget(readiness_group)
 
         self.preset_parameters_group = QGroupBox("Required values")
         self.preset_parameters_layout = QFormLayout(self.preset_parameters_group)
@@ -2567,6 +2582,7 @@ class MainWindow(QMainWindow):
         )
         self._populate_capability_matrix()
         self._update_capability_controls()
+        self._update_selected_command_readiness()
 
     def _capability_state_brush(self, state: CapabilityState) -> QBrush:
         colors: Mapping[CapabilityState, str] = {
@@ -2812,6 +2828,7 @@ class MainWindow(QMainWindow):
                 f"{capability_state_label(event.state)}"
             )
             self._populate_capability_matrix()
+            self._update_selected_command_readiness()
             return
         if isinstance(event, CapabilityWorkerCompleted):
             self._capability_worker_completed = True
@@ -2858,6 +2875,7 @@ class MainWindow(QMainWindow):
             )
         self._populate_capability_matrix()
         self._update_capability_controls()
+        self._update_selected_command_readiness()
 
     def _capability_error(self, process_error: QProcess.ProcessError) -> None:
         if self._capability_process is None:
@@ -2867,6 +2885,7 @@ class MainWindow(QMainWindow):
             self._capability_process = None
             self.case_readiness_button.setEnabled(self.selected_device() is not None)
             self._update_capability_controls()
+            self._update_selected_command_readiness()
 
     def cancel_capability_matrix(self) -> None:
         self._stop_capability_process("Capability refresh was cancelled.")
@@ -4912,7 +4931,45 @@ class MainWindow(QMainWindow):
             self.preset_run_button.setText(
                 "Run Guided Command" if preset.risk == "read-only" else "Review && Run Guided Command"
             )
+        self._update_selected_command_readiness()
         self._update_advanced_safety_note()
+
+    def _update_selected_command_readiness(self) -> None:
+        preset = self._current_preset
+        if preset is None:
+            self.command_readiness_status.setText("Choose a preset to evaluate its device requirements.")
+            self.command_readiness_button.setEnabled(False)
+            return
+        if preset.requires_device and self.selected_device() is None:
+            self.command_readiness_status.setText(
+                "Blocked — connect, unlock, trust, and select the intended physical device first."
+            )
+            self.command_readiness_button.setEnabled(False)
+            return
+        readiness = evaluate_preset_readiness(preset, self._capability_results)
+        next_steps = " ".join(readiness.remediation)
+        suffix = f" Next step: {next_steps}" if next_steps else ""
+        labels = {
+            "ready": "Ready",
+            "not-tested": "Not checked",
+            "needs-attention": "Needs attention",
+        }
+        self.command_readiness_status.setText(f"{labels[readiness.state]} — {readiness.summary}{suffix}")
+        self.command_readiness_button.setEnabled(
+            preset.requires_device and self.selected_device() is not None and self._capability_process is None
+        )
+
+    def run_selected_command_readiness_check(self) -> None:
+        preset = self._current_preset
+        if preset is None:
+            raise CommandCatalogError("Cannot run command readiness without a selected preset")
+        if not preset.requires_device:
+            raise CommandCatalogError("The selected preset does not require a device readiness check")
+        if self.selected_device() is None:
+            self._show_no_device()
+            return
+        self.navigate_to_page("Capability Matrix")
+        self.refresh_capability_matrix()
 
     def _update_advanced_safety_note(self) -> None:
         raw_arguments = self.console_input.text().strip()
