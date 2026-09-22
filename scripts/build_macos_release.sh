@@ -38,6 +38,14 @@ fi
 
 release_root="$(cd "$repository_root" && mkdir -p "$output_directory" && cd "$output_directory" && pwd)"
 staging_root="$(mktemp -d /private/tmp/iosdevtoolkit-release.XXXXXX)"
+cleanup_staging() {
+  if [[ ! -d "$staging_root" || "$staging_root" != /private/tmp/iosdevtoolkit-release.* ]]; then
+    echo "Refusing to remove an unexpected release staging path: $staging_root" >&2
+    return 74
+  fi
+  /usr/bin/find "$staging_root" -depth -delete
+}
+trap cleanup_staging EXIT
 if [[ -z "${NUITKA_CACHE_DIR:-}" ]]; then
   export NUITKA_CACHE_DIR="$staging_root/nuitka-cache"
 fi
@@ -145,26 +153,10 @@ if [[ "$compiled_architecture" != "$machine_architecture" ]]; then
   echo "Compiled executable architecture is $compiled_architecture; expected $machine_architecture" >&2
   exit 69
 fi
-compiled_minimum_macos_version="$(/usr/bin/otool -l "$compiled_executable" | /usr/bin/awk '
-  /LC_BUILD_VERSION/ { in_build_version = 1; next }
-  in_build_version && /minos/ { print $2; exit }
-')"
-compiled_macos_major="${compiled_minimum_macos_version%%.*}"
-compiled_macos_minor="${compiled_minimum_macos_version#*.}"
-compiled_macos_minor="${compiled_macos_minor%%.*}"
-required_macos_major="${required_macos_version%%.*}"
-required_macos_minor="${required_macos_version#*.}"
-required_macos_minor="${required_macos_minor%%.*}"
-if [[ -z "$compiled_minimum_macos_version" || ! "$compiled_macos_major" =~ ^[0-9]+$ || ! "$compiled_macos_minor" =~ ^[0-9]+$ ]]; then
-  echo "Could not parse the compiled executable's minimum macOS version: ${compiled_minimum_macos_version:-missing}" >&2
-  exit 72
-fi
-if (( compiled_macos_major > required_macos_major )) || \
-   (( compiled_macos_major == required_macos_major && compiled_macos_minor > required_macos_minor )); then
-  echo "Compiled executable requires macOS $compiled_minimum_macos_version, newer than the advertised $required_macos_version floor" >&2
-  exit 72
-fi
-echo "Compiled executable supports macOS $compiled_minimum_macos_version; advertised application floor is $required_macos_version"
+"$build_environment/bin/python" scripts/verify_macos_bundle.py \
+  "$app_path" \
+  "$machine_architecture" \
+  "$required_macos_version"
 
 "$compiled_executable" --toolkit-internal-pymobiledevice3 version
 "$compiled_executable" --toolkit-internal-worker capability --help

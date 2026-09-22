@@ -11,6 +11,7 @@ on:
       - "scripts/build_macos_release.sh"
       - "scripts/collect_third_party_licenses.py"
       - "scripts/verify_release_metadata.py"
+      - "scripts/verify_macos_bundle.py"
       - "scripts/verify_command_catalog.py"
       - "pyproject.toml"
       - "tests/**"

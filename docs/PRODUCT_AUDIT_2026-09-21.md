@@ -115,7 +115,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 
 * Continue migrating finite subprocess workflows to the reusable operation controller and typed `OperationResult`. Device discovery and Man Pages now share final-drain, timeout, cancellation, launch-failure, clean-relaunch, and structured completion semantics; command drift, DDI, backup, apps, and capture remain incremental migrations.
 * Make a contextual readiness pane for the selected action, with one-click scoped rechecks and copyable remediation.
-* Maintain the opt-in physical-device compatibility protocol and its explicit USB, usbmux, CoreDevice, developer-service, privacy, and state-changing test boundaries. A pre-release dual-architecture frozen-artifact smoke workflow is now present. The release builder rejects a bundle whose Mach-O minimum macOS version is newer than the advertised 13.0 floor.
+* Maintain the opt-in physical-device compatibility protocol and its explicit USB, usbmux, CoreDevice, developer-service, privacy, and state-changing test boundaries. A pre-release dual-architecture frozen-artifact smoke workflow is now present. The release builder rejects any bundled Mach-O whose minimum macOS version is newer than the advertised 13.0 floor or lacks the native release architecture.
 * Generate concise changelog/release notes from tested behavior. Source, bundle, citation, packaging, and third-party-source metadata drift is now covered by automated tests.
 * Add Xcode project/device handoffs: selected `devicectl` discovery, RVI status, and `.xcresult`/`xctrace` opening without reimplementing those formats.
 
@@ -167,6 +167,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | 2026-09-21 | Added contextual readiness for every guided command and corrected support-bundle capability aggregation. | Command-specific tests cover untested, ready, not-applicable, and attention states; the GUI smoke verifies the new control by stable object ID. | Readiness remains a point-in-time local probe and never substitutes for an actual command result. |
 | 2026-09-21 | Migrated Man Pages live help to the shared finite-operation controller and normalized styled CLI help for command-drift checks. | The GUI smoke now completes a real live-help request; controller relaunch tests reject stale output, and ANSI-split option tokens remain strictly verifiable. | Sequential command drift and other finite workflows remain incremental migrations. |
 | 2026-09-21 | Corrected the macOS compatibility gate and bounded native-build timing. | The first clean dual-architecture run proved arm64 produced a macOS 11-compatible executable, which is compatible with the advertised macOS 13 floor; Intel exceeded the original 45-minute job limit. | Re-run both native builders with reusable Nuitka caches and a 90-minute cap before merging. |
+| 2026-09-21 | Expanded compatibility validation from the launcher to every bundled Mach-O and pinned a genuinely compatible Qt line. | PySide6 6.11.2 wheel filenames advertise macOS 13, but direct `otool` inspection found Shiboken load commands requiring macOS 15; PySide6 6.9.3 Shiboken binaries declare macOS 12. | The dual-native CI build must pass the full-bundle architecture and deployment-floor scan before release. |
 
 ## Research sources
 

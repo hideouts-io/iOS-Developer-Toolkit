@@ -32,7 +32,7 @@ class ProjectMetadataTests(unittest.TestCase):
         release_builder = (REPOSITORY_ROOT / "scripts" / "build_macos_release.sh").read_text(encoding="utf-8")
         self.assertIn("--macos-app-version=$release_version", release_builder)
         self.assertIn("CFBundleVersion string 6", release_builder)
-        self.assertIn('compiled_minimum_macos_version', release_builder)
+        self.assertIn('scripts/verify_macos_bundle.py', release_builder)
         self.assertIn('MACOSX_DEPLOYMENT_TARGET', release_builder)
 
     def test_dependency_notices_match_the_pinned_pymobiledevice3_release(self) -> None:
@@ -51,6 +51,25 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn(f"| {pinned_version} |", notices)
         self.assertIn(f"tree/v{pinned_version}", notices)
         self.assertIn(f"tree/v{pinned_version}", source_availability)
+
+    def test_dependency_notices_match_the_pinned_pyside6_release(self) -> None:
+        pyproject = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        project = pyproject["project"]
+        self.assertIsInstance(project, dict)
+        dependencies = project["dependencies"]
+        self.assertIsInstance(dependencies, list)
+        pinned_dependency = next(
+            dependency
+            for dependency in dependencies
+            if isinstance(dependency, str) and dependency.startswith("PySide6-Essentials==")
+        )
+        pinned_version = pinned_dependency.removeprefix("PySide6-Essentials==")
+
+        notices = (REPOSITORY_ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+        readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(f"| {pinned_version} |", notices)
+        self.assertIn(f"?h=v{pinned_version}", notices)
+        self.assertIn(f"| PySide6 Essentials | `{pinned_version}` |", readme)
 
 
 if __name__ == "__main__":
