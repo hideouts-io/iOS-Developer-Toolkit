@@ -20,7 +20,7 @@ Each architecture-specific release also contains:
 
 The generated package inventory is intentionally more detailed than this summary and includes transitive Python dependencies. A package whose wheel does not contain a license text is identified as such in the inventory and linked to its declared project source when available.
 
-UFADE is an optional, separately installed external provider. The toolkit does not bundle UFADE. Other projects named in the README as design references are not copied, imported, or linked unless the README explicitly says otherwise.
+UFADE and MVT are optional, separately installed external providers. The toolkit does not bundle either project. MVT remains subject to the [MVT License](https://license.mvt.re/1.1/) and its consent and interpretation boundaries. Other projects named in the README as design references are not copied, imported, or linked unless the README explicitly says otherwise.
 
 See [SOURCE_AVAILABILITY.md](SOURCE_AVAILABILITY.md) for the project source location, matching tagged source, and upstream source locations for bundled third-party components.
 

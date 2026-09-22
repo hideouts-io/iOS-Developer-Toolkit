@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -85,6 +86,7 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     from ios_developer_toolkit.action_palette import ActionPaletteDialog
     from ios_developer_toolkit.app import MainWindow
     from ios_developer_toolkit.backup_protocol import BackupRequest
+    from ios_developer_toolkit.mvt_connector import create_mvt_analysis_request
     from ios_developer_toolkit.operation_history import OperationHistoryDialog
 
     application = QApplication(["ios-developer-toolkit-smoke-test"])
@@ -209,6 +211,69 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     if action_palette_item.data(Qt.ItemDataRole.UserRole) != "utility:session-activity":
         raise RuntimeError("GUI action-palette search selected an unexpected entry")
     action_palette_dialog.close()
+    with tempfile.TemporaryDirectory() as mvt_temporary_directory:
+        mvt_root = Path(mvt_temporary_directory)
+        mvt_executable = mvt_root / "mvt-ios"
+        mvt_executable.write_text(
+            "#!/bin/sh\n"
+            "for argument in \"$@\"; do\n"
+            "  if [ \"$argument\" = \"version\" ]; then\n"
+            "    printf \"MVT - Mobile Verification Toolkit\\nVersion: 2026.9.21\\n\"\n"
+            "    exit 0\n"
+            "  fi\n"
+            "done\n"
+            "output=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"--output\" ]; then\n"
+            "    shift\n"
+            "    output=\"$1\"\n"
+            "  fi\n"
+            "  shift\n"
+            "done\n"
+            "mkdir -p \"$output\"\n"
+            "printf \"{\\\"synthetic\\\":true}\\n\" > \"$output/info.json\"\n"
+            "printf \"Synthetic MVT analysis completed\\n\"\n",
+            encoding="utf-8",
+        )
+        mvt_executable.chmod(0o700)
+        mvt_backup = mvt_root / "backup"
+        mvt_backup.mkdir()
+        (mvt_backup / "Manifest.db").write_bytes(b"synthetic manifest")
+        (mvt_backup / "Info.plist").write_bytes(b"synthetic info")
+        mvt_output = mvt_root / "analysis"
+        window.mvt_executable_field.setText(str(mvt_executable))
+        window.validate_mvt_from_ui()
+        mvt_validation_deadline = time.monotonic() + 10
+        while window._mvt_controller.is_running() and time.monotonic() < mvt_validation_deadline:
+            application.processEvents()
+            time.sleep(0.001)
+        application.processEvents()
+        if window._mvt_controller.is_running() or window._mvt_installation is None:
+            raise RuntimeError(f"GUI MVT validation did not complete: {window.mvt_output.toPlainText()}")
+        if window._mvt_installation.version != "2026.9.21":
+            raise RuntimeError("GUI MVT validation retained an unexpected version")
+        request = create_mvt_analysis_request(
+            window._mvt_installation,
+            mvt_backup,
+            mvt_output,
+            (),
+            False,
+            False,
+            False,
+        )
+        window._start_mvt_analysis_request(request)
+        mvt_analysis_deadline = time.monotonic() + 10
+        while window._mvt_controller.is_running() and time.monotonic() < mvt_analysis_deadline:
+            application.processEvents()
+            time.sleep(0.001)
+        application.processEvents()
+        if window._mvt_controller.is_running():
+            window._mvt_controller.cancel()
+            raise RuntimeError("GUI MVT analysis did not complete within its bounded smoke-test window")
+        if not (mvt_output / "info.json").is_file():
+            raise RuntimeError(f"GUI MVT analysis did not create isolated output: {window.mvt_output.toPlainText()}")
+        if "does not prove" not in window.mvt_status.text():
+            raise RuntimeError("GUI MVT completion omitted the no-clean-device interpretation boundary")
     expected_shortcuts = {
         "shortcutRetryDeviceScan",
         "shortcutShowActionPalette",

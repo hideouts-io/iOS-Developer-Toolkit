@@ -10,7 +10,7 @@ The correct next investment is therefore a **reliable startup and device-discove
 
 ## What exists today
 
-The product has twelve workspaces: Home, Device & DDI, Capability Matrix, Location Lab, Live Logs, Command Center, Installed Apps, Backup, Sideload IPA, Evidence Capture, Man Pages, and Scope & Safety. It currently provides 49 declarative guided command presets, a live-help/command-drift check, DDI mounting, RSD/CoreDevice/DVT checks, GPX location simulation with cleanup, separate Unified/syslog/oslog windows, installed app inventory, encrypted MobileBackup2 workflow, UFADE setup guidance, IPA inspection and installation, RVI/PCAP and artifact collection, guided case intake, support bundles, compatibility history, and keyboard-first navigation.
+The product has twelve workspaces: Home, Device & DDI, Capability Matrix, Location Lab, Live Logs, Command Center, Installed Apps, Backup, Sideload IPA, Evidence Capture, Man Pages, and Scope & Safety. It currently provides 49 declarative guided command presets, a live-help/command-drift check, DDI mounting, RSD/CoreDevice/DVT checks, GPX location simulation with cleanup, separate Unified/syslog/oslog windows, installed app inventory, encrypted MobileBackup2 workflow, isolated UFADE launch, guided external MVT analysis, IPA inspection and installation, RVI/PCAP and artifact collection, guided case intake, support bundles, compatibility history, and keyboard-first navigation.
 
 The repository is a Python 3.10+ PySide6 project with a bundled `pymobiledevice3` runtime model. `ios_developer_toolkit/app.py` is a 5,600+ line `MainWindow`, while domain modules cover capability probing, collectors, live logs, location testing, IPA inspection, support bundles, and device compatibility. CI runs unit tests, compile checks, CLI help checks, and a headless GUI smoke test on macOS. Tagged release CI produces Apple Silicon and Intel bundles, CycloneDX SBOMs, checksums, and GitHub attestations. The app is ad-hoc signed, not Developer ID signed or notarized.
 
@@ -122,7 +122,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 ### P2 — deepen expert workflows without scope creep
 
 * Maintain the session-local typed-operation journal, explicit structured JSON manifests, and universal Action Palette that exposes only eligible operations.
-* Implement a guided MVT backup-analysis handoff with explicit consent, no password persistence, output isolation, and no “clean device” conclusion.
+* Maintain the guided MVT backup-analysis handoff with explicit consent, no password persistence, output isolation, and no “clean device” conclusion.
 * Add optional user-configured adapters for `go-ios`, `idb`, and `ipsw`, each with executable provenance and version display.
 * Publish a small documentation site split into quick start, architecture, safety, troubleshooting, release verification, and contributor paths.
 
@@ -178,6 +178,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | 2026-09-22 | Migrated Command Center guided, advanced, finite, and streaming commands to a typed interactive-process lifecycle. | 109 tests and the 94-action GUI smoke passed; real child-process tests cover final stdout/stderr draining, launch failure, idempotent cancellation, and no arbitrary runtime limit. | Command output remains session-local unless the user explicitly preserves it through a task-specific evidence workflow. |
 | 2026-09-22 | Added a session-local operation journal and explicit per-operation JSON manifests across the primary typed workflows. | 113 tests and a 95-action GUI smoke passed; tests cover immutable bounded history, exact argument retention, output hashing without raw-output embedding, owner-only export, and overwrite refusal. | Capability Matrix, Location Lab, Live Logs, and Command Drift retain their stronger workflow-specific records rather than duplicating raw or high-volume events into this journal. |
 | 2026-09-22 | Added a keyboard-first Action Palette computed from current device and process eligibility. | 116 tests and a 96-action GUI smoke passed; smoke coverage verifies disconnected-state preset filtering, host-preset access, search behavior, stable control identity, and the `⌘ K` shortcut. | Guided presets are selected for review rather than executed, and eligibility is checked again at activation. |
+| 2026-09-22 | Added a guided external MVT handoff for consented decrypted-backup analysis. | 121 tests and a 110-action GUI smoke passed; tests cover executable provenance, secret-environment removal, backup structure/encryption checks, isolated output, explicit IOC arguments, offline defaults, version validation, and an end-to-end synthetic analysis process. | MVT stays separately installed; the toolkit accepts no password and never translates completion or absent findings into a clean-device verdict. |
 
 ## Research sources
 

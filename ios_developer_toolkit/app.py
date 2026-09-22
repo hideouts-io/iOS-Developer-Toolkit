@@ -5,6 +5,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -179,6 +180,24 @@ from ios_developer_toolkit.location_lab import (
 )
 from ios_developer_toolkit.live_logs import LiveLogError, LiveLogWindow, log_stream_specs, stream_spec
 from ios_developer_toolkit.models import DeviceDataError, IOSDevice, parse_devices_json
+from ios_developer_toolkit.mvt_connector import (
+    MVT_BACKUP_GUIDE_URL,
+    MVT_INSTALLATION_URL,
+    MVT_REPOSITORY_URL,
+    MVTAnalysisRequest,
+    MVTExecutable,
+    MVTInstallation,
+    MVTValidationError,
+    create_mvt_analysis_request,
+    discover_mvt_executables,
+    inspect_mvt_executable,
+    mvt_analysis_arguments,
+    mvt_command,
+    mvt_environment,
+    mvt_setup_commands,
+    mvt_version_arguments,
+    parse_mvt_version_output,
+)
 from ios_developer_toolkit.operation_history import (
     OperationContext,
     OperationHistoryDialog,
@@ -517,6 +536,60 @@ class UFADEGuideDialog(QDialog):
         layout.addWidget(buttons)
 
 
+class MVTGuideDialog(QDialog):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("Analyze a Backup with MVT")
+        self.resize(820, 690)
+        layout = QVBoxLayout(self)
+        heading = QLabel("Consent-based external MVT backup analysis")
+        heading.setObjectName("mvtGuideHeading")
+        heading.setFont(QFont(heading.font().family(), 18, QFont.Weight.DemiBold))
+        layout.addWidget(heading)
+        instructions = QTextBrowser()
+        instructions.setObjectName("mvtGuideContent")
+        instructions.setOpenExternalLinks(True)
+        instructions.setHtml(
+            f"""
+            <h3>1. Install MVT separately</h3>
+            <p>Use <b>Copy Setup Commands</b> in the MVT Analysis tab, run the commands in Terminal, then choose the
+            resulting <code>mvt-ios</code> executable. The toolkit does not bundle, import, update, or modify MVT.</p>
+
+            <h3>2. Prepare a consented backup copy</h3>
+            <p>Choose one iTunes-style backup folder containing <code>Manifest.db</code> and <code>Info.plist</code>.
+            MVT analyzes a decrypted backup. If the source is encrypted, decrypt a protected working copy outside this
+            toolkit using MVT's official instructions. Do not paste a password into this application: it has no backup
+            password field and removes inherited MVT password variables from the child process.</p>
+
+            <h3>3. Isolate the results</h3>
+            <p>Choose a new output path that does not exist and is outside the source backup. The toolkit refuses an
+            existing path so a new run cannot mix with earlier results. MVT creates JSON records and its own command log
+            in that folder. Optional input hashes can substantially increase runtime on a large backup.</p>
+
+            <h3>4. Decide whether to supply indicators or network access</h3>
+            <p>STIX2/JSON indicator files are opt-in. Network access is off by default, which prevents shortened-URL
+            resolution and other MVT network requests during the run. Enable it only after reviewing the selected
+            indicators and the privacy implications. Automatic version and indicator update checks remain disabled for
+            a reproducible handoff.</p>
+
+            <h3>5. Interpret the output carefully</h3>
+            <p>MVT extracts forensic records and can identify matches against supplied indicators. A completed run,
+            zero alerts, or no <code>*_detected.json</code> files does <b>not</b> establish that a device is clean, safe,
+            uncompromised, or never targeted. Public indicators can be incomplete or stale. Preserve the original backup,
+            record tool and indicator versions, and seek qualified forensic assistance for high-risk cases.</p>
+
+            <p><a href="{MVT_INSTALLATION_URL}">Official MVT installation</a> ·
+            <a href="{MVT_BACKUP_GUIDE_URL}">Official iOS backup-analysis guide</a> ·
+            <a href="{MVT_REPOSITORY_URL}">MVT source repository</a></p>
+            """
+        )
+        layout.addWidget(instructions, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.setObjectName("mvtGuideButtons")
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -588,6 +661,16 @@ class MainWindow(QMainWindow):
         self._backup_encryption_state: bool | None = None
         self._last_backup_path: Path | None = None
         self._ufade_installation: UFADEInstallation | None = None
+        self._mvt_controller = InteractiveProcessController(self)
+        self._mvt_controller.stdout_received.connect(self._append_mvt_output)
+        self._mvt_controller.stderr_received.connect(self._append_mvt_output)
+        self._mvt_controller.completed.connect(self._mvt_completed)
+        self._mvt_installation: MVTInstallation | None = None
+        self._mvt_pending_executable: MVTExecutable | None = None
+        self._mvt_operation = ""
+        self._mvt_request: MVTAnalysisRequest | None = None
+        self._mvt_ioc_paths: tuple[Path, ...] = ()
+        self._mvt_temporary_config: tempfile.TemporaryDirectory[str] | None = None
         self._location_process: QProcess | None = None
         self._location_operation = ""
         self._location_arguments: tuple[str, ...] = ()
@@ -1012,7 +1095,7 @@ class MainWindow(QMainWindow):
             "Live Logs": "Open independent raw-spooling log windows.",
             "Command Center": "Choose a validated guided command or explicit advanced arguments.",
             "Installed Apps": "Inspect the service-visible app inventory.",
-            "Backup": "Prepare MobileBackup2 or an external UFADE handoff.",
+            "Backup": "Prepare MobileBackup2, external UFADE acquisition, or consented MVT analysis.",
             "Sideload IPA": "Inspect a local IPA before an eligible installation attempt.",
             "Evidence Capture": "Prepare a scoped case and bounded evidence collection.",
             "Man Pages": "Browse version-matched command routes and live help.",
@@ -2188,8 +2271,9 @@ class MainWindow(QMainWindow):
         heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
         layout.addWidget(heading)
         explanation = QLabel(
-            "Choose the built-in MobileBackup2 workflow or launch a separately installed UFADE forensic acquisition. "
-            "The providers use isolated runtimes and do not share passwords or dependencies."
+            "Create a MobileBackup2 backup, launch a separately installed UFADE acquisition, or hand a decrypted "
+            "backup to an independently installed MVT analysis. The providers use isolated runtimes and do not share "
+            "passwords or dependencies."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -2198,8 +2282,10 @@ class MainWindow(QMainWindow):
         provider_tabs.setObjectName("backupProviderTabs")
         provider_tabs.addTab(self._build_mobilebackup_page(), "MobileBackup2")
         provider_tabs.addTab(self._build_ufade_backup_page(), "UFADE External")
+        provider_tabs.addTab(self._build_mvt_analysis_page(), "MVT Analysis")
         provider_tabs.setTabToolTip(0, "Toolkit-managed full or incremental iTunes-style backup")
         provider_tabs.setTabToolTip(1, "Launch an independently installed UFADE acquisition environment")
+        provider_tabs.setTabToolTip(2, "Analyze a consented decrypted backup with an independently installed MVT CLI")
         layout.addWidget(provider_tabs, 1)
         return page
 
@@ -2432,6 +2518,192 @@ class MainWindow(QMainWindow):
         self._update_backup_controls()
         scroll = QScrollArea()
         scroll.setObjectName("ufadeBackupScrollArea")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(page)
+        return scroll
+
+    def _build_mvt_analysis_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+
+        overview = QLabel(
+            "MVT (Mobile Verification Toolkit) is an independent forensic research tool with its own license and "
+            "warning model. This guided handoff validates and runs a user-installed mvt-ios executable against a "
+            "decrypted backup; it does not bundle MVT, accept backup passwords, or declare a device clean."
+        )
+        overview.setObjectName("mvtProviderExplanation")
+        overview.setWordWrap(True)
+        layout.addWidget(overview)
+
+        guide_group = QGroupBox("Install, prepare, and interpret")
+        guide_layout = QVBoxLayout(guide_group)
+        guide_text = QLabel(
+            "1. Install MVT separately.  2. Validate its executable and version.  3. Select one authorized, decrypted "
+            "iTunes-style backup.  4. Choose a new isolated output path and optional STIX2 files.  5. Review consent, "
+            "network, and interpretation boundaries before starting."
+        )
+        guide_text.setObjectName("mvtQuickStart")
+        guide_text.setWordWrap(True)
+        guide_layout.addWidget(guide_text)
+        guide_controls = QHBoxLayout()
+        guide_button = QPushButton("Open Full Walkthrough")
+        guide_button.setObjectName("openMVTGuideButton")
+        guide_button.clicked.connect(self.show_mvt_guide)
+        guide_controls.addWidget(guide_button)
+        setup_button = QPushButton("Copy Setup Commands")
+        setup_button.setObjectName("copyMVTSetupButton")
+        setup_button.clicked.connect(self.copy_mvt_setup_commands)
+        guide_controls.addWidget(setup_button)
+        official_button = QPushButton("Open Official Guide")
+        official_button.setObjectName("openMVTOfficialGuideButton")
+        official_button.clicked.connect(self.open_mvt_official_guide)
+        guide_controls.addWidget(official_button)
+        repository_button = QPushButton("Open MVT Repository")
+        repository_button.setObjectName("openMVTRepositoryButton")
+        repository_button.clicked.connect(self.open_mvt_repository)
+        guide_controls.addWidget(repository_button)
+        guide_controls.addStretch()
+        guide_layout.addLayout(guide_controls)
+        layout.addWidget(guide_group)
+
+        setup_group = QGroupBox("External MVT executable")
+        setup_layout = QFormLayout(setup_group)
+        executable_row = QHBoxLayout()
+        discovered = discover_mvt_executables(Path.home(), os.environ.get("PATH", ""))
+        self.mvt_executable_field = QLineEdit(str(discovered[0]) if discovered else "")
+        self.mvt_executable_field.setObjectName("mvtExecutable")
+        self.mvt_executable_field.setPlaceholderText("Absolute path to an independently installed mvt-ios executable")
+        self.mvt_executable_field.textChanged.connect(self._invalidate_mvt_validation)
+        executable_row.addWidget(self.mvt_executable_field, 1)
+        self.choose_mvt_executable_button = QPushButton("Choose…")
+        self.choose_mvt_executable_button.setObjectName("chooseMVTExecutableButton")
+        self.choose_mvt_executable_button.clicked.connect(self.choose_mvt_executable)
+        executable_row.addWidget(self.choose_mvt_executable_button)
+        self.find_mvt_executable_button = QPushButton("Find Installed")
+        self.find_mvt_executable_button.setObjectName("findMVTExecutableButton")
+        self.find_mvt_executable_button.clicked.connect(self.find_mvt_executable)
+        executable_row.addWidget(self.find_mvt_executable_button)
+        setup_layout.addRow("mvt-ios", executable_row)
+        self.mvt_validation_status = QLabel("MVT installation has not been validated")
+        self.mvt_validation_status.setObjectName("mvtValidationStatus")
+        self.mvt_validation_status.setWordWrap(True)
+        setup_layout.addRow("Status", self.mvt_validation_status)
+        self.validate_mvt_button = QPushButton("Validate Installation")
+        self.validate_mvt_button.setObjectName("validateMVTButton")
+        self.validate_mvt_button.clicked.connect(self.validate_mvt_from_ui)
+        setup_layout.addRow(self.validate_mvt_button)
+        layout.addWidget(setup_group)
+
+        paths_group = QGroupBox("Analysis input and isolated output")
+        paths_layout = QFormLayout(paths_group)
+        backup_row = QHBoxLayout()
+        self.mvt_backup_field = QLineEdit()
+        self.mvt_backup_field.setObjectName("mvtBackupPath")
+        self.mvt_backup_field.setPlaceholderText("Decrypted backup folder containing Manifest.db and Info.plist")
+        self.mvt_backup_field.textChanged.connect(self._update_mvt_controls)
+        backup_row.addWidget(self.mvt_backup_field, 1)
+        self.choose_mvt_backup_button = QPushButton("Choose…")
+        self.choose_mvt_backup_button.setObjectName("chooseMVTBackupButton")
+        self.choose_mvt_backup_button.clicked.connect(self.choose_mvt_backup)
+        backup_row.addWidget(self.choose_mvt_backup_button)
+        paths_layout.addRow("Decrypted backup", backup_row)
+        output_row = QHBoxLayout()
+        default_output = (
+            Path.home()
+            / "Documents"
+            / "MVT Analyses"
+            / datetime.now(timezone.utc).strftime("mvt-analysis-%Y%m%d-%H%M%S")
+        )
+        self.mvt_output_field = QLineEdit(str(default_output))
+        self.mvt_output_field.setObjectName("mvtOutputPath")
+        self.mvt_output_field.setPlaceholderText("A new path that does not already exist")
+        self.mvt_output_field.textChanged.connect(self._update_mvt_controls)
+        output_row.addWidget(self.mvt_output_field, 1)
+        self.choose_mvt_output_button = QPushButton("Choose Parent…")
+        self.choose_mvt_output_button.setObjectName("chooseMVTOutputButton")
+        self.choose_mvt_output_button.clicked.connect(self.choose_mvt_output_parent)
+        output_row.addWidget(self.choose_mvt_output_button)
+        self.open_mvt_output_button = QPushButton("Open Results")
+        self.open_mvt_output_button.setObjectName("openMVTOutputButton")
+        self.open_mvt_output_button.clicked.connect(self.open_mvt_output_directory)
+        output_row.addWidget(self.open_mvt_output_button)
+        paths_layout.addRow("New result path", output_row)
+        layout.addWidget(paths_group)
+
+        indicator_group = QGroupBox("Optional indicators and processing")
+        indicator_layout = QFormLayout(indicator_group)
+        indicator_row = QHBoxLayout()
+        self.mvt_ioc_status = QLabel("No STIX2/JSON indicator files selected")
+        self.mvt_ioc_status.setObjectName("mvtIOCStatus")
+        self.mvt_ioc_status.setWordWrap(True)
+        indicator_row.addWidget(self.mvt_ioc_status, 1)
+        self.choose_mvt_iocs_button = QPushButton("Choose IOC Files…")
+        self.choose_mvt_iocs_button.setObjectName("chooseMVTIOCFilesButton")
+        self.choose_mvt_iocs_button.clicked.connect(self.choose_mvt_ioc_files)
+        indicator_row.addWidget(self.choose_mvt_iocs_button)
+        self.clear_mvt_iocs_button = QPushButton("Clear")
+        self.clear_mvt_iocs_button.setObjectName("clearMVTIOCFilesButton")
+        self.clear_mvt_iocs_button.clicked.connect(self.clear_mvt_ioc_files)
+        indicator_row.addWidget(self.clear_mvt_iocs_button)
+        indicator_layout.addRow("Indicators", indicator_row)
+        self.mvt_fast_checkbox = QCheckBox("Fast mode: skip time- or resource-intensive features")
+        self.mvt_fast_checkbox.setObjectName("mvtFastMode")
+        indicator_layout.addRow(self.mvt_fast_checkbox)
+        self.mvt_hashes_checkbox = QCheckBox("Ask MVT to hash processed input and result files (may be slow)")
+        self.mvt_hashes_checkbox.setObjectName("mvtHashFiles")
+        indicator_layout.addRow(self.mvt_hashes_checkbox)
+        self.mvt_network_checkbox = QCheckBox(
+            "Allow MVT network requests, including shortened-URL resolution during IOC checks"
+        )
+        self.mvt_network_checkbox.setObjectName("mvtAllowNetwork")
+        self.mvt_network_checkbox.setChecked(False)
+        indicator_layout.addRow(self.mvt_network_checkbox)
+        layout.addWidget(indicator_group)
+
+        consent_group = QGroupBox("Required consent and interpretation boundary")
+        consent_layout = QVBoxLayout(consent_group)
+        self.mvt_authorization_checkbox = QCheckBox(
+            "I own this backup or have explicit authorization and consent to analyze it with MVT."
+        )
+        self.mvt_authorization_checkbox.setObjectName("mvtAuthorizationAcknowledgement")
+        self.mvt_authorization_checkbox.toggled.connect(self._update_mvt_controls)
+        consent_layout.addWidget(self.mvt_authorization_checkbox)
+        self.mvt_interpretation_checkbox = QCheckBox(
+            "I understand that a successful run or no findings does not prove the device is clean, safe, or uncompromised."
+        )
+        self.mvt_interpretation_checkbox.setObjectName("mvtInterpretationAcknowledgement")
+        self.mvt_interpretation_checkbox.toggled.connect(self._update_mvt_controls)
+        consent_layout.addWidget(self.mvt_interpretation_checkbox)
+        layout.addWidget(consent_group)
+
+        controls = QHBoxLayout()
+        self.run_mvt_button = QPushButton("Run MVT Backup Analysis…")
+        self.run_mvt_button.setObjectName("runMVTAnalysisButton")
+        self.run_mvt_button.clicked.connect(self.run_mvt_analysis)
+        controls.addWidget(self.run_mvt_button)
+        self.stop_mvt_button = QPushButton("Stop")
+        self.stop_mvt_button.setObjectName("stopMVTAnalysisButton")
+        self.stop_mvt_button.clicked.connect(self.stop_mvt_analysis)
+        controls.addWidget(self.stop_mvt_button)
+        controls.addStretch()
+        layout.addLayout(controls)
+        self.mvt_status = QLabel(
+            "Validate MVT, select a decrypted backup and new output path, then acknowledge both boundaries."
+        )
+        self.mvt_status.setObjectName("mvtAnalysisStatus")
+        self.mvt_status.setWordWrap(True)
+        layout.addWidget(self.mvt_status)
+        self.mvt_output = QPlainTextEdit()
+        self.mvt_output.setObjectName("mvtAnalysisOutput")
+        self.mvt_output.setReadOnly(True)
+        self.mvt_output.setMaximumBlockCount(7000)
+        self.mvt_output.setMinimumHeight(180)
+        layout.addWidget(self.mvt_output, 1)
+        self._update_mvt_controls()
+        scroll = QScrollArea()
+        scroll.setObjectName("mvtAnalysisScrollArea")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(page)
@@ -5035,6 +5307,7 @@ class MainWindow(QMainWindow):
         self.open_backup_button.setEnabled(not running)
         if hasattr(self, "launch_ufade_button"):
             self.launch_ufade_button.setEnabled(device_available and not running)
+        self._update_mvt_controls()
         self._backup_encryption_choice_changed(self.require_encryption_checkbox.isChecked())
 
     def stop_backup(self) -> None:
@@ -5275,6 +5548,393 @@ class MainWindow(QMainWindow):
                 self,
                 "UFADE Output Folder Not Found",
                 f"The folder does not exist yet:\n{destination}",
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
+
+    def _invalidate_mvt_validation(self, value: str) -> None:
+        del value
+        self._mvt_installation = None
+        self._mvt_pending_executable = None
+        self.mvt_validation_status.setText("MVT installation has not been validated")
+        self._update_mvt_controls()
+
+    def mvt_executable_path(self) -> Path:
+        value = self.mvt_executable_field.text().strip()
+        if not value:
+            raise MVTValidationError("Choose an independently installed mvt-ios executable")
+        return Path(value).expanduser()
+
+    def mvt_backup_path(self) -> Path:
+        value = self.mvt_backup_field.text().strip()
+        if not value:
+            raise MVTValidationError("Choose a decrypted iTunes-style backup folder")
+        return Path(value).expanduser()
+
+    def mvt_output_path(self) -> Path:
+        value = self.mvt_output_field.text().strip()
+        if not value:
+            raise MVTValidationError("Choose a new, non-empty MVT result path")
+        return Path(value).expanduser()
+
+    def choose_mvt_executable(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose external mvt-ios executable",
+            self.mvt_executable_field.text(),
+            "Executable (*)",
+        )
+        if selected:
+            self.mvt_executable_field.setText(selected)
+
+    def find_mvt_executable(self) -> None:
+        candidates = discover_mvt_executables(Path.home(), os.environ.get("PATH", ""))
+        if not candidates:
+            QMessageBox.information(
+                self,
+                "MVT Not Found",
+                "No executable mvt-ios was found in PATH, ~/.local/bin, /opt/homebrew/bin, or /usr/local/bin. "
+                "Use Copy Setup Commands or choose the executable manually.",
+            )
+            return
+        self.mvt_executable_field.setText(str(candidates[0]))
+        self.mvt_status.setText(f"Found {len(candidates)} MVT executable candidate(s); validate the selected path.")
+
+    def choose_mvt_backup(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose decrypted iTunes-style backup",
+            self.mvt_backup_field.text() or str(Path.home()),
+        )
+        if selected:
+            self.mvt_backup_field.setText(selected)
+
+    def choose_mvt_output_parent(self) -> None:
+        current_value = self.mvt_output_field.text().strip()
+        current = Path(current_value).expanduser() if current_value else Path.home() / "Documents" / "MVT Analyses"
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose parent folder for a new MVT analysis",
+            str(current.parent),
+        )
+        if not selected:
+            return
+        destination = Path(selected) / datetime.now(timezone.utc).strftime("mvt-analysis-%Y%m%d-%H%M%S")
+        self.mvt_output_field.setText(str(destination))
+
+    def choose_mvt_ioc_files(self) -> None:
+        selected, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Choose MVT STIX2 indicator files",
+            str(Path.home()),
+            "MVT indicators (*.stix *.stix2 *.json)",
+        )
+        if not selected:
+            return
+        self._mvt_ioc_paths = tuple(Path(path) for path in selected)
+        self._refresh_mvt_ioc_status()
+
+    def clear_mvt_ioc_files(self) -> None:
+        self._mvt_ioc_paths = ()
+        self._refresh_mvt_ioc_status()
+
+    def _refresh_mvt_ioc_status(self) -> None:
+        if not self._mvt_ioc_paths:
+            self.mvt_ioc_status.setText("No STIX2/JSON indicator files selected")
+        else:
+            names = ", ".join(path.name for path in self._mvt_ioc_paths)
+            self.mvt_ioc_status.setText(f"{len(self._mvt_ioc_paths)} selected: {names}")
+
+    def copy_mvt_setup_commands(self) -> None:
+        QApplication.clipboard().setText("\n".join(mvt_setup_commands()))
+        self.mvt_output.appendPlainText(
+            "Copied official-style macOS pipx setup commands. Run them in Terminal, reopen the app if PATH changed, "
+            "then click Find Installed and Validate Installation."
+        )
+
+    def show_mvt_guide(self) -> None:
+        MVTGuideDialog().exec()
+
+    def open_mvt_official_guide(self) -> None:
+        if not QDesktopServices.openUrl(QUrl(MVT_BACKUP_GUIDE_URL)):
+            QMessageBox.critical(
+                self,
+                "Could Not Open MVT Guide",
+                f"macOS could not open the official MVT backup-analysis guide:\n{MVT_BACKUP_GUIDE_URL}",
+            )
+
+    def open_mvt_repository(self) -> None:
+        if not QDesktopServices.openUrl(QUrl(MVT_REPOSITORY_URL)):
+            QMessageBox.critical(
+                self,
+                "Could Not Open MVT Repository",
+                f"macOS could not open the MVT repository:\n{MVT_REPOSITORY_URL}",
+            )
+
+    def _prepare_mvt_environment(self, allow_network: bool) -> Mapping[str, str]:
+        if self._mvt_temporary_config is not None:
+            raise RuntimeError("MVT temporary configuration already exists for an active operation")
+        temporary_config = tempfile.TemporaryDirectory(prefix="ios-developer-toolkit-mvt-")
+        self._mvt_temporary_config = temporary_config
+        return mvt_environment(base_environment(), Path(temporary_config.name), allow_network)
+
+    def _clear_mvt_temporary_config(self) -> None:
+        temporary_config = self._mvt_temporary_config
+        self._mvt_temporary_config = None
+        if temporary_config is not None:
+            temporary_config.cleanup()
+
+    def validate_mvt_from_ui(self) -> None:
+        if self._mvt_controller.is_running():
+            QMessageBox.warning(self, "MVT Operation Running", "Stop or wait for the active MVT operation first.")
+            return
+        try:
+            executable = inspect_mvt_executable(self.mvt_executable_path())
+            environment = self._prepare_mvt_environment(False)
+        except (MVTValidationError, OSError) as error:
+            self._clear_mvt_temporary_config()
+            self.mvt_validation_status.setText(f"Validation failed: {error}")
+            self.mvt_output.appendPlainText(f"MVT validation failed: {error}")
+            return
+        self._mvt_operation = "validate"
+        self._mvt_request = None
+        self._mvt_pending_executable = executable
+        arguments = mvt_version_arguments()
+        self.mvt_output.appendPlainText(
+            f"\n$ {executable.path} {shlex.join(arguments)}\n"
+            f"Executable SHA-256: {executable.sha256}"
+        )
+        self.mvt_validation_status.setText("Validating the external MVT version without update or network checks…")
+        self._begin_operation(
+            "mvt",
+            self._host_operation_context(
+                "Validate MVT Installation",
+                "Backup",
+                "external MVT CLI with isolated temporary configuration",
+                (),
+            ),
+        )
+        self._mvt_controller.start(
+            mvt_command(executable),
+            arguments,
+            environment,
+            Path.home(),
+            PROCESS_TERMINATE_GRACE_MS,
+        )
+        self._update_mvt_controls()
+
+    def run_mvt_analysis(self) -> None:
+        if self._mvt_controller.is_running():
+            QMessageBox.warning(self, "MVT Operation Running", "Stop or wait for the active MVT operation first.")
+            return
+        installation = self._mvt_installation
+        if installation is None:
+            QMessageBox.critical(self, "MVT Not Validated", "Validate the selected MVT installation first.")
+            return
+        if not self.mvt_authorization_checkbox.isChecked() or not self.mvt_interpretation_checkbox.isChecked():
+            QMessageBox.critical(
+                self,
+                "Acknowledgements Required",
+                "Confirm both the authorization/consent and interpretation boundaries before running MVT.",
+            )
+            return
+        try:
+            request = create_mvt_analysis_request(
+                installation,
+                self.mvt_backup_path(),
+                self.mvt_output_path(),
+                self._mvt_ioc_paths,
+                self.mvt_fast_checkbox.isChecked(),
+                self.mvt_hashes_checkbox.isChecked(),
+                self.mvt_network_checkbox.isChecked(),
+            )
+        except (MVTValidationError, OSError) as error:
+            QMessageBox.critical(self, "Invalid MVT Analysis Request", str(error))
+            self.mvt_status.setText(f"MVT analysis request was rejected: {error}")
+            return
+        indicator_summary = (
+            "none" if not request.ioc_files else ", ".join(path.name for path in request.ioc_files)
+        )
+        warning = (
+            f"Run external MVT {request.installation.version} backup analysis?\n\n"
+            f"Executable: {request.installation.executable.path}\n"
+            f"Executable SHA-256: {request.installation.executable.sha256}\n"
+            f"Backup: {request.backup.path}\n"
+            f"New output: {request.output}\n"
+            f"Indicators: {indicator_summary}\n"
+            f"Network access: {'allowed' if request.allow_network else 'blocked'}\n"
+            f"Fast mode: {'on' if request.fast else 'off'}\n"
+            f"Hash files: {'on' if request.hashes else 'off'}\n\n"
+            "The output can contain sensitive device, account, communication, browsing, and application records. "
+            "No findings does not prove the device is clean, safe, or uncompromised."
+        )
+        profile = guided_action_safety("host-write")
+        if not self._confirm_action("Run External MVT Analysis", warning, profile, None):
+            return
+        self._start_mvt_analysis_request(request)
+
+    def _start_mvt_analysis_request(self, request: MVTAnalysisRequest) -> None:
+        if self._mvt_controller.is_running():
+            raise RuntimeError("Cannot start MVT analysis while another MVT process is running")
+        try:
+            request = create_mvt_analysis_request(
+                request.installation,
+                request.backup.path,
+                request.output,
+                request.ioc_files,
+                request.fast,
+                request.hashes,
+                request.allow_network,
+            )
+            request.output.parent.mkdir(parents=True, exist_ok=True)
+            environment = self._prepare_mvt_environment(request.allow_network)
+        except (MVTValidationError, OSError) as error:
+            self._clear_mvt_temporary_config()
+            QMessageBox.critical(
+                self,
+                "Could Not Prepare MVT Analysis",
+                f"The confirmed MVT request changed or could not be prepared: {error}",
+            )
+            self.mvt_status.setText(f"MVT analysis did not start: {error}")
+            return
+        arguments = mvt_analysis_arguments(request)
+        self._mvt_operation = "analyze"
+        self._mvt_request = request
+        self.mvt_output.appendPlainText(
+            f"\n[safety approval: host-write; authorization and interpretation acknowledged]\n"
+            f"$ {request.installation.executable.path} {shlex.join(arguments)}\n"
+            f"Network access: {'allowed' if request.allow_network else 'blocked'}"
+        )
+        self.mvt_status.setText("MVT backup analysis is running. Use Stop to request termination.")
+        self._begin_operation(
+            "mvt",
+            self._host_operation_context(
+                "Analyze Backup with MVT",
+                "Backup",
+                "external MVT CLI with isolated temporary configuration",
+                (str(request.output),),
+            ),
+        )
+        self._mvt_controller.start(
+            mvt_command(request.installation.executable),
+            arguments,
+            environment,
+            request.output.parent,
+            PROCESS_TERMINATE_GRACE_MS,
+        )
+        self._update_mvt_controls()
+
+    def _append_mvt_output(self, output: bytes) -> None:
+        self.mvt_output.moveCursor(QTextCursor.MoveOperation.End)
+        self.mvt_output.insertPlainText(output.decode("utf-8", errors="replace"))
+
+    def _mvt_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("mvt", result_object)
+        operation = self._mvt_operation
+        request = self._mvt_request
+        self._mvt_operation = ""
+        self._mvt_request = None
+        self._clear_mvt_temporary_config()
+        combined = (result_object.stdout + result_object.stderr).decode("utf-8", errors="replace")
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        if operation == "validate" and result_object.outcome == "succeeded":
+            pending_executable = self._mvt_pending_executable
+            if pending_executable is None:
+                raise RuntimeError("MVT validation completed without a pending executable")
+            try:
+                version = parse_mvt_version_output(combined)
+            except MVTValidationError as error:
+                self._mvt_installation = None
+                self.mvt_validation_status.setText(f"Validation failed: {error}")
+                self.mvt_status.setText("MVT installation validation failed; review the complete output.")
+            else:
+                self._mvt_installation = MVTInstallation(pending_executable, version)
+                self.mvt_validation_status.setText(
+                    f"Validated external MVT {version}; executable SHA-256 {pending_executable.sha256}."
+                )
+                self.mvt_status.setText("MVT is validated. Select and review the analysis request before running it.")
+        elif operation == "analyze" and result_object.outcome == "succeeded" and request is not None:
+            self.mvt_status.setText(
+                f"MVT completed and wrote its results under {request.output}. Review its logs and structured records; "
+                "absence of alerts or detected files does not prove the device is clean or uncompromised."
+            )
+        else:
+            if operation == "validate":
+                self._mvt_installation = None
+                self.mvt_validation_status.setText(
+                    f"Validation {result_object.outcome.replace('-', ' ')}; exit {exit_label}."
+                )
+            elif operation == "analyze":
+                self.mvt_status.setText(
+                    f"MVT analysis {result_object.outcome.replace('-', ' ')}; exit {exit_label}. "
+                    "The isolated output may be partial and must not be treated as a completed analysis."
+                )
+            else:
+                raise RuntimeError(f"MVT process completed with unknown operation: {operation!r}")
+        if operation == "analyze":
+            self.mvt_authorization_checkbox.setChecked(False)
+            self.mvt_interpretation_checkbox.setChecked(False)
+        self._mvt_pending_executable = None
+        if result_object.error_message:
+            self.mvt_output.appendPlainText(f"\nProcess error: {result_object.error_message}")
+        self.mvt_output.appendPlainText(
+            f"\n[finished: {result_object.outcome}; exit {exit_label}]\n"
+        )
+        self._update_mvt_controls()
+
+    def stop_mvt_analysis(self) -> None:
+        if not self._mvt_controller.is_running():
+            return
+        self.mvt_status.setText("Stopping the external MVT process; any analysis output remains partial.")
+        self._mvt_controller.cancel()
+
+    def _update_mvt_controls(self) -> None:
+        if not hasattr(self, "run_mvt_button"):
+            return
+        running = self._mvt_controller.is_running()
+        validated = self._mvt_installation is not None
+        acknowledged = (
+            self.mvt_authorization_checkbox.isChecked()
+            and self.mvt_interpretation_checkbox.isChecked()
+        )
+        request_paths_present = bool(
+            self.mvt_backup_field.text().strip() and self.mvt_output_field.text().strip()
+        )
+        self.validate_mvt_button.setEnabled(not running and bool(self.mvt_executable_field.text().strip()))
+        self.run_mvt_button.setEnabled(not running and validated and acknowledged and request_paths_present)
+        self.stop_mvt_button.setEnabled(running)
+        for control in (
+            self.mvt_executable_field,
+            self.mvt_backup_field,
+            self.mvt_output_field,
+            self.mvt_fast_checkbox,
+            self.mvt_hashes_checkbox,
+            self.mvt_network_checkbox,
+            self.mvt_authorization_checkbox,
+            self.mvt_interpretation_checkbox,
+            self.choose_mvt_executable_button,
+            self.find_mvt_executable_button,
+            self.choose_mvt_backup_button,
+            self.choose_mvt_output_button,
+            self.choose_mvt_iocs_button,
+            self.clear_mvt_iocs_button,
+        ):
+            control.setEnabled(not running)
+        self.open_mvt_output_button.setEnabled(not running)
+
+    def open_mvt_output_directory(self) -> None:
+        try:
+            destination = self.mvt_output_path()
+        except MVTValidationError as error:
+            QMessageBox.critical(self, "Invalid MVT Output Path", str(error))
+            return
+        if not destination.is_dir():
+            QMessageBox.information(
+                self,
+                "MVT Result Folder Not Found",
+                f"The result folder does not exist yet:\n{destination}",
             )
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
@@ -6143,6 +6803,7 @@ class MainWindow(QMainWindow):
         sideload_running = self._sideload_controller.is_running()
         backup_running = self._backup_controller.is_running()
         collection_running = self._collection_controller.is_running()
+        mvt_running = self._mvt_controller.is_running()
         critical_processes = tuple(
             process
             for process in (self._location_process,)
@@ -6155,13 +6816,14 @@ class MainWindow(QMainWindow):
             or sideload_running
             or backup_running
             or collection_running
+            or mvt_running
             or self._console_controller.is_running()
             or critical_processes
         )
         if active_operations and not self._close_after_collection:
             should_close = self._confirm(
                 "Stop Active Operations?",
-                "A DDI, evidence, app, backup, Location Lab, or Command Center operation is still running. "
+                "A DDI, evidence, app, backup, MVT, Location Lab, or Command Center operation is still running. "
                 "Stop it, allow cleanup/finalization, and close the app?",
             )
             if not should_close:
@@ -6186,6 +6848,8 @@ class MainWindow(QMainWindow):
         self._ipa_inspection_controller.shutdown(10000, 3000)
         self._sideload_controller.shutdown(10000, 3000)
         self._backup_controller.shutdown(10000, 3000)
+        self._mvt_controller.shutdown(10000, 3000)
+        self._clear_mvt_temporary_config()
         self._collection_controller.shutdown(10000, 3000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:

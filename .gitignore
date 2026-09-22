@@ -18,6 +18,9 @@ reports/
 ios-case-*/
 ufade-acquisitions/
 UFADE Acquisitions/
+mvt-analyses/
+MVT Analyses/
+mvt-analysis-*/
 location-logs/
 Location Logs/
 iOS Developer Toolkit Location Logs/
@@ -33,6 +36,8 @@ nuitka-crash-report.xml
 *.pcapng
 *.ufd
 *.ufdr
+*.stix
+*.stix2
 
 # Packages, profiles, and developer-image payloads
 *.cer
