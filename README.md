@@ -12,7 +12,7 @@
 ![Devices](https://img.shields.io/badge/device-iPhone%20%7C%20iPad-0969da)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)
 ![GUI](https://img.shields.io/badge/GUI-PySide6-41cd52)
-![pymobiledevice3](https://img.shields.io/badge/pymobiledevice3-10.11.0-8250df)
+![pymobiledevice3](https://img.shields.io/badge/pymobiledevice3-11.15.1-8250df)
 [![License](https://img.shields.io/badge/license-MIT-2da44e)](LICENSE)
 
 > **Scope:** iOS Developer Toolkit is a macOS front end for authorized Apple-device development, diagnostics, testing, backup, and evidence-preservation workflows. It does not jailbreak iOS, bypass a passcode, disable the sandbox, defeat code signing, decrypt protected traffic, or provide unrestricted filesystem access.
@@ -76,19 +76,21 @@ The application executes the project-pinned binary directly. Guided values becom
 
 ## Current release additions and visual tour
 
-Release `v0.3.3` combines the complete 12-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
+Release `v0.3.4` combines the complete 12-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
 
 - **Guided Command Drift** checks the live `pymobiledevice3 --help` surface for all 49 presets before a device command is run, highlighting missing routes, changed options, failed checks, and cancellations without contacting a device;
 - **Action Safety** makes state boundaries explicit: local-output actions require review, device changes require a typed device-bound `RUN` phrase, and high-impact actions additionally require a current-backup acknowledgement and an `IRREVERSIBLE` phrase;
 - **Create Support Bundle…** produces an opt-in local ZIP with sanitized environment, readiness, status, and command-drift metadata plus a SHA-256 manifest; it excludes device identity, captures, backups, logs, command output, credentials, and common host/network identifiers;
 - **Retry Scan** performs an immediate usbmux device check, while **Reconnect & Retry…** opens a guided detection window without attempting to restart SIP-protected Apple services;
+- **Connection diagnostic** records whether usbmux did not launch, failed, returned malformed output, found no devices, or returned selectable devices; its privacy-safe summary is visible in Device & DDI and included in a sanitized support bundle;
+- the desktop UI starts independently of the MobileBackup2 transport, and device discovery consumes output both while the child process runs and after it exits, so a fast successful `usbmux list` result is not lost before the picker is updated;
 - **Demo Mode** shows a prominently labeled simulated iPhone for walkthroughs and screenshots, while deliberately withholding a selected physical-device target and disabling device operations;
 - the manual **Capability Matrix** reports host, trust, Developer Mode, DDI, tunnel, DVT, CoreDevice, and related readiness as separate bounded results, then compares completed local probes across real devices without retaining raw UDIDs;
 - **DVT network activity** and **CoreDevice applications** are handled as long-running streams with explicit Stop controls instead of misleading finite snapshots;
 - Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
 - Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
 - app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one selected-device workflow;
-- native Apple Silicon and Intel release ZIPs are built separately and verified with 72 tests, embedded CLI checks, an 89-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 77 tests, embedded CLI checks, an 89-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
 The README contains 17 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
@@ -101,7 +103,7 @@ The README contains 17 sanitized screenshots. The six views below provide a quic
 |---|---|---|
 | [![Location Lab workspace](docs/screenshots/location-lab.png)](docs/screenshots/location-lab.png) | [![Backup workspace](docs/screenshots/backup.png)](docs/screenshots/backup.png) | [![Evidence Capture workspace](docs/screenshots/evidence-collection.png)](docs/screenshots/evidence-collection.png) |
 
-### New in v0.3.3
+### New in v0.3.4
 
 | Function | What it does | Safety boundary |
 |---|---|---|
@@ -210,9 +212,9 @@ Current pinned runtime:
 |---|---|
 | Python | `>=3.10` |
 | PySide6 | `6.11.2` |
-| pymobiledevice3 | `10.11.0` |
+| pymobiledevice3 | `11.15.1` |
 | Local Xcode candidate | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` |
-| Toolkit release | `0.3.3` |
+| Toolkit release | `0.3.4` |
 
 The current GUI and launcher are macOS-specific. Although upstream `pymobiledevice3` supports other host platforms, this application currently depends on macOS tools and conventions such as Xcode/CoreDevice, `hdiutil`, `security`, `codesign`, `.app` bundles, and macOS user-library paths.
 
@@ -228,10 +230,10 @@ cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
 
-For the published `v0.3.3` source state:
+For the published `v0.3.4` source state:
 
 ```bash
-git clone --branch v0.3.3 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+git clone --branch v0.3.4 --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
 cd iOS-Developer-Toolkit
 ./script/build_and_run.sh
 ```
@@ -286,7 +288,7 @@ Extract the verified ZIP in Finder, or use:
 
 ```bash
 toolkit_arch="$(uname -m)"
-toolkit_version="v0.3.3"
+toolkit_version="v0.3.4"
 ditto -x -k "iOS-Developer-Toolkit-${toolkit_version}-macOS-${toolkit_arch}.zip" "iOS Developer Toolkit ${toolkit_version}"
 ```
 
@@ -919,6 +921,8 @@ Mounting a DDI, enabling Developer Mode, installing or uninstalling an app, chan
 
 The toolkit does not use `sudo`, delete pairing records, or restart SIP-protected Apple discovery agents or the root-owned `usbmuxd` service. If the iPhone is absent from both the macOS USB device tree and `usbmux list`, resolve the physical data connection before changing DDIs, tunnels, or developer services.
 
+If `usbmux list` returns a device but the picker remains empty, use **Retry Scan** once more, then create a sanitized support bundle. The scanner retains stdout and stderr that become available only when its child process exits; the support bundle records the redacted connection state without including your UDID, pairing record, or command output.
+
 ### Developer Mode is missing
 
 - pair the device in Xcode through **Window → Devices and Simulators**;
@@ -987,6 +991,7 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 ├── ios_developer_toolkit/
 │   ├── app.py                  # PySide6 workbench and workflow orchestration
 │   ├── action_safety.py        # typed confirmation policy for state-changing actions
+│   ├── backup_protocol.py       # dependency-free backup request/event schema
 │   ├── backup_worker.py        # MobileBackup2 worker and password-input protocol
 │   ├── capability_matrix.py    # typed readiness catalog, probes, and result validation
 │   ├── capability_matrix_worker.py # bounded NDJSON capability worker
@@ -1032,7 +1037,9 @@ The final launcher check opens the application and briefly verifies the process.
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 72 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 89-button offscreen GUI smoke test, verifies the Mach-O architecture, embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 77 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 89-button offscreen GUI smoke test, verifies the Mach-O architecture and its macOS 13.0 load-command floor, embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+
+The builder requires `MACOSX_DEPLOYMENT_TARGET=13.0`. It rejects a bundle whose executable targets a newer macOS version, so local release builds should use a Python toolchain that can produce macOS 13 binaries; GitHub release CI supplies this target explicitly.
 
 The artifacts are not universal binaries: choose the ZIP matching `uname -m`. They are also not Developer ID signed or Apple-notarized because this repository has no release signing identity. A future signing upgrade should use a narrowly scoped Developer ID Application certificate, hardened runtime, Apple notarization, and stapling without changing the two-architecture verification gates.
 

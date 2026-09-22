@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ios_developer_toolkit.action_safety import advanced_action_safety, confirmation_phrase, guided_action_safety
-from ios_developer_toolkit.backup_worker import BackupRequestError, parse_backup_event, parse_backup_request
+from ios_developer_toolkit.backup_protocol import BackupRequestError, parse_backup_event, parse_backup_request
 from ios_developer_toolkit.catalog import is_potentially_mutating, snapshot_commands
 from ios_developer_toolkit.command_catalog import (
     CommandCatalogError,
@@ -27,6 +27,13 @@ from ios_developer_toolkit.command_drift import (
     help_routes_for_presets,
 )
 from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case, validate_collection_case
+from ios_developer_toolkit.connection_diagnostics import (
+    devices_connection_diagnostic,
+    failed_connection_diagnostic,
+    launch_failed_connection_diagnostic,
+    malformed_output_connection_diagnostic,
+    process_error_connection_diagnostic,
+)
 from ios_developer_toolkit.collector import safe_udid_fragment
 from ios_developer_toolkit.demo_mode import DEMO_DEVICE_IDENTIFIER, demo_connection_banner, demo_device
 from ios_developer_toolkit.installed_apps import InstalledAppsDataError, format_byte_count, parse_installed_apps_json
@@ -282,6 +289,33 @@ class OutputValidationTests(unittest.TestCase):
     def test_success_information_is_not_an_error(self) -> None:
         output = "INFO DeveloperDiskImage mounted successfully"
         self.assertFalse(output_indicates_failure(output))
+
+
+class ConnectionDiagnosticTests(unittest.TestCase):
+    def test_reports_each_discovery_outcome_without_raw_device_data(self) -> None:
+        diagnostics = (
+            launch_failed_connection_diagnostic(),
+            failed_connection_diagnostic(7),
+            process_error_connection_diagnostic(),
+            malformed_output_connection_diagnostic(),
+            devices_connection_diagnostic(0),
+            devices_connection_diagnostic(2),
+        )
+        self.assertEqual(
+            tuple(diagnostic.state for diagnostic in diagnostics),
+            (
+                "launch-failed",
+                "discovery-failed",
+                "discovery-failed",
+                "malformed-output",
+                "no-devices",
+                "devices-available",
+            ),
+        )
+        self.assertIn("status 7", diagnostics[1].report())
+        self.assertIn("stopped before returning", diagnostics[2].report())
+        self.assertIn("Devices available: 2", diagnostics[-1].report())
+        self.assertNotIn("Identifier", "\n".join(diagnostic.report() for diagnostic in diagnostics))
 
 
 class SupportBundleTests(unittest.TestCase):

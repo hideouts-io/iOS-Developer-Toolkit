@@ -6,9 +6,9 @@ The prebuilt macOS application contains or is built from the following release-c
 
 | Component | Pinned release | Role | Declared license | Source and license information |
 |---|---:|---|---|---|
-| [pymobiledevice3](https://github.com/doronz88/pymobiledevice3) | 10.11.0 | Bundled Apple-device protocol implementation and command surface | GPL-3.0-or-later | [Source for 10.11.0](https://github.com/doronz88/pymobiledevice3/tree/v10.11.0) and [license](https://github.com/doronz88/pymobiledevice3/blob/v10.11.0/LICENSE) |
+| [pymobiledevice3](https://github.com/doronz88/pymobiledevice3) | 11.15.1 | Bundled Apple-device protocol implementation and command surface | GPL-3.0-or-later | [Source for 11.15.1](https://github.com/doronz88/pymobiledevice3/tree/v11.15.1) and [license](https://github.com/doronz88/pymobiledevice3/blob/v11.15.1/LICENSE) |
 | [PySide6](https://doc.qt.io/qtforpython-6/) and Shiboken6 | 6.11.2 | Bundled Qt for Python GUI and bindings | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, as declared by the installed wheels | [Qt for Python source](https://code.qt.io/cgit/pyside/pyside-setup.git/tag/?h=v6.11.2) and [Qt licensing](https://www.qt.io/licensing/open-source-lgpl-obligations) |
-| [Nuitka](https://github.com/Nuitka/Nuitka) | 4.1.1 | Release compiler; generated applications contain separately licensed Nuitka runtime material | Compiler: GNU AGPL v3; runtime terms are supplied by Nuitka in `LICENSE-RUNTIME.txt` | [Source for 4.1.1](https://github.com/Nuitka/Nuitka/tree/4.1.1) |
+| [Nuitka](https://github.com/Nuitka/Nuitka) | 4.2.1 | Release compiler; generated applications contain separately licensed Nuitka runtime material | Compiler: GNU AGPL v3; runtime terms are supplied by Nuitka in `LICENSE-RUNTIME.txt` | [Source for 4.2.1](https://github.com/Nuitka/Nuitka/tree/4.2.1) |
 | [CPython](https://github.com/python/cpython) | GitHub runner's Python 3.13 patch release | Bundled Python runtime | Python Software Foundation License Version 2 | [Source and license](https://github.com/python/cpython/blob/3.13/LICENSE) |
 
 Each architecture-specific release also contains:

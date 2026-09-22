@@ -30,6 +30,8 @@ jobs:
           architecture: ${{ matrix.python_architecture }}
           cache: pip
       - name: Build and verify native application
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
         run: ./scripts/build_macos_release.sh "${GITHUB_REF_NAME#v}" release-assets python3
       - uses: actions/upload-artifact@v7
         with:

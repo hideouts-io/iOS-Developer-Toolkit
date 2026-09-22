@@ -74,7 +74,7 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise ValueError(f"Internal smoke test does not accept arguments: {tuple(arguments)}")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PySide6.QtCore import SIGNAL
-    from PySide6.QtWidgets import QApplication, QPushButton
+    from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
     from ios_developer_toolkit.app import MainWindow
 
@@ -135,6 +135,11 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     missing_shortcuts = expected_shortcuts - actual_shortcuts
     if missing_shortcuts:
         raise RuntimeError(f"GUI keyboard shortcuts are missing: {sorted(missing_shortcuts)}")
+    connection_diagnostic = window.findChild(QLabel, "connectionDiagnosticValue")
+    if connection_diagnostic is None:
+        raise RuntimeError("GUI connection diagnostic is missing")
+    if not connection_diagnostic.text().strip():
+        raise RuntimeError("GUI connection diagnostic has no visible state")
     support_bundle_button = window.findChild(QPushButton, "createSupportBundleButton")
     if support_bundle_button is None:
         raise RuntimeError("GUI support-bundle action is missing")

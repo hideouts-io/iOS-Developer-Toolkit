@@ -12,7 +12,13 @@ output_directory="$2"
 repository_root="$(cd "$(dirname "$0")/.." && pwd)"
 python_executable="$3"
 machine_architecture="$(uname -m)"
+required_macos_version="13.0"
 export COPYFILE_DISABLE=1
+
+if [[ "${MACOSX_DEPLOYMENT_TARGET:-}" != "$required_macos_version" ]]; then
+  echo "Release builds require MACOSX_DEPLOYMENT_TARGET=$required_macos_version so the executable can match the advertised macOS floor." >&2
+  exit 73
+fi
 
 if [[ ! -f "$repository_root/pyproject.toml" || ! -f "$repository_root/requirements/release-sbom.txt" || ! -d "$repository_root/ios_developer_toolkit" ]]; then
   echo "Release builder could not validate the repository root: $repository_root" >&2
@@ -35,7 +41,8 @@ staging_root="$(mktemp -d /private/tmp/iosdevtoolkit-release.XXXXXX)"
 export NUITKA_CACHE_DIR="$staging_root/nuitka-cache"
 build_environment="$staging_root/release-venv"
 metadata_environment="$staging_root/metadata-venv"
-source_wrapper="$staging_root/main.py"
+deployment_project_directory="$staging_root/deployment-project"
+source_wrapper="$deployment_project_directory/main.py"
 generated_app_path="$staging_root/build/iOS Developer Toolkit.app"
 app_path="$staging_root/iOS Developer Toolkit.app"
 archive_name="iOS-Developer-Toolkit-v${release_version}-macOS-${machine_architecture}.zip"
@@ -56,7 +63,7 @@ deployment_config="$staging_root/pysidedeploy.spec"
 "$build_environment/bin/python" -m pip freeze --local --require-virtualenv > "$runtime_requirements"
 /usr/bin/sed -i '' "s|^ios-developer-toolkit @ .*|ios-developer-toolkit==$release_version|" "$runtime_requirements"
 /bin/cp "$runtime_requirements" "$sbom_requirements"
-echo "Nuitka==4.1.1" >> "$sbom_requirements"
+echo "Nuitka==4.2.1" >> "$sbom_requirements"
 "$build_environment/bin/python" -m pip install --disable-pip-version-check "$repository_root[release]"
 "$build_environment/bin/python" -m pip freeze --local --require-virtualenv > "$post_build_requirements"
 /usr/bin/sed -i '' "s|^ios-developer-toolkit @ .*|ios-developer-toolkit==$release_version|" "$post_build_requirements"
@@ -81,13 +88,15 @@ fi
 
 cd "$repository_root"
 "$build_environment/bin/python" -m unittest discover -s tests -v
+/bin/mkdir -p "$deployment_project_directory"
 /bin/cp packaging/main.py "$source_wrapper"
 /bin/cp packaging/pysidedeploy.spec "$deployment_config"
 /usr/bin/sed -i '' \
-  -e "s|^project_dir =.*|project_dir = $repository_root|" \
+  -e "s|^project_dir =.*|project_dir = $deployment_project_directory|" \
   -e "s|^input_file =.*|input_file = $source_wrapper|" \
   -e "s|^exec_directory =.*|exec_directory = $staging_root/build|" \
   -e "s|^icon =.*|icon = $repository_root/macos/iOSDeveloperToolkit.icns|" \
+  -e "s|--macos-app-version=[^[:space:]]*|--macos-app-version=$release_version|" \
   "$deployment_config"
 "$build_environment/bin/pyside6-deploy" -c "$deployment_config" --force --keep-deployment-files
 
@@ -105,7 +114,7 @@ plist_path="$app_path/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.hideouts.ios-developer-toolkit" "$plist_path"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName iOS Developer Toolkit" "$plist_path"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $release_version" "$plist_path"
-/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 5" "$plist_path" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 5" "$plist_path"
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 6" "$plist_path" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 6" "$plist_path"
 /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 13.0" "$plist_path" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 13.0" "$plist_path"
 
 bundle_license_directory="$app_path/Contents/Resources/Licenses"
@@ -132,6 +141,14 @@ compiled_architecture="$(/usr/bin/lipo -archs "$compiled_executable")"
 if [[ "$compiled_architecture" != "$machine_architecture" ]]; then
   echo "Compiled executable architecture is $compiled_architecture; expected $machine_architecture" >&2
   exit 69
+fi
+compiled_minimum_macos_version="$(/usr/bin/otool -l "$compiled_executable" | /usr/bin/awk '
+  /LC_BUILD_VERSION/ { in_build_version = 1; next }
+  in_build_version && /minos/ { print $2; exit }
+')"
+if [[ "$compiled_minimum_macos_version" != "$required_macos_version" ]]; then
+  echo "Compiled executable requires macOS ${compiled_minimum_macos_version:-an unknown version}; expected $required_macos_version" >&2
+  exit 72
 fi
 
 "$compiled_executable" --toolkit-internal-pymobiledevice3 version

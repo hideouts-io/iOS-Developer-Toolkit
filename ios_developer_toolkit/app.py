@@ -70,7 +70,7 @@ from ios_developer_toolkit.action_safety import (
     confirmation_phrase,
     guided_action_safety,
 )
-from ios_developer_toolkit.backup_worker import BackupEvent, BackupRequestError, parse_backup_event
+from ios_developer_toolkit.backup_protocol import BackupEvent, BackupRequestError, parse_backup_event
 from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case
 from ios_developer_toolkit.capability_matrix import (
     CapabilityMatrixError,
@@ -82,6 +82,15 @@ from ios_developer_toolkit.capability_matrix import (
     capability_state_label,
     parse_capability_worker_event,
     untested_capability_results,
+)
+from ios_developer_toolkit.connection_diagnostics import (
+    ConnectionDiagnostic,
+    devices_connection_diagnostic,
+    failed_connection_diagnostic,
+    initial_connection_diagnostic,
+    launch_failed_connection_diagnostic,
+    malformed_output_connection_diagnostic,
+    process_error_connection_diagnostic,
 )
 from ios_developer_toolkit.device_compatibility import (
     DeviceCompatibilityError,
@@ -222,9 +231,16 @@ def base_environment() -> Mapping[str, str]:
     return environment
 
 
+def drain_process_output(process: QProcess, stdout: bytearray, stderr: bytearray) -> None:
+    """Append every byte currently buffered by a completed or running QProcess."""
+    stdout.extend(bytes(process.readAllStandardOutput()))
+    stderr.extend(bytes(process.readAllStandardError()))
+
+
 class DeviceScanner(QObject):
     devices_changed = Signal(object)
     scan_error = Signal(str)
+    diagnostic_changed = Signal(object)
 
     def __init__(self, executable: ExecutableCommand) -> None:
         super().__init__()
@@ -236,6 +252,7 @@ class DeviceScanner(QObject):
         self._stdout = bytearray()
         self._stderr = bytearray()
         self._stopping = False
+        self._error_reported = False
 
     def start(self) -> None:
         self._stopping = False
@@ -258,37 +275,57 @@ class DeviceScanner(QObject):
             return
         self._stdout.clear()
         self._stderr.clear()
+        self._error_reported = False
         process = QProcess(self)
         process.setProgram(str(self._executable.program))
         process.setArguments(list(command_arguments(self._executable, ("usbmux", "list"))))
         process.setProcessEnvironment(qprocess_environment(base_environment()))
         process.readyReadStandardOutput.connect(self._read_stdout)
         process.readyReadStandardError.connect(self._read_stderr)
+        process.errorOccurred.connect(self._process_error)
         process.finished.connect(self._finished)
         self._process = process
         process.start()
 
     def _read_stdout(self) -> None:
         if self._process is not None:
-            self._stdout.extend(bytes(self._process.readAllStandardOutput()))
+            drain_process_output(self._process, self._stdout, self._stderr)
 
     def _read_stderr(self) -> None:
         if self._process is not None:
-            self._stderr.extend(bytes(self._process.readAllStandardError()))
+            drain_process_output(self._process, self._stdout, self._stderr)
+
+    def _process_error(self, process_error: QProcess.ProcessError) -> None:
+        if self._stopping or self._error_reported:
+            return
+        diagnostic = launch_failed_connection_diagnostic()
+        if process_error != QProcess.ProcessError.FailedToStart:
+            diagnostic = process_error_connection_diagnostic()
+        self._error_reported = True
+        self.diagnostic_changed.emit(diagnostic)
+        self.scan_error.emit(diagnostic.detail)
 
     def _finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         del exit_status
+        if self._process is not None:
+            drain_process_output(self._process, self._stdout, self._stderr)
         if self._stopping:
             return
+        if self._error_reported:
+            return
         if exit_code != 0:
-            message = self._stderr.decode("utf-8", errors="replace").strip()
-            self.scan_error.emit(message or f"Device scan failed with exit code {exit_code}")
+            diagnostic = failed_connection_diagnostic(exit_code)
+            self.diagnostic_changed.emit(diagnostic)
+            self.scan_error.emit(diagnostic.detail)
             return
         try:
             devices = parse_devices_json(self._stdout.decode("utf-8"))
-        except (DeviceDataError, json.JSONDecodeError, UnicodeDecodeError) as error:
-            self.scan_error.emit(f"Could not parse device discovery output: {error}")
+        except (DeviceDataError, json.JSONDecodeError, UnicodeDecodeError):
+            diagnostic = malformed_output_connection_diagnostic()
+            self.diagnostic_changed.emit(diagnostic)
+            self.scan_error.emit(diagnostic.detail)
             return
+        self.diagnostic_changed.emit(devices_connection_diagnostic(len(devices)))
         self.devices_changed.emit(devices)
 
 
@@ -459,7 +496,7 @@ class UFADEGuideDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(f"iOS Device Workbench {APP_VERSION}")
+        self.setWindowTitle(f"iOS Developer Toolkit {APP_VERSION}")
         self.setAccessibleName("iOS Developer Toolkit main window")
         self.setAccessibleDescription(
             "Keyboard-first workspace for authorized iPhone and iPad development, diagnostics, backup, and evidence collection."
@@ -468,6 +505,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 840)
         self._pmd3 = pymobiledevice3_command()
         self._devices: tuple[IOSDevice, ...] = ()
+        self._connection_diagnostic = initial_connection_diagnostic()
         self._demo_mode = False
         self._demo_device = demo_device()
         self._active_device_identifier: str | None = None
@@ -573,6 +611,7 @@ class MainWindow(QMainWindow):
         self._scanner = DeviceScanner(self._pmd3)
         self._scanner.devices_changed.connect(self._devices_changed)
         self._scanner.scan_error.connect(self._scan_error)
+        self._scanner.diagnostic_changed.connect(self._connection_diagnostic_changed)
         self._scanner.start()
 
     def _build_ui(self) -> None:
@@ -661,7 +700,7 @@ class MainWindow(QMainWindow):
         self.navigation_list.setObjectName("workspaceNavigation")
         self.navigation_list.setSpacing(2)
         sidebar_layout.addWidget(self.navigation_list, 1)
-        version_note = QLabel(f"Toolkit {APP_VERSION}\npymobiledevice3 10.11.0")
+        version_note = QLabel(f"Toolkit {APP_VERSION}\npymobiledevice3 11.15.1")
         version_note.setObjectName("sidebarVersion")
         version_note.setWordWrap(True)
         sidebar_layout.addWidget(version_note)
@@ -949,6 +988,7 @@ class MainWindow(QMainWindow):
         )
         statuses = (
             SupportStatus("connection", self.connection_banner.text()),
+            SupportStatus("connection_diagnostic", self._connection_diagnostic.report()),
             SupportStatus("developer_mode", self.developer_mode_status.text()),
             SupportStatus("capability_matrix", self.capability_status.text()),
             SupportStatus("command_drift", self.command_drift_status.text()),
@@ -1025,6 +1065,18 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setSpacing(14)
+
+        diagnostic_group = QGroupBox("Connection diagnostic")
+        diagnostic_layout = QVBoxLayout(diagnostic_group)
+        self.connection_diagnostic_value = QLabel(self._connection_diagnostic.report())
+        self.connection_diagnostic_value.setObjectName("connectionDiagnosticValue")
+        self.connection_diagnostic_value.setWordWrap(True)
+        self.connection_diagnostic_value.setAccessibleName("Connection discovery diagnostic")
+        self.connection_diagnostic_value.setAccessibleDescription(
+            "Reports the most recent usbmux discovery result without including device identity or raw command output."
+        )
+        diagnostic_layout.addWidget(self.connection_diagnostic_value)
+        layout.addWidget(diagnostic_group)
 
         device_group = QGroupBox("Connected device")
         device_layout = QGridLayout(device_group)
@@ -2382,6 +2434,13 @@ class MainWindow(QMainWindow):
             f"Device discovery error: {message} Use Retry Scan first. If it repeats, use Reconnect & Retry and "
             "complete the cable, unlock, and Finder Trust checks."
         )
+
+    def _connection_diagnostic_changed(self, diagnostic_object: object) -> None:
+        if not isinstance(diagnostic_object, ConnectionDiagnostic):
+            self._connection_diagnostic = malformed_output_connection_diagnostic()
+        else:
+            self._connection_diagnostic = diagnostic_object
+        self.connection_diagnostic_value.setText(self._connection_diagnostic.report())
 
     def _device_selected(self, index: int) -> None:
         del index

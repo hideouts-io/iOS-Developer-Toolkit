@@ -39,6 +39,8 @@ jobs:
           python -m ios_developer_toolkit.local_ddi --help
           python -m ios_developer_toolkit.ipa_inspector --help
           python -m ios_developer_toolkit --toolkit-internal-pymobiledevice3 version
+      - name: Verify guided command catalog
+        run: python scripts/verify_command_catalog.py
       - name: Validate GUI actions
         env:
           QT_QPA_PLATFORM: offscreen
