@@ -137,6 +137,7 @@ from ios_developer_toolkit.installed_apps import (
     format_byte_count,
     parse_installed_apps_json,
 )
+from ios_developer_toolkit.interactive_process import InteractiveProcessController
 from ios_developer_toolkit.ipa_inspector import (
     IPAInspection,
     IPAInspectionError,
@@ -593,7 +594,10 @@ class MainWindow(QMainWindow):
             self._saved_locations = load_saved_locations(self._saved_locations_path)
         except LocationLabError as error:
             self._saved_locations_error = str(error)
-        self._console_process: QProcess | None = None
+        self._console_controller = InteractiveProcessController(self)
+        self._console_controller.stdout_received.connect(self._append_console_output)
+        self._console_controller.stderr_received.connect(self._append_console_output)
+        self._console_controller.completed.connect(self._console_completed)
         self._presets = command_presets()
         self._current_preset: CommandPreset | None = None
         self._preset_parameter_fields: dict[str, QLineEdit] = {}
@@ -4972,7 +4976,7 @@ class MainWindow(QMainWindow):
         self._update_command_controls()
 
     def _update_command_controls(self) -> None:
-        running = self._console_process is not None
+        running = self._console_controller.is_running()
         preset = self._current_preset
         preset_valid = False
         if preset is not None:
@@ -5091,7 +5095,7 @@ class MainWindow(QMainWindow):
         self.select_manpage_path(preset.manpage_path)
 
     def run_console_command(self) -> None:
-        if self._console_process is not None:
+        if self._console_controller.is_running():
             QMessageBox.warning(self, "Command Running", "Stop the active console command first.")
             return
         try:
@@ -5127,7 +5131,7 @@ class MainWindow(QMainWindow):
         requires_device: bool,
         profile: ActionSafetyProfile,
     ) -> None:
-        if self._console_process is not None:
+        if self._console_controller.is_running():
             QMessageBox.warning(self, "Command Running", "Stop the active console command first.")
             return
         device = self.selected_device()
@@ -5136,19 +5140,15 @@ class MainWindow(QMainWindow):
             return
         approval = "" if profile.level == "read-only" else f"\n[safety approval: {profile.level}; acknowledgement accepted]"
         self.console_output.appendPlainText(f"\n[{title}]{approval}\n$ pymobiledevice3 {shlex.join(arguments)}\n")
-        process = QProcess(self)
-        process.setProgram(str(self._pmd3.program))
-        process.setArguments(list(command_arguments(self._pmd3, arguments)))
-        process.setWorkingDirectory(str(Path.home()))
         environment = base_environment() if device is None else device_environment(device.identifier)
-        process.setProcessEnvironment(qprocess_environment(environment))
-        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        process.readyReadStandardOutput.connect(self._read_console_output)
-        process.finished.connect(self._console_finished)
-        process.errorOccurred.connect(self._console_error)
-        self._console_process = process
+        self._console_controller.start(
+            self._pmd3,
+            arguments,
+            environment,
+            Path.home(),
+            PROCESS_TERMINATE_GRACE_MS,
+        )
         self._update_command_controls()
-        process.start()
 
     def _advanced_command_can_run_without_device(self, arguments: tuple[str, ...]) -> bool:
         prefixes = (
@@ -5159,30 +5159,24 @@ class MainWindow(QMainWindow):
         )
         return any(arguments[: len(prefix)] == prefix for prefix in prefixes)
 
-    def _read_console_output(self) -> None:
-        if self._console_process is not None:
-            text = bytes(self._console_process.readAllStandardOutput()).decode("utf-8", errors="replace")
-            self.console_output.moveCursor(QTextCursor.MoveOperation.End)
-            self.console_output.insertPlainText(text)
+    def _append_console_output(self, output: bytes) -> None:
+        self.console_output.moveCursor(QTextCursor.MoveOperation.End)
+        self.console_output.insertPlainText(output.decode("utf-8", errors="replace"))
 
-    def _console_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self.console_output.appendPlainText(f"\n[finished: exit {exit_code}]")
-        self._console_process = None
+    def _console_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        self.console_output.appendPlainText(f"\n[finished: {result_object.outcome}; exit {exit_label}]")
+        if result_object.error_message:
+            self.console_output.appendPlainText(f"Process error: {result_object.error_message}")
         self._update_command_controls()
-
-    def _console_error(self, process_error: QProcess.ProcessError) -> None:
-        if self._console_process is not None:
-            self.console_output.appendPlainText(f"\nProcess error: {self._console_process.errorString()}")
-            if process_error == QProcess.ProcessError.FailedToStart:
-                self._console_process = None
-                self._update_command_controls()
 
 
     def stop_console_command(self) -> None:
-        if self._console_process is not None:
+        if self._console_controller.is_running():
             self.console_output.appendPlainText("\nRequesting command stop…")
-            self._console_process.terminate()
+            self._console_controller.cancel()
 
     def start_command_drift_check(self) -> None:
         if self._command_drift_session_active:
@@ -5690,10 +5684,7 @@ class MainWindow(QMainWindow):
         collection_running = self._collection_controller.is_running()
         critical_processes = tuple(
             process
-            for process in (
-                self._console_process,
-                self._location_process,
-            )
+            for process in (self._location_process,)
             if process is not None and process.state() != QProcess.ProcessState.NotRunning
         )
         active_operations = (
@@ -5703,6 +5694,7 @@ class MainWindow(QMainWindow):
             or sideload_running
             or backup_running
             or collection_running
+            or self._console_controller.is_running()
             or critical_processes
         )
         if active_operations and not self._close_after_collection:
@@ -5727,6 +5719,7 @@ class MainWindow(QMainWindow):
         self._reconnect_timeout_timer.stop()
         self._manpage_controller.shutdown(3000, 1000)
         self._command_drift_controller.shutdown(3000, 1000)
+        self._console_controller.shutdown(10000, 3000)
         self._action_controller.shutdown(10000, 3000)
         self._apps_controller.shutdown(10000, 3000)
         self._ipa_inspection_controller.shutdown(10000, 3000)

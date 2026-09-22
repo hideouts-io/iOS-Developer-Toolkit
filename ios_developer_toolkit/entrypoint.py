@@ -233,6 +233,19 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     action_output = window.action_output.toPlainText()
     if "[finished: succeeded; exit 0]" not in action_output:
         raise RuntimeError(f"GUI DDI action controller failed its host-only smoke command: {action_output}")
+    window.console_input.setText("version")
+    window.console_run_button.click()
+    console_deadline = time.monotonic() + 20
+    while window._console_controller.is_running() and time.monotonic() < console_deadline:
+        application.processEvents()
+        time.sleep(0.001)
+    application.processEvents()
+    if window._console_controller.is_running():
+        window._console_controller.cancel()
+        raise RuntimeError("GUI Command Center controller did not complete within its smoke-test window")
+    console_output = window.console_output.toPlainText()
+    if "[finished: succeeded; exit 0]" not in console_output:
+        raise RuntimeError(f"GUI Command Center controller failed its host-only smoke command: {console_output}")
     synthetic_inventory = (
         '{"com.example.toolkit-smoke": {'
         '"CFBundleIdentifier": "com.example.toolkit-smoke", '

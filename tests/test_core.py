@@ -129,6 +129,9 @@ class DemoModeTests(unittest.TestCase):
 
 class CommandPolicyTests(unittest.TestCase):
     def test_read_commands_do_not_require_mutation_confirmation(self) -> None:
+        self.assertFalse(is_potentially_mutating(("version",)))
+        self.assertFalse(is_potentially_mutating(("bonjour", "rsd")))
+        self.assertFalse(is_potentially_mutating(("remote", "browse")))
         self.assertFalse(is_potentially_mutating(("developer", "dvt", "ls", "/")))
         self.assertFalse(is_potentially_mutating(("pcap", "--out", "capture.pcap")))
 

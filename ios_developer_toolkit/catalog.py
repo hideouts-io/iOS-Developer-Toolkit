@@ -54,7 +54,10 @@ def is_potentially_mutating(arguments: tuple[str, ...]) -> bool:
     if not arguments:
         return False
     safe_prefixes: tuple[tuple[str, ...], ...] = (
+        ("version",),
         ("usbmux", "list"),
+        ("bonjour",),
+        ("remote", "browse"),
         ("lockdown", "info"),
         ("mounter", "list"),
         ("mounter", "lookup"),
