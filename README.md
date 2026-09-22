@@ -552,6 +552,8 @@ Long-running commands remain attached to a visible Stop control. Stopping a proc
 
 Refresh loads the app inventory for the selected trusted device. The table can search and sort by app name, bundle ID, version, build, type, and optional calculated size. It can copy a selected bundle ID and uninstall a selected app only after explicit confirmation.
 
+Inventory and uninstall operations use the shared bounded controller, including terminal output draining, explicit launch/crash/timeout/cancellation results, and a 10-minute safety limit. The visible Stop control requests controller cancellation and retains the terminal result in the workspace output.
+
 The inventory is held in memory unless it is included in an evidence collection. App names and bundle IDs can reveal sensitive usage or organizational information; do not publish them without review.
 
 An empty inventory is not proof that no apps exist. It may instead indicate device lock state, pairing, service availability, filters, command failure, or incomplete visibility.

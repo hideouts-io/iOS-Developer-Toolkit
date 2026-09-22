@@ -4,8 +4,12 @@ import os
 import sys
 import time
 from collections.abc import Callable, Sequence
+from pathlib import Path
+
+from ios_developer_toolkit.qt_process import finite_process_request
 
 from ios_developer_toolkit.runtime import (
+    ExecutableCommand,
     INTERNAL_PYMOBILEDEVICE3_FLAG,
     INTERNAL_SMOKE_TEST_FLAG,
     INTERNAL_WORKER_FLAG,
@@ -213,6 +217,34 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     action_output = window.action_output.toPlainText()
     if "[finished: succeeded; exit 0]" not in action_output:
         raise RuntimeError(f"GUI DDI action controller failed its host-only smoke command: {action_output}")
+    synthetic_inventory = (
+        '{"com.example.toolkit-smoke": {'
+        '"CFBundleIdentifier": "com.example.toolkit-smoke", '
+        '"CFBundleDisplayName": "Toolkit Smoke", '
+        '"ApplicationType": "User"}}'
+    )
+    window._apps_context = "inventory"
+    window._apps_controller.start(
+        finite_process_request(
+            ExecutableCommand(Path("/usr/bin/printf"), ()),
+            (synthetic_inventory,),
+            {},
+            5_000,
+            500,
+        )
+    )
+    apps_deadline = time.monotonic() + 10
+    while window._apps_controller.is_running() and time.monotonic() < apps_deadline:
+        application.processEvents()
+        time.sleep(0.001)
+    application.processEvents()
+    if window._apps_controller.is_running():
+        window._apps_controller.cancel()
+        raise RuntimeError("GUI installed-apps controller did not complete within its bounded smoke-test window")
+    if window.installed_apps_table.rowCount() != 1 or "Loaded 1 installed" not in window.apps_status.text():
+        raise RuntimeError(
+            f"GUI installed-apps controller did not render its synthetic inventory: {window.apps_status.text()}"
+        )
     window.close()
     application.processEvents()
     print(f"GUI smoke test passed with {len(buttons)} action buttons", flush=True)

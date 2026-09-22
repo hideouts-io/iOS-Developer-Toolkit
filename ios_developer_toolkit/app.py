@@ -211,6 +211,7 @@ COMMAND_DRIFT_HELP_TIMEOUT_MS = 5_000
 RECONNECT_TIMEOUT_MS = 30_000
 DEVICE_SCAN_TIMEOUT_MS = 10_000
 DDI_ACTION_TIMEOUT_MS = 15 * 60_000
+APPS_ACTION_TIMEOUT_MS = 10 * 60_000
 PROCESS_TERMINATE_GRACE_MS = 1_500
 
 
@@ -536,10 +537,10 @@ class MainWindow(QMainWindow):
         self._sideload_process: QProcess | None = None
         self._sideload_context = ""
         self._sideload_buffer = bytearray()
-        self._apps_process: QProcess | None = None
+        self._apps_controller = FiniteProcessController(self)
+        self._apps_controller.stderr_received.connect(self._append_apps_stderr)
+        self._apps_controller.completed.connect(self._apps_completed)
         self._apps_context = ""
-        self._apps_stdout = bytearray()
-        self._apps_stderr = bytearray()
         self._installed_apps: tuple[InstalledApp, ...] = ()
         self._backup_process: QProcess | None = None
         self._backup_action = ""
@@ -4114,7 +4115,7 @@ class MainWindow(QMainWindow):
         self._sideload_context = ""
         self.sideload_activity_progress.setVisible(False)
         self._update_sideload_controls()
-        if succeeded and context == "install" and self._apps_process is None:
+        if succeeded and context == "install" and not self._apps_controller.is_running():
             QTimer.singleShot(0, self.refresh_app_inventory)
 
     def _sideload_error(self, process_error: QProcess.ProcessError) -> None:
@@ -4142,49 +4143,36 @@ class MainWindow(QMainWindow):
         if device is None:
             self._show_no_device()
             return
-        if self._apps_process is not None:
+        if self._apps_controller.is_running():
             QMessageBox.warning(self, "App Operation Running", "Stop or wait for the active app operation first.")
             return
         self._apps_context = context
-        self._apps_stdout.clear()
-        self._apps_stderr.clear()
         self.apps_output.appendPlainText(f"\n$ pymobiledevice3 {shlex.join(arguments)}\n")
-        process = QProcess(self)
-        process.setProgram(str(self._pmd3.program))
-        process.setArguments(list(command_arguments(self._pmd3, arguments)))
-        process.setWorkingDirectory(str(Path.home()))
-        process.setProcessEnvironment(qprocess_environment(device_environment(device.identifier)))
-        process.readyReadStandardOutput.connect(self._read_apps_stdout)
-        process.readyReadStandardError.connect(self._read_apps_stderr)
-        process.finished.connect(self._apps_finished)
-        process.errorOccurred.connect(self._apps_error)
-        self._apps_process = process
         self.apps_status.setText(f"Running {context} operation on {device.display_name()}…")
+        self._apps_controller.start(
+            finite_process_request(
+                self._pmd3,
+                arguments,
+                device_environment(device.identifier),
+                APPS_ACTION_TIMEOUT_MS,
+                PROCESS_TERMINATE_GRACE_MS,
+            )
+        )
         self._update_apps_controls()
-        process.start()
 
-    def _read_apps_stdout(self) -> None:
-        if self._apps_process is not None:
-            self._apps_stdout.extend(bytes(self._apps_process.readAllStandardOutput()))
-
-    def _read_apps_stderr(self) -> None:
-        if self._apps_process is None:
-            return
-        output = bytes(self._apps_process.readAllStandardError())
-        self._apps_stderr.extend(output)
+    def _append_apps_stderr(self, output: bytes) -> None:
         self.apps_output.moveCursor(QTextCursor.MoveOperation.End)
         self.apps_output.insertPlainText(output.decode("utf-8", errors="replace"))
 
-    def _apps_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self._read_apps_stdout()
-        self._read_apps_stderr()
+    def _apps_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
         context = self._apps_context
-        combined_output = bytes(self._apps_stdout + self._apps_stderr)
-        succeeded = exit_code == 0 and not output_indicates_failure(combined_output)
+        combined_output = result_object.stdout + result_object.stderr
+        succeeded = result_object.outcome == "succeeded" and not output_indicates_failure(combined_output)
         if succeeded and context == "inventory":
             try:
-                apps = parse_installed_apps_json(self._apps_stdout.decode("utf-8"))
+                apps = parse_installed_apps_json(result_object.stdout.decode("utf-8"))
             except (InstalledAppsDataError, json.JSONDecodeError, UnicodeDecodeError) as error:
                 succeeded = False
                 self.apps_output.appendPlainText(f"Inventory validation failed: {error}")
@@ -4195,21 +4183,23 @@ class MainWindow(QMainWindow):
         elif succeeded and context == "uninstall":
             self.apps_status.setText("Application uninstalled successfully. Refreshing inventory…")
         if not succeeded:
-            stdout_text = self._apps_stdout.decode("utf-8", errors="replace").strip()
+            stdout_text = result_object.stdout.decode("utf-8", errors="replace").strip()
             if stdout_text:
                 self.apps_output.appendPlainText(stdout_text)
-            self.apps_status.setText(f"{context.capitalize()} failed; review the output below.")
-        self.apps_output.appendPlainText(f"[finished: exit {exit_code}]\n")
-        self._apps_process = None
+            if result_object.outcome == "timed-out":
+                self.apps_status.setText("App operation exceeded the 10-minute safety limit and was stopped.")
+            elif result_object.outcome == "cancelled":
+                self.apps_status.setText("App operation was cancelled.")
+            else:
+                self.apps_status.setText(f"{context.capitalize()} failed; review the output below.")
+        if result_object.error_message:
+            self.apps_output.appendPlainText(f"Process error: {result_object.error_message}")
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        self.apps_output.appendPlainText(f"[finished: {result_object.outcome}; exit {exit_label}]\n")
         self._apps_context = ""
         self._update_apps_controls()
         if succeeded and context == "uninstall":
             QTimer.singleShot(0, self.refresh_app_inventory)
-
-    def _apps_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._apps_process is not None:
-            self.apps_output.appendPlainText(f"Process error: {self._apps_process.errorString()}")
 
     def _populate_installed_apps(self, apps: tuple[InstalledApp, ...]) -> None:
         self.installed_apps_table.setSortingEnabled(False)
@@ -4253,7 +4243,7 @@ class MainWindow(QMainWindow):
         self._update_apps_controls()
 
     def _update_apps_controls(self) -> None:
-        running = self._apps_process is not None
+        running = self._apps_controller.is_running()
         device_available = self.selected_device() is not None
         selected = self.selected_installed_bundle_identifier() is not None
         self.refresh_apps_button.setEnabled(device_available and not running)
@@ -4298,9 +4288,9 @@ class MainWindow(QMainWindow):
             self._start_apps_action(("apps", "uninstall", bundle_identifier), "uninstall")
 
     def stop_apps_action(self) -> None:
-        if self._apps_process is not None:
+        if self._apps_controller.is_running():
             self.apps_output.appendPlainText("Requesting app operation stop…")
-            self._apps_process.terminate()
+            self._apps_controller.cancel()
 
     def choose_backup_destination(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -5615,19 +5605,19 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         action_running = self._action_controller.is_running()
+        apps_running = self._apps_controller.is_running()
         critical_processes = tuple(
             process
             for process in (
                 self._collection_process,
                 self._sideload_process,
-                self._apps_process,
                 self._backup_process,
                 self._console_process,
                 self._location_process,
             )
             if process is not None and process.state() != QProcess.ProcessState.NotRunning
         )
-        if action_running or critical_processes:
+        if action_running or apps_running or critical_processes:
             should_close = self._confirm(
                 "Stop Active Operations?",
                 "A DDI, evidence, app, backup, Location Lab, or Command Center operation is still running. "
@@ -5641,6 +5631,7 @@ class MainWindow(QMainWindow):
         self._manpage_controller.shutdown(3000, 1000)
         self._command_drift_controller.shutdown(3000, 1000)
         self._action_controller.shutdown(10000, 3000)
+        self._apps_controller.shutdown(10000, 3000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
             self._terminate_capability_children(capability_process)
