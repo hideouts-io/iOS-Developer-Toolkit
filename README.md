@@ -91,7 +91,7 @@ Release `v0.3.4` combines the complete 12-workspace interface with the latest co
 - Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
 - Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
 - app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one selected-device workflow;
-- native Apple Silicon and Intel release ZIPs are built separately and verified with 98 tests, embedded CLI checks, a 90-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 102 tests, embedded CLI checks, a 90-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
 The README contains 17 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
@@ -685,7 +685,9 @@ Optional scope:
 - current device screenshot;
 - complete crash-report pull.
 
-The collector retries failed snapshots once, keeps the final artifact and a complete per-attempt command log, records semantic validation failures, and distinguishes required identification failures from optional coverage gaps. Stop/Finalize ends streams and still finalizes the case where possible.
+The collector retries failed snapshots once, keeps the final artifact and a complete per-attempt command log, records semantic validation failures, and distinguishes required identification failures from optional coverage gaps. Its typed GUI controller reassembles JSON events across arbitrary output chunks, drains terminal output, and records launch, protocol, cancellation, crash, and exit outcomes explicitly.
+
+**Stop/Finalize** sends a graceful stop request and gives the collector up to two minutes to close streams, write `manifest.json`, and regenerate `SHA256SUMS.txt`. Closing the application while a collection is active waits for that finalization instead of immediately killing the worker. If finalization is not confirmed, the guided case remains active for review or retry rather than being labeled complete.
 
 ### Man Pages
 
@@ -996,7 +998,8 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 ├── ios_developer_toolkit/
 │   ├── app.py                  # PySide6 workbench and workflow orchestration
 │   ├── action_safety.py        # typed confirmation policy for state-changing actions
-│   ├── backup_protocol.py       # dependency-free backup request/event schema
+│   ├── backup_process.py       # password-safe backup-worker lifecycle controller
+│   ├── backup_protocol.py      # dependency-free backup request/event schema
 │   ├── backup_worker.py        # MobileBackup2 worker and password-input protocol
 │   ├── capability_matrix.py    # typed readiness catalog, probes, and result validation
 │   ├── capability_matrix_worker.py # bounded NDJSON capability worker
@@ -1004,6 +1007,8 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 │   ├── catalog.py              # evidence snapshot catalog and mutation classification
 │   ├── collector.py            # case creation, streams, retries, manifest, hashes
 │   ├── command_catalog.py      # guided presets and live-help routes
+│   ├── collection_process.py   # evidence-worker lifecycle and graceful finalization
+│   ├── collection_protocol.py  # validated collector JSON-line events
 │   ├── device_compatibility.py # redacted local real-device readiness history
 │   ├── gui_pages.py            # stateless Home, Live Logs, Safety pages and styling
 │   ├── installed_apps.py       # app inventory validation and formatting
@@ -1045,7 +1050,7 @@ Physical-device validation is opt-in and is not required for pull requests. Use 
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 98 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 90-button offscreen GUI smoke test, verifies live help from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 102 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 90-button offscreen GUI smoke test, verifies live help from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The builder requires `MACOSX_DEPLOYMENT_TARGET=13.0`. It rejects any bundled executable, library, extension, or framework slice that requires a newer macOS version or omits the native release architecture. A component may support an older minimum because the application still advertises macOS 13 as its supported floor. PySide6 is pinned to the newest validated line whose actual Shiboken load commands satisfy that floor; wheel filenames alone are not treated as compatibility evidence. Local release builds should use a Python toolchain capable of producing macOS 13-compatible binaries; GitHub release CI supplies the target explicitly.
 

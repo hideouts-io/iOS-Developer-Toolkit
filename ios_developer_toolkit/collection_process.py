@@ -2,27 +2,25 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Literal, Mapping
+from typing import Literal, Mapping, Sequence
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
 
-from ios_developer_toolkit.backup_protocol import (
-    BackupAction,
-    BackupEvent,
-    BackupRequest,
-    BackupRequestError,
-    parse_backup_event,
-    serialize_backup_request,
+from ios_developer_toolkit.collection_protocol import (
+    CollectionEvent,
+    CollectionProtocolError,
+    parse_collection_event,
 )
 from ios_developer_toolkit.qt_process import OperationResult, ProcessOutcome
 from ios_developer_toolkit.runtime import ExecutableCommand, command_arguments, command_argv
 
 
-class BackupProcessController(QObject):
-    """Own one backup worker while keeping credentials out of process arguments."""
+class CollectionProcessController(QObject):
+    """Own one evidence collector and preserve its graceful finalization window."""
 
-    event_received = Signal(object)
+    stdout_received = Signal(bytes)
     stderr_received = Signal(bytes)
+    event_received = Signal(object)
     completed = Signal(object)
 
     def __init__(self, parent: QObject) -> None:
@@ -30,19 +28,18 @@ class BackupProcessController(QObject):
         self._process: QProcess | None = None
         self._command: ExecutableCommand | None = None
         self._arguments: tuple[str, ...] = ()
-        self._terminate_grace_milliseconds = 0
-        self._request_payload = b""
         self._stdout = bytearray()
         self._stdout_line = bytearray()
         self._stderr = bytearray()
         self._started_at = ""
         self._error_message: str | None = None
-        self._stop_outcome: Literal["cancelled"] | None = None
+        self._stop_outcome: Literal["cancelled", "timed-out"] | None = None
         self._protocol_failed = False
         self._completed = False
-        self._kill_timer = QTimer(self)
-        self._kill_timer.setSingleShot(True)
-        self._kill_timer.timeout.connect(self._kill)
+        self._finalization_timeout_milliseconds = 0
+        self._finalization_timer = QTimer(self)
+        self._finalization_timer.setSingleShot(True)
+        self._finalization_timer.timeout.connect(self._force_stop_after_finalization_timeout)
 
     def is_running(self) -> bool:
         return self._process is not None
@@ -50,21 +47,18 @@ class BackupProcessController(QObject):
     def start(
         self,
         command: ExecutableCommand,
-        action: BackupAction,
-        request: BackupRequest,
+        arguments: Sequence[str],
         environment: Mapping[str, str],
-        terminate_grace_milliseconds: int,
+        finalization_timeout_milliseconds: int,
     ) -> None:
         if self.is_running():
-            raise RuntimeError("Cannot start a backup process while another backup process is running")
-        if action not in ("status", "backup"):
-            raise ValueError(f"Unsupported backup action: {action}")
-        if terminate_grace_milliseconds <= 0:
-            raise ValueError(f"Backup termination grace period must be positive: {terminate_grace_milliseconds}")
+            raise RuntimeError("Cannot start an evidence collection while another collection is running")
+        if finalization_timeout_milliseconds <= 0:
+            raise ValueError(
+                f"Collection finalization timeout must be positive: {finalization_timeout_milliseconds}"
+            )
         self._command = command
-        self._arguments = (action,)
-        self._terminate_grace_milliseconds = terminate_grace_milliseconds
-        self._request_payload = serialize_backup_request(request)
+        self._arguments = tuple(arguments)
         self._stdout.clear()
         self._stdout_line.clear()
         self._stderr.clear()
@@ -73,6 +67,7 @@ class BackupProcessController(QObject):
         self._stop_outcome = None
         self._protocol_failed = False
         self._completed = False
+        self._finalization_timeout_milliseconds = finalization_timeout_milliseconds
 
         process = QProcess(self)
         process.setProgram(str(command.program))
@@ -81,7 +76,6 @@ class BackupProcessController(QObject):
         for key, value in sorted(environment.items()):
             process_environment.insert(key, value)
         process.setProcessEnvironment(process_environment)
-        process.started.connect(self._write_request)
         process.readyReadStandardOutput.connect(self._drain_output)
         process.readyReadStandardError.connect(self._drain_output)
         process.errorOccurred.connect(self._process_error)
@@ -93,8 +87,10 @@ class BackupProcessController(QObject):
         process = self._process
         if process is None or process.state() == QProcess.ProcessState.NotRunning:
             return
+        if self._stop_outcome == "cancelled":
+            return
         self._stop_outcome = "cancelled"
-        self._terminate()
+        self._request_graceful_stop()
 
     def shutdown(self, terminate_timeout_milliseconds: int, kill_timeout_milliseconds: int) -> None:
         if terminate_timeout_milliseconds <= 0:
@@ -104,29 +100,16 @@ class BackupProcessController(QObject):
         process = self._process
         if process is None:
             return
-        if process.state() == QProcess.ProcessState.NotRunning:
-            self._finish_once("cancelled", process.exitCode())
-            return
         self._stop_outcome = "cancelled"
-        self._kill_timer.stop()
-        process.terminate()
-        if not process.waitForFinished(terminate_timeout_milliseconds):
-            process.kill()
-            if not process.waitForFinished(kill_timeout_milliseconds):
-                raise RuntimeError(f"Backup process did not stop after terminate and kill: {process.program()}")
-
-    def _write_request(self) -> None:
-        process = self._process
-        if process is None:
-            raise RuntimeError("Backup process started without an active process")
-        accepted_bytes = process.write(self._request_payload)
-        if accepted_bytes != len(self._request_payload):
-            self._protocol_failure(
-                f"Backup helper accepted {accepted_bytes} of {len(self._request_payload)} request bytes"
-            )
-            return
-        process.closeWriteChannel()
-        self._request_payload = b""
+        self._finalization_timer.stop()
+        if process.state() != QProcess.ProcessState.NotRunning:
+            process.terminate()
+            if not process.waitForFinished(terminate_timeout_milliseconds):
+                process.kill()
+                if not process.waitForFinished(kill_timeout_milliseconds):
+                    raise RuntimeError(f"Collector did not stop after terminate and kill: {process.program()}")
+        else:
+            self._finish_once("cancelled", process.exitCode())
 
     def _drain_output(self) -> None:
         process = self._process
@@ -137,13 +120,14 @@ class BackupProcessController(QObject):
         if stdout:
             self._stdout.extend(stdout)
             self._stdout_line.extend(stdout)
+            self.stdout_received.emit(stdout)
             self._consume_complete_lines()
         if stderr:
             self._stderr.extend(stderr)
             self.stderr_received.emit(stderr)
 
     def _consume_complete_lines(self) -> None:
-        while b"\n" in self._stdout_line and not self._protocol_failed:
+        while b"\n" in self._stdout_line:
             line, _, remainder = self._stdout_line.partition(b"\n")
             self._stdout_line = bytearray(remainder)
             if line.strip():
@@ -151,9 +135,9 @@ class BackupProcessController(QObject):
 
     def _consume_event_line(self, line: bytes) -> None:
         try:
-            event = parse_backup_event(line.decode("utf-8"))
-        except (BackupRequestError, json.JSONDecodeError, UnicodeDecodeError) as error:
-            self._protocol_failure(f"Invalid backup helper event: {error}")
+            event = parse_collection_event(line.decode("utf-8"))
+        except (CollectionProtocolError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            self._protocol_failure(f"Invalid collector event: {error}")
             return
         self.event_received.emit(event)
 
@@ -164,12 +148,30 @@ class BackupProcessController(QObject):
         self._error_message = message
         process = self._process
         if process is not None and process.state() != QProcess.ProcessState.NotRunning:
-            self._terminate()
+            self._request_graceful_stop()
+
+    def _request_graceful_stop(self) -> None:
+        process = self._process
+        if process is None:
+            raise RuntimeError("Cannot stop evidence collection without an active process")
+        if process.state() == QProcess.ProcessState.NotRunning:
+            return
+        process.terminate()
+        self._finalization_timer.start(self._finalization_timeout_milliseconds)
+
+    def _force_stop_after_finalization_timeout(self) -> None:
+        process = self._process
+        if process is None or process.state() == QProcess.ProcessState.NotRunning:
+            return
+        if not self._protocol_failed:
+            self._stop_outcome = "timed-out"
+            self._error_message = "Collector did not finish evidence finalization before the safety deadline"
+        process.kill()
 
     def _process_error(self, process_error: QProcess.ProcessError) -> None:
         process = self._process
         if process is None:
-            raise RuntimeError("Backup process reported an error without an active process")
+            raise RuntimeError("Collector reported an error without an active process")
         if self._error_message is None:
             self._error_message = process.errorString()
         if process_error == QProcess.ProcessError.FailedToStart:
@@ -177,14 +179,14 @@ class BackupProcessController(QObject):
 
     def _finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         self._drain_output()
-        if self._stdout_line.strip() and not self._protocol_failed:
+        if self._stdout_line.strip():
             line = bytes(self._stdout_line)
             self._stdout_line.clear()
             self._consume_event_line(line)
-        if self._stop_outcome is not None:
-            outcome: ProcessOutcome = self._stop_outcome
-        elif self._protocol_failed:
-            outcome = "failed"
+        if self._protocol_failed:
+            outcome: ProcessOutcome = "failed"
+        elif self._stop_outcome is not None:
+            outcome = self._stop_outcome
         elif exit_status == QProcess.ExitStatus.CrashExit:
             outcome = "crashed"
         elif exit_code == 0:
@@ -193,30 +195,15 @@ class BackupProcessController(QObject):
             outcome = "failed"
         self._finish_once(outcome, exit_code)
 
-    def _terminate(self) -> None:
-        process = self._process
-        if process is None:
-            raise RuntimeError("Cannot terminate a backup process without an active process")
-        if self._terminate_grace_milliseconds <= 0:
-            raise RuntimeError("Backup process has no valid termination grace period")
-        process.terminate()
-        self._kill_timer.start(self._terminate_grace_milliseconds)
-
-    def _kill(self) -> None:
-        process = self._process
-        if process is not None and process.state() != QProcess.ProcessState.NotRunning:
-            process.kill()
-
     def _finish_once(self, outcome: ProcessOutcome, exit_code: int | None) -> None:
         if self._completed:
             return
         command = self._command
         if command is None:
-            raise RuntimeError("Backup process completed without a command")
+            raise RuntimeError("Collector completed without a command")
         self._drain_output()
         self._completed = True
-        self._kill_timer.stop()
-        self._request_payload = b""
+        self._finalization_timer.stop()
         result = OperationResult(
             command_argv(command, self._arguments),
             outcome,

@@ -326,6 +326,30 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError(f"GUI backup controller did not apply its typed event: {window.backup_output.toPlainText()}")
     if "Encryption status check completed." not in window.backup_output.toPlainText():
         raise RuntimeError(f"GUI backup controller reported the wrong completion: {window.backup_output.toPlainText()}")
+    synthetic_collection_event = (
+        '{"event":"case-finished","message":"Synthetic evidence finalization.",'
+        '"timestamp":"2026-09-22T00:00:00+00:00","path":"/tmp/toolkit-smoke-case",'
+        '"status":"completed","failures":0}'
+    )
+    window._collection_case_finished = False
+    window._collection_controller.start(
+        ExecutableCommand(Path("/usr/bin/printf"), ()),
+        (synthetic_collection_event,),
+        {},
+        5_000,
+    )
+    collection_deadline = time.monotonic() + 10
+    while window._collection_controller.is_running() and time.monotonic() < collection_deadline:
+        application.processEvents()
+        time.sleep(0.001)
+    application.processEvents()
+    if window._collection_controller.is_running():
+        window._collection_controller.cancel()
+        raise RuntimeError("GUI evidence controller did not complete within its bounded smoke-test window")
+    if not window._collection_case_finished or window._last_case_path != Path("/tmp/toolkit-smoke-case"):
+        raise RuntimeError(f"GUI evidence controller did not apply finalization: {window.collection_output.toPlainText()}")
+    if "Collection process finished: succeeded; exit 0." not in window.collection_output.toPlainText():
+        raise RuntimeError(f"GUI evidence controller reported the wrong completion: {window.collection_output.toPlainText()}")
     window.close()
     application.processEvents()
     print(f"GUI smoke test passed with {len(buttons)} action buttons", flush=True)

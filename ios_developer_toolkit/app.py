@@ -96,6 +96,8 @@ from ios_developer_toolkit.connection_diagnostics import (
     process_error_connection_diagnostic,
     timed_out_connection_diagnostic,
 )
+from ios_developer_toolkit.collection_process import CollectionProcessController
+from ios_developer_toolkit.collection_protocol import CollectionEvent
 from ios_developer_toolkit.device_compatibility import (
     DeviceCompatibilityError,
     DeviceCompatibilityObservation,
@@ -215,6 +217,7 @@ DDI_ACTION_TIMEOUT_MS = 15 * 60_000
 APPS_ACTION_TIMEOUT_MS = 10 * 60_000
 IPA_INSPECTION_TIMEOUT_MS = 5 * 60_000
 IPA_INSTALL_TIMEOUT_MS = 15 * 60_000
+COLLECTION_FINALIZATION_TIMEOUT_MS = 2 * 60_000
 PROCESS_TERMINATE_GRACE_MS = 1_500
 
 
@@ -531,7 +534,13 @@ class MainWindow(QMainWindow):
             self._compatibility_observations = load_observations(self._compatibility_history_path)
         except DeviceCompatibilityError as error:
             self._compatibility_history_error = str(error)
-        self._collection_process: QProcess | None = None
+        self._collection_controller = CollectionProcessController(self)
+        self._collection_controller.stdout_received.connect(self._append_collection_output)
+        self._collection_controller.stderr_received.connect(self._append_collection_output)
+        self._collection_controller.event_received.connect(self._collection_event_received)
+        self._collection_controller.completed.connect(self._collection_completed)
+        self._collection_case_finished = False
+        self._close_after_collection = False
         self._ipa_inspection_controller = FiniteProcessController(self)
         self._ipa_inspection_controller.completed.connect(self._ipa_inspection_completed)
         self._ipa_inspection: IPAInspection | None = None
@@ -2518,7 +2527,7 @@ class MainWindow(QMainWindow):
     def _update_device_fields(self, device: IOSDevice | None) -> None:
         identifier = device.identifier if device is not None else None
         if identifier != self._active_device_identifier:
-            if self._active_case_path is not None:
+            if self._active_case_path is not None and not self._collection_controller.is_running():
                 previous_case_path = self._active_case_path
                 self._active_case_path = None
                 self.case_status.setText(
@@ -2541,8 +2550,10 @@ class MainWindow(QMainWindow):
         action_available = enabled and not self._action_controller.is_running()
         self.mount_button.setEnabled(action_available)
         self.remove_button.setEnabled(action_available)
-        self.start_collection_button.setEnabled(enabled and self._collection_process is None)
-        self.create_case_button.setEnabled(enabled and self._collection_process is None and self._active_case_path is None)
+        self.start_collection_button.setEnabled(enabled and not self._collection_controller.is_running())
+        self.create_case_button.setEnabled(
+            enabled and not self._collection_controller.is_running() and self._active_case_path is None
+        )
         self.case_readiness_button.setEnabled(enabled and self._capability_process is None)
         self._update_live_log_controls()
         self._update_apps_controls()
@@ -3806,7 +3817,7 @@ class MainWindow(QMainWindow):
         if device is None:
             self._show_no_device()
             return
-        if self._collection_process is not None:
+        if self._collection_controller.is_running():
             QMessageBox.warning(self, "Collection Running", "Wait for the active collection to finish before creating another case.")
             return
         if self._active_case_path is not None:
@@ -3849,7 +3860,7 @@ class MainWindow(QMainWindow):
         if device is None:
             self._show_no_device()
             return
-        if self._collection_process is not None:
+        if self._collection_controller.is_running():
             QMessageBox.warning(self, "Collection Running", "A collection is already running.")
             return
         selected_streams = self.include_syslog.isChecked() or self.include_oslog.isChecked() or self.include_pcap.isChecked()
@@ -3860,7 +3871,12 @@ class MainWindow(QMainWindow):
             "The case will contain identifiers and potentially sensitive device data. "
             "PCAP does not decrypt TLS, but unencrypted payloads may be recorded."
         )
-        if not self._confirm("Start Evidence Collection", warning):
+        if not self._confirm_action(
+            "Start Evidence Collection",
+            warning,
+            guided_action_safety("host-write"),
+            device.identifier,
+        ):
             return
         arguments = ["--udid", device.identifier]
         if self._active_case_path is None:
@@ -3878,57 +3894,74 @@ class MainWindow(QMainWindow):
             if enabled:
                 arguments.append(flag)
         worker = worker_command("collector")
-        process = QProcess(self)
-        process.setProgram(str(worker.program))
-        process.setArguments(list(command_arguments(worker, arguments)))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        process.readyReadStandardOutput.connect(self._read_collection_output)
-        process.finished.connect(self._collection_finished)
-        process.errorOccurred.connect(self._collection_error)
-        self._collection_process = process
         self.collection_output.clear()
+        self._record_action_approval(
+            self.collection_output,
+            "Start Evidence Collection",
+            guided_action_safety("host-write"),
+        )
+        self._collection_case_finished = False
         self.start_collection_button.setEnabled(False)
         self.stop_collection_button.setEnabled(True)
-        process.start()
+        self._collection_controller.start(
+            worker,
+            arguments,
+            base_environment(),
+            COLLECTION_FINALIZATION_TIMEOUT_MS,
+        )
 
-    def _read_collection_output(self) -> None:
-        if self._collection_process is None:
-            return
-        text = bytes(self._collection_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+    def _append_collection_output(self, output: bytes) -> None:
         self.collection_output.moveCursor(QTextCursor.MoveOperation.End)
-        self.collection_output.insertPlainText(text)
-        for line in text.splitlines():
-            try:
-                record: object = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(record, dict) and record.get("event") == "case-created" and isinstance(record.get("path"), str):
-                self._last_case_path = Path(record["path"])
+        self.collection_output.insertPlainText(output.decode("utf-8", errors="replace"))
+
+    def _collection_event_received(self, event_object: object) -> None:
+        if not isinstance(event_object, CollectionEvent):
+            raise TypeError(f"Expected CollectionEvent, received {type(event_object).__name__}")
+        event = event_object
+        if event.event in ("case-created", "case-attached") and event.path is not None:
+            self._last_case_path = event.path
+            self.open_case_button.setEnabled(True)
+        if event.event == "case-finished":
+            self._collection_case_finished = True
+            if event.path is not None:
+                self._last_case_path = event.path
                 self.open_case_button.setEnabled(True)
 
-    def _collection_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self.collection_output.appendPlainText(f"\nCollection process finished with exit code {exit_code}.")
-        self._collection_process = None
+    def _collection_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        self.collection_output.appendPlainText(
+            f"\nCollection process finished: {result_object.outcome}; exit {exit_label}."
+        )
+        if result_object.error_message:
+            self.collection_output.appendPlainText(f"Process error: {result_object.error_message}")
         if self._active_case_path is not None:
-            self.case_status.setText(
-                f"Guided case finalized at {self._active_case_path}. Create a new case before another collection."
-            )
-            self._active_case_path = None
+            if self._collection_case_finished:
+                self.case_status.setText(
+                    f"Guided case finalized at {self._active_case_path}. Create a new case before another collection."
+                )
+                self._active_case_path = None
+            else:
+                self.case_status.setText(
+                    f"Finalization was not confirmed for {self._active_case_path}. Review the directory; the guided case remains active for retry."
+                )
         self.start_collection_button.setEnabled(self.selected_device() is not None)
-        self.create_case_button.setEnabled(self.selected_device() is not None)
+        self.create_case_button.setEnabled(
+            self.selected_device() is not None and self._active_case_path is None
+        )
         self.stop_collection_button.setEnabled(False)
-
-    def _collection_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._collection_process is not None:
-            self.collection_output.appendPlainText(f"\nProcess error: {self._collection_process.errorString()}")
+        if self._close_after_collection:
+            QTimer.singleShot(0, self.close)
 
     def stop_collection(self) -> None:
-        if self._collection_process is not None:
+        if self._collection_controller.is_running():
             self.collection_output.appendPlainText("\nRequesting a clean stop and evidence finalization…")
-            self._collection_process.terminate()
+            self.stop_collection_button.setEnabled(False)
+            self.case_status.setText(
+                "Stop requested. Waiting for the collector to finalize its manifest and hashes."
+            )
+            self._collection_controller.cancel()
 
     def open_last_case(self) -> None:
         if self._last_case_path is None or not self._last_case_path.is_dir():
@@ -5547,23 +5580,25 @@ class MainWindow(QMainWindow):
         ipa_inspection_running = self._ipa_inspection_controller.is_running()
         sideload_running = self._sideload_controller.is_running()
         backup_running = self._backup_controller.is_running()
+        collection_running = self._collection_controller.is_running()
         critical_processes = tuple(
             process
             for process in (
-                self._collection_process,
                 self._console_process,
                 self._location_process,
             )
             if process is not None and process.state() != QProcess.ProcessState.NotRunning
         )
-        if (
+        active_operations = (
             action_running
             or apps_running
             or ipa_inspection_running
             or sideload_running
             or backup_running
+            or collection_running
             or critical_processes
-        ):
+        )
+        if active_operations and not self._close_after_collection:
             should_close = self._confirm(
                 "Stop Active Operations?",
                 "A DDI, evidence, app, backup, Location Lab, or Command Center operation is still running. "
@@ -5572,6 +5607,15 @@ class MainWindow(QMainWindow):
             if not should_close:
                 event.ignore()
                 return
+        if collection_running:
+            if not self._close_after_collection:
+                self._close_after_collection = True
+                self.case_status.setText(
+                    "Closing is waiting for evidence finalization. The collector has up to two minutes to write its manifest and hashes."
+                )
+                self.stop_collection()
+            event.ignore()
+            return
         self._scanner.stop()
         self._reconnect_timeout_timer.stop()
         self._manpage_controller.shutdown(3000, 1000)
@@ -5581,6 +5625,7 @@ class MainWindow(QMainWindow):
         self._ipa_inspection_controller.shutdown(10000, 3000)
         self._sideload_controller.shutdown(10000, 3000)
         self._backup_controller.shutdown(10000, 3000)
+        self._collection_controller.shutdown(10000, 3000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
             self._terminate_capability_children(capability_process)
