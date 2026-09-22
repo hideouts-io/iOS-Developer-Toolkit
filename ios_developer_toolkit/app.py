@@ -576,18 +576,14 @@ class MainWindow(QMainWindow):
         self._manpage_controller.completed.connect(self._manpage_completed)
         self._manpage_cache: dict[tuple[str, ...], str] = {}
         self._manpage_active_path: tuple[str, ...] | None = None
-        self._command_drift_process: QProcess | None = None
-        self._command_drift_stdout = bytearray()
-        self._command_drift_stderr = bytearray()
+        self._command_drift_controller = FiniteProcessController(self)
+        self._command_drift_controller.completed.connect(self._command_drift_probe_completed)
         self._command_drift_paths: tuple[tuple[str, ...], ...] = ()
         self._command_drift_index = 0
         self._command_drift_active_path: tuple[str, ...] | None = None
-        self._command_drift_active_error: str | None = None
+        self._command_drift_session_active = False
         self._command_drift_cancelled = False
         self._command_drift_probes: dict[tuple[str, ...], HelpRouteProbe] = {}
-        self._command_drift_timeout_timer = QTimer(self)
-        self._command_drift_timeout_timer.setSingleShot(True)
-        self._command_drift_timeout_timer.timeout.connect(self._command_drift_timed_out)
         self._last_case_path: Path | None = None
         self._active_case_path: Path | None = None
         self._keyboard_shortcuts: list[QShortcut] = []
@@ -5116,13 +5112,13 @@ class MainWindow(QMainWindow):
             self._console_process.terminate()
 
     def start_command_drift_check(self) -> None:
-        if self._command_drift_process is not None:
+        if self._command_drift_session_active:
             QMessageBox.information(self, "Command Drift Check", "The live-help drift check is already running.")
             return
         self._command_drift_paths = help_routes_for_presets(self._presets)
         self._command_drift_index = 0
         self._command_drift_active_path = None
-        self._command_drift_active_error = None
+        self._command_drift_session_active = True
         self._command_drift_cancelled = False
         self._command_drift_probes = {}
         self.command_drift_output.clear()
@@ -5141,88 +5137,59 @@ class MainWindow(QMainWindow):
             return
         command_path = self._command_drift_paths[self._command_drift_index]
         self._command_drift_active_path = command_path
-        self._command_drift_active_error = None
-        self._command_drift_stdout.clear()
-        self._command_drift_stderr.clear()
         self.command_drift_status.setText(
             f"Checking {self._command_drift_index + 1}/{len(self._command_drift_paths)}: "
             f"pymobiledevice3 {shlex.join(command_path)} --help"
         )
-        process = QProcess(self)
-        process.setProgram(str(self._pmd3.program))
-        process.setArguments(list(command_arguments(self._pmd3, (*command_path, "--help"))))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.readyReadStandardOutput.connect(self._read_command_drift_stdout)
-        process.readyReadStandardError.connect(self._read_command_drift_stderr)
-        process.finished.connect(self._command_drift_probe_finished)
-        process.errorOccurred.connect(self._command_drift_probe_error)
-        self._command_drift_process = process
-        self._update_command_drift_controls()
-        process.start()
-        self._command_drift_timeout_timer.start(COMMAND_DRIFT_HELP_TIMEOUT_MS)
-
-    def _read_command_drift_stdout(self) -> None:
-        if self._command_drift_process is not None:
-            self._command_drift_stdout.extend(bytes(self._command_drift_process.readAllStandardOutput()))
-
-    def _read_command_drift_stderr(self) -> None:
-        if self._command_drift_process is not None:
-            self._command_drift_stderr.extend(bytes(self._command_drift_process.readAllStandardError()))
-
-    def _command_drift_probe_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        if self.sender() is not self._command_drift_process:
-            return
-        self._complete_command_drift_probe(exit_code, self._command_drift_active_error)
-
-    def _command_drift_probe_error(self, process_error: QProcess.ProcessError) -> None:
-        if self.sender() is not self._command_drift_process:
-            return
-        if process_error == QProcess.ProcessError.FailedToStart and self._command_drift_process is not None:
-            self._complete_command_drift_probe(None, self._command_drift_process.errorString())
-
-    def _command_drift_timed_out(self) -> None:
-        process = self._command_drift_process
-        if process is None:
-            return
-        self._command_drift_active_error = (
-            f"Live help exceeded the {COMMAND_DRIFT_HELP_TIMEOUT_MS // 1000}-second per-route limit."
+        self._command_drift_controller.start(
+            finite_process_request(
+                self._pmd3,
+                (*command_path, "--help"),
+                base_environment(),
+                COMMAND_DRIFT_HELP_TIMEOUT_MS,
+                PROCESS_TERMINATE_GRACE_MS,
+            )
         )
-        process.kill()
+        self._update_command_drift_controls()
 
-    def _complete_command_drift_probe(self, exit_code: int | None, error: str | None) -> None:
+    def _command_drift_probe_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
         command_path = self._command_drift_active_path
-        process = self._command_drift_process
-        if command_path is None or process is None:
-            return
-        self._command_drift_timeout_timer.stop()
-        self._read_command_drift_stdout()
-        self._read_command_drift_stderr()
+        if command_path is None:
+            raise CommandCatalogError("Live-help drift probe completed without an active command path")
+        if result_object.outcome == "timed-out":
+            error = f"Live help exceeded the {COMMAND_DRIFT_HELP_TIMEOUT_MS // 1000}-second per-route limit."
+        elif result_object.outcome == "cancelled":
+            error = "Live-help drift check was cancelled by the user."
+        elif result_object.outcome == "launch-failed":
+            detail = result_object.error_message or "the operating system did not provide an error"
+            error = f"Could not start live help: {detail}"
+        elif result_object.outcome == "crashed":
+            error = "Live help terminated unexpectedly before returning a complete result."
+        else:
+            error = None
         self._command_drift_probes[command_path] = HelpRouteProbe(
             command_path,
-            exit_code,
-            self._command_drift_stdout.decode("utf-8", errors="replace"),
-            self._command_drift_stderr.decode("utf-8", errors="replace"),
+            result_object.exit_code,
+            result_object.stdout.decode("utf-8", errors="replace"),
+            result_object.stderr.decode("utf-8", errors="replace"),
             error,
         )
-        self._command_drift_process = None
         self._command_drift_active_path = None
-        self._command_drift_active_error = None
         self._command_drift_index += 1
         self._update_command_drift_controls()
         QTimer.singleShot(0, self._start_next_command_drift_probe)
 
     def cancel_command_drift_check(self) -> None:
-        process = self._command_drift_process
-        if process is None:
+        if not self._command_drift_session_active:
             return
         self._command_drift_cancelled = True
-        self._command_drift_active_error = "Live-help drift check was cancelled by the user."
         self.command_drift_status.setText("Cancelling the current live-help check…")
-        process.kill()
+        self._command_drift_controller.cancel()
 
     def _finish_command_drift_check(self) -> None:
-        self._command_drift_timeout_timer.stop()
+        self._command_drift_session_active = False
         results = evaluate_command_drift(self._presets, tuple(self._command_drift_probes.values()))
         report = render_command_drift_report(results)
         self.command_drift_output.setPlainText(report)
@@ -5239,7 +5206,7 @@ class MainWindow(QMainWindow):
         self._update_command_drift_controls()
 
     def _update_command_drift_controls(self) -> None:
-        running = self._command_drift_process is not None
+        running = self._command_drift_session_active
         self.command_drift_check_button.setEnabled(not running)
         self.command_drift_cancel_button.setEnabled(running)
         self.command_drift_copy_button.setEnabled(bool(self.command_drift_output.toPlainText().strip()) and not running)
@@ -5666,8 +5633,8 @@ class MainWindow(QMainWindow):
                 return
         self._scanner.stop()
         self._reconnect_timeout_timer.stop()
-        self._command_drift_timeout_timer.stop()
         self._manpage_controller.shutdown(3000, 1000)
+        self._command_drift_controller.shutdown(3000, 1000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
             self._terminate_capability_children(capability_process)
@@ -5681,7 +5648,7 @@ class MainWindow(QMainWindow):
             if not process.waitForFinished(10000):
                 process.kill()
                 process.waitForFinished(3000)
-        for process in (self._ipa_inspection_process, self._command_drift_process):
+        for process in (self._ipa_inspection_process,):
             if process is not None and process.state() != QProcess.ProcessState.NotRunning:
                 process.terminate()
         event.accept()

@@ -121,6 +121,22 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
             raise RuntimeError(f"GUI command-drift action is missing: {button_name}")
         if button.isEnabled():
             raise RuntimeError(f"GUI command-drift action should be disabled before a drift check: {button_name}")
+    command_drift_button = window.findChild(QPushButton, "checkCommandDriftButton")
+    command_drift_copy_button = window.findChild(QPushButton, "copyCommandDriftReportButton")
+    if command_drift_button is None or command_drift_copy_button is None:
+        raise RuntimeError("GUI command-drift controls are incomplete")
+    command_drift_button.click()
+    command_drift_deadline = time.monotonic() + 180
+    while not command_drift_copy_button.isEnabled() and time.monotonic() < command_drift_deadline:
+        application.processEvents()
+        time.sleep(0.001)
+    application.processEvents()
+    if not command_drift_copy_button.isEnabled():
+        window.cancel_command_drift_check()
+        raise RuntimeError("GUI command-drift check did not complete within its bounded smoke-test window")
+    command_drift_report = window.command_drift_output.toPlainText()
+    if "Verified: 49" not in command_drift_report or "All guided preset routes" not in command_drift_report:
+        raise RuntimeError(f"GUI command-drift check reported incompatible guidance: {command_drift_report}")
     command_readiness = window.findChild(QLabel, "commandReadinessStatus")
     if command_readiness is None or not command_readiness.text().strip():
         raise RuntimeError("GUI selected-command readiness has no visible state")

@@ -33,9 +33,9 @@ The repository is a Python 3.10+ PySide6 project with a bundled `pymobiledevice3
 | `DeviceScanner` did not drain final `QProcess` stdout/stderr in its completion handler. | A connected device could be invisible in the packaged UI despite the bundled CLI returning valid JSON. Fixed with completion-time draining and a real fast-exit QProcess regression test. | Resolved P0 |
 | The repository pinned `pymobiledevice3==10.11.0` while a clean Dependabot PR existed for 11.12.4 and upstream had newer releases. | The app missed modern iOS tunnel fixes and could present stale command assumptions. Fixed with a validated upgrade to 11.15.1: the full test suite, GUI smoke test, CLI discovery, and all 49 live-help routes passed. | Resolved P0 |
 | `MainWindow` owns dozens of process/buffer/timer lifecycles. | Completion, cancellation, timeout, and output handling can diverge across workspaces; the scanner defect is evidence of that risk. | P1 |
-| Release-only packaging is validated only after a tag is pushed. | A frozen-app regression can escape pull-request CI. | P1 |
-| Source `macos/Info.plist` exposes an older version than `pyproject.toml`; release CI corrects it later. | Local app testing can be confusing and screenshots can show stale metadata. | P1 |
-| The test suite is mainly pure-function/unit coverage and a structural GUI smoke test. | It now exercises a fast-exit discovery result and launch failure, but still needs shared operation cancellation/relaunch coverage beyond those paths. | P1 |
+| Release-only packaging was previously validated only after a tag was pushed. | Dual-native pull-request smoke now builds and inspects the entire frozen app before release. | Resolved P1 |
+| Source `macos/Info.plist` previously exposed an older version than `pyproject.toml`. | Source, packaging, citation, and bundle metadata are synchronized and covered by tests. | Resolved P1 |
+| Coverage remains weighted toward pure functions and host-only integration. | Fast-exit discovery, process lifecycle, real live help, the complete 49-route drift UI, and both frozen architectures are covered; device-service behavior remains deliberately opt-in through the physical protocol. | P1 |
 | The first-run experience assumes familiarity with DDI, RSD, and CoreDevice. | Beginners receive good instructions, but not a single coherent “make my device ready” decision flow. | P1 |
 | The README is extensive but is the dominant documentation surface. | It is difficult to keep operational recipes, scope boundaries, architecture, release verification, and contributor guidance discoverable. | P2 |
 
@@ -113,7 +113,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 
 ### P1 — turn diagnostics into a coherent workbench
 
-* Continue migrating finite subprocess workflows to the reusable operation controller and typed `OperationResult`. Device discovery and Man Pages now share final-drain, timeout, cancellation, launch-failure, clean-relaunch, and structured completion semantics; command drift, DDI, backup, apps, and capture remain incremental migrations.
+* Continue migrating finite subprocess workflows to the reusable operation controller and typed `OperationResult`. Device discovery, Man Pages, and sequential command drift now share final-drain, timeout, cancellation, launch-failure, clean-relaunch, and structured completion semantics; DDI, backup, apps, and capture remain incremental migrations.
 * Make a contextual readiness pane for the selected action, with one-click scoped rechecks and copyable remediation.
 * Maintain the opt-in physical-device compatibility protocol and its explicit USB, usbmux, CoreDevice, developer-service, privacy, and state-changing test boundaries. A pre-release dual-architecture frozen-artifact smoke workflow is now present. The release builder rejects any bundled Mach-O whose minimum macOS version is newer than the advertised 13.0 floor or lacks the native release architecture.
 * Generate concise changelog/release notes from tested behavior. Source, bundle, citation, packaging, and third-party-source metadata drift is now covered by automated tests.
@@ -168,6 +168,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | 2026-09-21 | Migrated Man Pages live help to the shared finite-operation controller and normalized styled CLI help for command-drift checks. | The GUI smoke now completes a real live-help request; controller relaunch tests reject stale output, and ANSI-split option tokens remain strictly verifiable. | Sequential command drift and other finite workflows remain incremental migrations. |
 | 2026-09-21 | Corrected the macOS compatibility gate and bounded native-build timing. | The first clean dual-architecture run proved arm64 produced a macOS 11-compatible executable, which is compatible with the advertised macOS 13 floor; Intel exceeded the original 45-minute job limit. | Re-run both native builders with reusable Nuitka caches and a 90-minute cap before merging. |
 | 2026-09-21 | Expanded compatibility validation from the launcher to every bundled Mach-O and pinned a genuinely compatible Qt line. | PySide6 6.11.2 wheel filenames advertise macOS 13, but direct `otool` inspection found Shiboken load commands requiring macOS 15; PySide6 6.9.3 Shiboken binaries declare macOS 12. | The dual-native CI build must pass the full-bundle architecture and deployment-floor scan before release. |
+| 2026-09-21 | Migrated sequential command-drift probes to the shared finite-operation controller. | A clean Python 3.13 environment passed the 94-test suite and the GUI smoke now runs the entire 49-route drift check through the real asynchronous UI path. | DDI, backup, app, and capture operations remain incremental controller migrations. |
 
 ## Research sources
 
