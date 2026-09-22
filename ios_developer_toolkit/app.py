@@ -106,13 +106,20 @@ from ios_developer_toolkit.connection_diagnostics import (
 from ios_developer_toolkit.collection_process import CollectionProcessController
 from ios_developer_toolkit.collection_protocol import CollectionEvent
 from ios_developer_toolkit.device_compatibility import (
+    CompatibilityReport,
     DeviceCompatibilityError,
     DeviceCompatibilityObservation,
     append_observation,
     compatibility_history_path,
+    create_compatibility_report,
     create_observation,
+    current_report_environment,
     latest_observations,
     load_observations,
+    render_compatibility_json,
+    render_compatibility_markdown,
+    write_compatibility_json_report,
+    write_compatibility_markdown_report,
 )
 from ios_developer_toolkit.demo_mode import demo_connection_banner, demo_device
 from ios_developer_toolkit.external_tools import (
@@ -1251,6 +1258,20 @@ class MainWindow(QMainWindow):
                 ("manpage", "documentation", "syntax"),
                 self.refresh_manpage_button.isEnabled(),
             ),
+            (
+                "action:export-compatibility-json",
+                "Export Sanitized Compatibility JSON",
+                "Export the latest locally observed real-device capability evidence without stable device identity.",
+                ("compatibility", "matrix", "json", "report", "sanitized"),
+                self._compatibility_export_is_available(),
+            ),
+            (
+                "action:export-compatibility-markdown",
+                "Export Sanitized Compatibility Markdown",
+                "Export a readable real-device capability report without stable device identity.",
+                ("compatibility", "matrix", "markdown", "report", "sanitized"),
+                self._compatibility_export_is_available(),
+            ),
         )
         entries.extend(
             action_palette_entry(identifier, title, "Eligible read action", summary, keywords)
@@ -1318,6 +1339,8 @@ class MainWindow(QMainWindow):
             "action:backup-encryption-status": self.check_backup_encryption,
             "action:command-drift": self.start_command_drift_check,
             "action:refresh-live-help": self.refresh_selected_manpage,
+            "action:export-compatibility-json": self.export_compatibility_json,
+            "action:export-compatibility-markdown": self.export_compatibility_markdown,
         }
         action = actions.get(identifier)
         if action is None:
@@ -1771,6 +1794,14 @@ class MainWindow(QMainWindow):
         copy_history_button.setObjectName("copyCompatibilityMatrixButton")
         copy_history_button.clicked.connect(self.copy_compatibility_matrix)
         compatibility_controls.addWidget(copy_history_button)
+        export_json_button = QPushButton("Export Sanitized JSON…")
+        export_json_button.setObjectName("exportCompatibilityJsonButton")
+        export_json_button.clicked.connect(self.export_compatibility_json)
+        compatibility_controls.addWidget(export_json_button)
+        export_markdown_button = QPushButton("Export Sanitized Markdown…")
+        export_markdown_button.setObjectName("exportCompatibilityMarkdownButton")
+        export_markdown_button.clicked.connect(self.export_compatibility_markdown)
+        compatibility_controls.addWidget(export_markdown_button)
         compatibility_controls.addStretch()
         compatibility_layout.addLayout(compatibility_controls)
         self.compatibility_history_status = QLabel()
@@ -3839,6 +3870,119 @@ class MainWindow(QMainWindow):
             lines.append("")
         QApplication.clipboard().setText("\n".join(lines).rstrip() + "\n")
         self.compatibility_history_status.setText("Copied local real-device compatibility observations to the clipboard.")
+
+    def _compatibility_export_is_available(self) -> bool:
+        return self._compatibility_history_error is None and bool(
+            latest_observations(self._compatibility_observations)
+        )
+
+    def _compatibility_report(self) -> CompatibilityReport:
+        return create_compatibility_report(
+            datetime.now(timezone.utc).isoformat(),
+            current_report_environment(APP_VERSION, is_frozen_runtime()),
+            self._compatibility_observations,
+        )
+
+    def _review_compatibility_export(self, title: str, content: str) -> bool:
+        dialog = QDialog(self)
+        dialog.setObjectName("compatibilityExportPreviewDialog")
+        dialog.setWindowTitle(title)
+        dialog.resize(900, 650)
+        layout = QVBoxLayout(dialog)
+        explanation = QLabel(
+            "Review the exact sanitized content before saving. Device names, raw identifiers, stored fingerprints, "
+            "and local paths are excluded or redacted. Device model, iOS version/build, connection type, "
+            "host/toolchain versions, and sanitized capability evidence remain. The app never uploads this report."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        preview = QPlainTextEdit()
+        preview.setObjectName("compatibilityExportPreview")
+        preview.setReadOnly(True)
+        preview.setPlainText(content)
+        layout.addWidget(preview, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.setObjectName("compatibilityExportPreviewButtons")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def export_compatibility_json(self) -> None:
+        if not self._compatibility_export_is_available():
+            QMessageBox.information(
+                self,
+                "No Real-Device Observations",
+                "Complete a Capability Matrix run against a connected device before exporting compatibility evidence.",
+            )
+            return
+        try:
+            report = self._compatibility_report()
+        except DeviceCompatibilityError as error:
+            QMessageBox.critical(self, "Could Not Prepare Compatibility Report", str(error))
+            return
+        if not self._review_compatibility_export(
+            "Review Sanitized Compatibility JSON",
+            render_compatibility_json(report),
+        ):
+            return
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+        suggested = Path.home() / f"iOSDeveloperToolkit-compatibility-{timestamp}.json"
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Sanitized Compatibility JSON",
+            str(suggested),
+            "JSON (*.json)",
+        )
+        if not selected:
+            return
+        destination = Path(selected)
+        if destination.suffix.casefold() != ".json":
+            destination = destination.with_suffix(".json")
+        try:
+            path = write_compatibility_json_report(destination, report)
+        except DeviceCompatibilityError as error:
+            QMessageBox.critical(self, "Could Not Export Compatibility Report", str(error))
+            return
+        self.compatibility_history_status.setText(f"Created sanitized compatibility JSON: {path}")
+
+    def export_compatibility_markdown(self) -> None:
+        if not self._compatibility_export_is_available():
+            QMessageBox.information(
+                self,
+                "No Real-Device Observations",
+                "Complete a Capability Matrix run against a connected device before exporting compatibility evidence.",
+            )
+            return
+        try:
+            report = self._compatibility_report()
+        except DeviceCompatibilityError as error:
+            QMessageBox.critical(self, "Could Not Prepare Compatibility Report", str(error))
+            return
+        if not self._review_compatibility_export(
+            "Review Sanitized Compatibility Markdown",
+            render_compatibility_markdown(report),
+        ):
+            return
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+        suggested = Path.home() / f"iOSDeveloperToolkit-compatibility-{timestamp}.md"
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Sanitized Compatibility Markdown",
+            str(suggested),
+            "Markdown (*.md)",
+        )
+        if not selected:
+            return
+        destination = Path(selected)
+        if destination.suffix.casefold() != ".md":
+            destination = destination.with_suffix(".md")
+        try:
+            path = write_compatibility_markdown_report(destination, report)
+        except DeviceCompatibilityError as error:
+            QMessageBox.critical(self, "Could Not Export Compatibility Report", str(error))
+            return
+        self.compatibility_history_status.setText(f"Created sanitized compatibility Markdown: {path}")
 
     def _capability_selection_changed(self) -> None:
         selected_rows = self.capability_table.selectionModel().selectedRows()

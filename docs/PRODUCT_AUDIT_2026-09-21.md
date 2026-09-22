@@ -128,7 +128,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 
 ### P3 — ecosystem growth and scale
 
-* Opt-in anonymized compatibility contribution workflow with a local preview and explicit export confirmation.
+* Maintain the opt-in sanitized compatibility export with an exact local preview, owner-only JSON and Markdown files, host/toolchain context, tested device family and build metadata, and no automatic upload.
 * Team/workspace import-export that remains local by default.
 * Notarized Developer ID distribution when an eligible signing identity exists.
 * Optional device-lab integration through external services, never a mandatory cloud account.
@@ -181,6 +181,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | 2026-09-22 | Added a guided external MVT handoff for consented decrypted-backup analysis. | 121 tests and a 110-action GUI smoke passed; tests cover executable provenance, secret-environment removal, backup structure/encryption checks, isolated output, explicit IOC arguments, offline defaults, version validation, and an end-to-end synthetic analysis process. | MVT stays separately installed; the toolkit accepts no password and never translates completion or absent findings into a clean-device verdict. |
 | 2026-09-22 | Added separately installed go-ios, idb Companion, and ipsw adapters with provenance validation. | 126 tests and a 134-action GUI smoke passed; tests cover catalog identity, discovery, executable hashing, changed-binary rejection, upstream version/build formats, secret and target-routing removal, and a synthetic validate/probe lifecycle. | These tools keep their own discovery, pairing, tunnel, target, network, licensing, and support models; only bounded inventory probes are exposed. |
 | 2026-09-22 | Added a focused Material for MkDocs documentation site and pull-request/push workflow. | `mkdocs build --strict --clean` passes locally; the site routes beginners, developers, investigators, release verifiers, and contributors to canonical repository material without copying the complete README. | GitHub Pages publication occurs only after a documentation change reaches `main`; the site-build dependency is not part of the application bundle. |
+| 2026-09-22 | Added previewed, sanitized JSON and Markdown export for real-device compatibility observations. | The 129-test suite and 136-action GUI smoke passed; focused tests cover removal of device identity and stored fingerprints, common path/email redaction, owner-only files, overwrite refusal, empty-history rejection, and both report formats. | Exports remain manual and local; model/build/connection metadata can still identify a small fleet, so the exact payload is previewed before saving and never uploaded. |
 
 ## Research sources
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -27,12 +28,18 @@ from ios_developer_toolkit.capability_matrix import (
 )
 from ios_developer_toolkit.command_catalog import command_presets
 from ios_developer_toolkit.device_compatibility import (
+    CompatibilityReportEnvironment,
     DeviceCompatibilityError,
     append_observation,
+    compatibility_report_mapping,
     compatibility_history_path,
+    create_compatibility_report,
     create_observation,
     latest_observations,
     load_observations,
+    render_compatibility_markdown,
+    write_compatibility_json_report,
+    write_compatibility_markdown_report,
 )
 from ios_developer_toolkit.models import IOSDevice
 
@@ -160,6 +167,92 @@ class CapabilityMatrixTests(unittest.TestCase):
         device = IOSDevice("DEVICE", "One", "iPhone14,5", "26.3.1", "23D123", "USB")
         with self.assertRaises(DeviceCompatibilityError):
             create_observation("2026-09-14T10:00:00+00:00", device, (untested_capability_results()[0],) * 2)
+
+    def test_sanitized_compatibility_report_omits_stable_identity_and_private_paths(self) -> None:
+        device = IOSDevice("PRIVATE-UDID", "Private iPhone", "iPhone14,5", "26.3.1", "23D123", "USB")
+        result = CapabilityResult(
+            "developer-image",
+            "Developer",
+            "Developer image",
+            "ready",
+            "Ready for PRIVATE-UDID",
+            "Mounted from /Users/julian/Private/DDI for analyst@example.com",
+            "No action required",
+        )
+        observation = create_observation("2026-09-14T12:00:00+00:00", device, (result,))
+        environment = CompatibilityReportEnvironment(
+            "0.3.4",
+            "15.6.1",
+            "arm64",
+            "3.13.7",
+            "source-python",
+            "11.15.1",
+            "6.9.3",
+        )
+        report = create_compatibility_report(
+            "2026-09-22T12:00:00+00:00",
+            environment,
+            (observation,),
+        )
+
+        payload = json.dumps(compatibility_report_mapping(report), sort_keys=True)
+        markdown = render_compatibility_markdown(report)
+
+        self.assertNotIn("PRIVATE-UDID", payload)
+        self.assertNotIn("Private iPhone", payload)
+        self.assertNotIn(observation.device_fingerprint, payload)
+        self.assertNotIn("/Users/julian", payload)
+        self.assertNotIn("analyst@example.com", payload)
+        self.assertIn("<local-path>", payload)
+        self.assertIn("<email-address>", payload)
+        self.assertIn("iPhone14,5", markdown)
+        self.assertIn("pymobiledevice3", markdown)
+
+    def test_compatibility_reports_are_owner_only_and_refuse_overwrite(self) -> None:
+        temporary_directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temporary_directory)
+        device = IOSDevice("DEVICE", "One", "iPad14,3", "26.3.1", "23D123", "USB")
+        observation = create_observation(
+            "2026-09-14T12:00:00+00:00",
+            device,
+            untested_capability_results(),
+        )
+        environment = CompatibilityReportEnvironment(
+            "0.3.4",
+            "15.6.1",
+            "arm64",
+            "3.13.7",
+            "frozen-app",
+            "11.15.1",
+            "6.9.3",
+        )
+        report = create_compatibility_report(
+            "2026-09-22T12:00:00+00:00",
+            environment,
+            (observation,),
+        )
+        json_path = write_compatibility_json_report(temporary_directory / "compatibility.json", report)
+        markdown_path = write_compatibility_markdown_report(temporary_directory / "compatibility.md", report)
+
+        self.assertEqual(os.stat(json_path).st_mode & 0o777, 0o600)
+        self.assertEqual(os.stat(markdown_path).st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads(json_path.read_text(encoding="utf-8"))["schema_version"], 1)
+        self.assertIn("## Observed device 1", markdown_path.read_text(encoding="utf-8"))
+        with self.assertRaises(DeviceCompatibilityError):
+            write_compatibility_json_report(json_path, report)
+
+    def test_compatibility_report_requires_completed_observations(self) -> None:
+        environment = CompatibilityReportEnvironment(
+            "0.3.4",
+            "15.6.1",
+            "arm64",
+            "3.13.7",
+            "source-python",
+            "11.15.1",
+            "6.9.3",
+        )
+        with self.assertRaises(DeviceCompatibilityError):
+            create_compatibility_report("2026-09-22T12:00:00+00:00", environment, ())
 
     @unittest.skipIf(shutil.which("xcrun") is None, "xcrun is unavailable")
     def test_xcode_tool_probe_uses_the_executable_command_wrapper(self) -> None:
