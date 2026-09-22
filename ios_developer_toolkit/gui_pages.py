@@ -250,7 +250,7 @@ def toolkit_stylesheet() -> str:
         #protocolStackSummary { font-family: Menlo; color: #34435a; }
         #connectionBanner { background: #e9f2ff; border: 1px solid #afcff8; border-radius: 8px; padding: 10px; }
         #collectionPrivacyWarning { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
-        #installedAppsPrivacyWarning, #backupEncryptionWarning, #locationPrivacyWarning, #capabilityMatrixBoundary { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
+        #installedAppsPrivacyWarning, #backupEncryptionWarning, #locationPrivacyWarning, #capabilityMatrixBoundary, #externalToolsBoundary { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
         #capabilityMatrixStatus { background: #e9f2ff; border: 1px solid #afcff8; border-radius: 8px; padding: 9px; }
         #appSubtitle { color: #596273; }
     """

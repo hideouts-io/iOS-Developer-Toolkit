@@ -9,7 +9,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Literal, Mapping
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRect, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import (
@@ -115,6 +115,21 @@ from ios_developer_toolkit.device_compatibility import (
     load_observations,
 )
 from ios_developer_toolkit.demo_mode import demo_connection_banner, demo_device
+from ios_developer_toolkit.external_tools import (
+    ExternalToolExecutable,
+    ExternalToolIdentifier,
+    ExternalToolInstallation,
+    ExternalToolSpec,
+    ExternalToolValidationError,
+    discover_external_tool_executables,
+    external_tool_command,
+    external_tool_environment,
+    external_tool_spec,
+    external_tool_specs,
+    inspect_external_tool_executable,
+    parse_external_tool_version,
+    validate_external_tool_installation,
+)
 from ios_developer_toolkit.gui_pages import (
     build_home_page,
     build_live_logs_page,
@@ -262,7 +277,13 @@ IPA_INSTALL_TIMEOUT_MS = 15 * 60_000
 COLLECTION_FINALIZATION_TIMEOUT_MS = 2 * 60_000
 XCODE_HANDOFF_TIMEOUT_MS = 60_000
 PROCESS_TERMINATE_GRACE_MS = 1_500
+EXTERNAL_TOOL_TIMEOUT_MS = 30_000
 MAX_SESSION_OPERATION_RECORDS = 250
+EXTERNAL_TOOL_OBJECT_SUFFIXES: Mapping[ExternalToolIdentifier, str] = {
+    "go-ios": "GoIos",
+    "idb": "Idb",
+    "ipsw": "Ipsw",
+}
 
 
 def application_icon_path() -> Path:
@@ -671,6 +692,19 @@ class MainWindow(QMainWindow):
         self._mvt_request: MVTAnalysisRequest | None = None
         self._mvt_ioc_paths: tuple[Path, ...] = ()
         self._mvt_temporary_config: tempfile.TemporaryDirectory[str] | None = None
+        self._external_tool_controller = FiniteProcessController(self)
+        self._external_tool_controller.completed.connect(self._external_tool_completed)
+        self._external_tool_installations: dict[ExternalToolIdentifier, ExternalToolInstallation] = {}
+        self._external_tool_pending_executable: ExternalToolExecutable | None = None
+        self._external_tool_active_identifier: ExternalToolIdentifier | None = None
+        self._external_tool_operation: Literal["validate", "probe"] | None = None
+        self._external_tool_fields: dict[ExternalToolIdentifier, QLineEdit] = {}
+        self._external_tool_statuses: dict[ExternalToolIdentifier, QLabel] = {}
+        self._external_tool_outputs: dict[ExternalToolIdentifier, QPlainTextEdit] = {}
+        self._external_tool_validate_buttons: dict[ExternalToolIdentifier, QPushButton] = {}
+        self._external_tool_probe_buttons: dict[ExternalToolIdentifier, QPushButton] = {}
+        self._external_tool_stop_buttons: dict[ExternalToolIdentifier, QPushButton] = {}
+        self._external_tool_path_buttons: dict[ExternalToolIdentifier, tuple[QPushButton, QPushButton]] = {}
         self._location_process: QProcess | None = None
         self._location_operation = ""
         self._location_arguments: tuple[str, ...] = ()
@@ -844,6 +878,7 @@ class MainWindow(QMainWindow):
             ("Backup", self._build_backup_tab()),
             ("Sideload IPA", self._build_sideload_tab()),
             ("Evidence Capture", self._build_collection_tab()),
+            ("Ecosystem Tools", self._build_external_tools_page()),
             ("Man Pages", self._build_manpages_page()),
             ("Scope & Safety", self._build_safety_tab()),
         )
@@ -931,6 +966,15 @@ class MainWindow(QMainWindow):
             "Offline mouse coordinate picker. For keyboard-first location entry, use the coordinate importer, latitude, and longitude fields."
         )
         self.location_map.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        for spec in external_tool_specs():
+            self._external_tool_fields[spec.identifier].setAccessibleName(f"{spec.title} executable path")
+            self._external_tool_fields[spec.identifier].setAccessibleDescription(
+                f"Absolute path to the separately installed {spec.executable_name} executable."
+            )
+            self._external_tool_outputs[spec.identifier].setAccessibleName(f"{spec.title} adapter output")
+            self._external_tool_outputs[spec.identifier].setAccessibleDescription(
+                "Session-local raw version validation or read-only probe output from the external tool."
+            )
         QWidget.setTabOrder(self.device_combo, self.demo_mode_button)
         QWidget.setTabOrder(self.demo_mode_button, self.refresh_devices_button)
         QWidget.setTabOrder(self.refresh_devices_button, self.reconnect_device_button)
@@ -959,6 +1003,7 @@ class MainWindow(QMainWindow):
             ("Meta+8", "Backup"),
             ("Meta+9", "Sideload IPA"),
             ("Meta+0", "Evidence Capture"),
+            ("Meta+Shift+E", "Ecosystem Tools"),
             ("Meta+Shift+M", "Man Pages"),
             ("Meta+Shift+S", "Scope & Safety"),
         )
@@ -996,6 +1041,7 @@ class MainWindow(QMainWindow):
             "Backup": self.backup_destination_field,
             "Sideload IPA": self.ipa_path_field,
             "Evidence Capture": self.case_title_field,
+            "Ecosystem Tools": self._external_tool_fields["go-ios"],
             "Man Pages": self.manpage_search_field,
             "Scope & Safety": self.navigation_list,
         }
@@ -1062,6 +1108,7 @@ class MainWindow(QMainWindow):
             "<tr><td>⌘ F</td><td>Focus search in Command Center, Man Pages, Installed Apps, or Location Lab</td></tr>"
             "<tr><td>⌘ ⌥ ← / ⌘ ⌥ →</td><td>Previous / next workspace</td></tr>"
             "<tr><td>⌘ 1–0</td><td>Home through Evidence Capture</td></tr>"
+            "<tr><td>⌘ ⇧ E</td><td>Ecosystem Tools</td></tr>"
             "<tr><td>⌘ ⇧ M</td><td>Man Pages</td></tr>"
             "<tr><td>⌘ ⇧ S</td><td>Scope &amp; Safety</td></tr>"
             "<tr><td>⌘ /</td><td>Open this reference</td></tr>"
@@ -1098,6 +1145,7 @@ class MainWindow(QMainWindow):
             "Backup": "Prepare MobileBackup2, external UFADE acquisition, or consented MVT analysis.",
             "Sideload IPA": "Inspect a local IPA before an eligible installation attempt.",
             "Evidence Capture": "Prepare a scoped case and bounded evidence collection.",
+            "Ecosystem Tools": "Validate optional go-ios, idb, and ipsw adapters and run bounded read-only probes.",
             "Man Pages": "Browse version-matched command routes and live help.",
             "Scope & Safety": "Review authorization, privacy, and interpretation boundaries.",
         }
@@ -1209,6 +1257,17 @@ class MainWindow(QMainWindow):
             for identifier, title, summary, keywords, eligible in eligible_actions
             if eligible
         )
+        entries.extend(
+            action_palette_entry(
+                f"action:external-tool:{spec.identifier}",
+                spec.probe_title,
+                "Eligible external read action",
+                f"Run the validated {spec.title} adapter probe after reviewing its independent target boundary.",
+                ("external", "adapter", spec.identifier, "inventory", "provenance"),
+            )
+            for spec in external_tool_specs()
+            if self._external_tool_probe_buttons[spec.identifier].isEnabled()
+        )
         if not self._console_controller.is_running():
             device_available = self.selected_device() is not None
             entries.extend(
@@ -1230,6 +1289,21 @@ class MainWindow(QMainWindow):
             return
         if identifier.startswith("preset:"):
             self._select_palette_preset(identifier.removeprefix("preset:"))
+            return
+        if identifier.startswith("action:external-tool:"):
+            current_identifiers = {entry.identifier for entry in self._eligible_action_palette_entries()}
+            if identifier not in current_identifiers:
+                QMessageBox.information(
+                    self,
+                    "Action No Longer Eligible",
+                    "The validated external tool or process state changed while the palette was open.",
+                )
+                return
+            tool_identifier = identifier.removeprefix("action:external-tool:")
+            matching = tuple(spec.identifier for spec in external_tool_specs() if spec.identifier == tool_identifier)
+            if len(matching) != 1:
+                raise KeyError(f"Unknown external-tool action palette entry: {identifier}")
+            self.run_external_tool_probe(matching[0])
             return
         actions: Mapping[str, Callable[[], None]] = {
             "utility:session-activity": self.show_session_activity,
@@ -1402,6 +1476,13 @@ class MainWindow(QMainWindow):
             SupportStatus("developer_mode", self.developer_mode_status.text()),
             SupportStatus("capability_matrix", self.capability_status.text()),
             SupportStatus("command_drift", self.command_drift_status.text()),
+            *(
+                SupportStatus(
+                    f"external_tool_{spec.identifier.replace('-', '_')}",
+                    self._external_tool_statuses[spec.identifier].text(),
+                )
+                for spec in external_tool_specs()
+            ),
         )
         redactions = tuple(
             value
@@ -2884,6 +2965,386 @@ class MainWindow(QMainWindow):
         self._update_command_controls()
         self._update_command_drift_controls()
         return page
+
+    def _build_external_tools_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+
+        heading = QLabel("Ecosystem Tools")
+        heading.setObjectName("pageTitle")
+        heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
+        layout.addWidget(heading)
+        explanation = QLabel(
+            "Connect optional third-party tools without bundling or silently trusting them. Each adapter records the "
+            "resolved executable, SHA-256, and version or build identity before enabling one bounded read-only probe."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        boundary = QLabel(
+            "These tools use their own discovery, pairing, tunnel, simulator, device, network, and support models. "
+            "Their output is not merged into toolkit capability claims. Choosing an executable authorizes third-party "
+            "code to run locally only after the displayed path and hash are confirmed."
+        )
+        boundary.setObjectName("externalToolsBoundary")
+        boundary.setWordWrap(True)
+        layout.addWidget(boundary)
+
+        self.external_tool_tabs = QTabWidget()
+        self.external_tool_tabs.setObjectName("externalToolTabs")
+        for spec in external_tool_specs():
+            self.external_tool_tabs.addTab(self._build_external_tool_tab(spec), spec.title)
+        layout.addWidget(self.external_tool_tabs, 1)
+        self._update_external_tool_controls()
+        return page
+
+    def _build_external_tool_tab(self, spec: ExternalToolSpec) -> QWidget:
+        suffix = EXTERNAL_TOOL_OBJECT_SUFFIXES[spec.identifier]
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(10)
+
+        scope = QLabel(
+            f"<b>{spec.title}</b> · {spec.license_name} · separately installed<br>{spec.scope}"
+        )
+        scope.setWordWrap(True)
+        layout.addWidget(scope)
+
+        path_layout = QHBoxLayout()
+        path_field = QLineEdit()
+        path_field.setObjectName(f"external{suffix}ExecutablePath")
+        path_field.setPlaceholderText(f"Absolute path to {spec.executable_name}")
+        path_field.textChanged.connect(self._external_tool_text_handler(spec.identifier))
+        path_layout.addWidget(path_field, 1)
+        choose_button = QPushButton("Choose…")
+        choose_button.setObjectName(f"external{suffix}ChooseButton")
+        choose_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.choose_external_tool))
+        path_layout.addWidget(choose_button)
+        find_button = QPushButton("Find Installed")
+        find_button.setObjectName(f"external{suffix}FindButton")
+        find_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.find_external_tool))
+        path_layout.addWidget(find_button)
+        layout.addLayout(path_layout)
+
+        status = QLabel("Not validated. The toolkit has not executed this optional tool.")
+        status.setObjectName(f"external{suffix}Status")
+        status.setWordWrap(True)
+        layout.addWidget(status)
+
+        actions = QHBoxLayout()
+        validate_button = QPushButton("Validate Version && SHA-256")
+        validate_button.setObjectName(f"external{suffix}ValidateButton")
+        validate_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.validate_external_tool))
+        actions.addWidget(validate_button)
+        probe_button = QPushButton(spec.probe_title)
+        probe_button.setObjectName(f"external{suffix}ProbeButton")
+        probe_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.run_external_tool_probe))
+        actions.addWidget(probe_button)
+        stop_button = QPushButton("Stop")
+        stop_button.setObjectName(f"external{suffix}StopButton")
+        stop_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.stop_external_tool))
+        actions.addWidget(stop_button)
+        actions.addStretch()
+        layout.addLayout(actions)
+
+        resources = QHBoxLayout()
+        setup_button = QPushButton("Copy Setup Command")
+        setup_button.setObjectName(f"external{suffix}SetupButton")
+        setup_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.copy_external_tool_setup))
+        resources.addWidget(setup_button)
+        documentation_button = QPushButton("Official Documentation")
+        documentation_button.setObjectName(f"external{suffix}DocumentationButton")
+        documentation_button.clicked.connect(
+            self._external_tool_button_handler(spec.identifier, self.open_external_tool_documentation)
+        )
+        resources.addWidget(documentation_button)
+        repository_button = QPushButton("Source Repository")
+        repository_button.setObjectName(f"external{suffix}RepositoryButton")
+        repository_button.clicked.connect(
+            self._external_tool_button_handler(spec.identifier, self.open_external_tool_repository)
+        )
+        resources.addWidget(repository_button)
+        resources.addStretch()
+        layout.addLayout(resources)
+
+        output = QPlainTextEdit()
+        output.setObjectName(f"external{suffix}Output")
+        output.setReadOnly(True)
+        output.setMaximumBlockCount(12000)
+        output.setPlaceholderText(
+            "Version validation and probe output appears here. It remains session-local unless you explicitly preserve it."
+        )
+        layout.addWidget(output, 1)
+
+        self._external_tool_fields[spec.identifier] = path_field
+        self._external_tool_statuses[spec.identifier] = status
+        self._external_tool_outputs[spec.identifier] = output
+        self._external_tool_validate_buttons[spec.identifier] = validate_button
+        self._external_tool_probe_buttons[spec.identifier] = probe_button
+        self._external_tool_stop_buttons[spec.identifier] = stop_button
+        self._external_tool_path_buttons[spec.identifier] = (choose_button, find_button)
+        return tab
+
+    def _external_tool_button_handler(
+        self,
+        identifier: ExternalToolIdentifier,
+        action: Callable[[ExternalToolIdentifier], None],
+    ) -> Callable[[bool], None]:
+        def handle(checked: bool) -> None:
+            del checked
+            action(identifier)
+
+        return handle
+
+    def _external_tool_text_handler(
+        self,
+        identifier: ExternalToolIdentifier,
+    ) -> Callable[[str], None]:
+        def handle(value: str) -> None:
+            self._invalidate_external_tool(identifier, value)
+
+        return handle
+
+    def _invalidate_external_tool(self, identifier: ExternalToolIdentifier, value: str) -> None:
+        del value
+        self._external_tool_installations.pop(identifier, None)
+        self._external_tool_statuses[identifier].setText(
+            "Not validated. The toolkit has not executed this optional tool."
+        )
+        self._update_external_tool_controls()
+
+    def external_tool_path(self, identifier: ExternalToolIdentifier) -> Path:
+        value = self._external_tool_fields[identifier].text().strip()
+        if not value:
+            spec = external_tool_spec(identifier)
+            raise ExternalToolValidationError(f"Choose an absolute path to {spec.executable_name}")
+        return Path(value)
+
+    def choose_external_tool(self, identifier: ExternalToolIdentifier) -> None:
+        spec = external_tool_spec(identifier)
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Choose separately installed {spec.executable_name}",
+            self._external_tool_fields[identifier].text() or str(Path.home()),
+        )
+        if selected:
+            self._external_tool_fields[identifier].setText(selected)
+
+    def find_external_tool(self, identifier: ExternalToolIdentifier) -> None:
+        spec = external_tool_spec(identifier)
+        candidates = discover_external_tool_executables(spec, Path.home(), os.environ.get("PATH", ""))
+        if not candidates:
+            QMessageBox.information(
+                self,
+                f"{spec.title} Not Found",
+                f"No executable named {spec.executable_name!r} was found in PATH, ~/.local/bin, "
+                "/opt/homebrew/bin, or /usr/local/bin. Use the official setup command or choose a reviewed path.",
+            )
+            return
+        self._external_tool_fields[identifier].setText(str(candidates[0]))
+        self._external_tool_statuses[identifier].setText(
+            f"Found {len(candidates)} candidate(s). Validate the selected executable before probing."
+        )
+
+    def copy_external_tool_setup(self, identifier: ExternalToolIdentifier) -> None:
+        spec = external_tool_spec(identifier)
+        QApplication.clipboard().setText("\n".join(spec.setup_commands))
+        self._external_tool_outputs[identifier].appendPlainText(
+            "Copied official setup command for manual review and execution in Terminal:\n"
+            + "\n".join(spec.setup_commands)
+        )
+
+    def open_external_tool_documentation(self, identifier: ExternalToolIdentifier) -> None:
+        spec = external_tool_spec(identifier)
+        if not QDesktopServices.openUrl(QUrl(spec.documentation_url)):
+            QMessageBox.critical(
+                self,
+                "Could Not Open Documentation",
+                f"macOS could not open the official {spec.title} documentation:\n{spec.documentation_url}",
+            )
+
+    def open_external_tool_repository(self, identifier: ExternalToolIdentifier) -> None:
+        spec = external_tool_spec(identifier)
+        if not QDesktopServices.openUrl(QUrl(spec.repository_url)):
+            QMessageBox.critical(
+                self,
+                "Could Not Open Repository",
+                f"macOS could not open the official {spec.title} repository:\n{spec.repository_url}",
+            )
+
+    def validate_external_tool(self, identifier: ExternalToolIdentifier) -> None:
+        if self._external_tool_controller.is_running():
+            QMessageBox.warning(self, "External Tool Running", "Stop or wait for the active external tool first.")
+            return
+        spec = external_tool_spec(identifier)
+        try:
+            executable = inspect_external_tool_executable(spec, self.external_tool_path(identifier))
+        except (ExternalToolValidationError, OSError) as error:
+            QMessageBox.critical(self, f"Invalid {spec.title} Executable", str(error))
+            self._external_tool_statuses[identifier].setText(f"Validation rejected: {error}")
+            return
+        warning = (
+            f"Run this separately installed {spec.title} executable to read its version or build identity?\n\n"
+            f"Path: {executable.path}\n"
+            f"SHA-256: {executable.sha256}\n"
+            f"Arguments: {shlex.join(spec.version_arguments)}\n\n"
+            "This executes third-party code on the Mac. The toolkit does not install, update, sandbox, endorse, or "
+            "redistribute it. Confirm only if you recognize and trust the exact path and hash."
+        )
+        if not self._confirm(f"Validate {spec.title}", warning):
+            return
+        try:
+            self._start_external_tool_process(identifier, "validate", executable, spec.version_arguments)
+        except (ExternalToolValidationError, OSError) as error:
+            QMessageBox.critical(self, f"Could Not Start {spec.title}", str(error))
+            self._external_tool_statuses[identifier].setText(f"Validation did not start: {error}")
+
+    def run_external_tool_probe(self, identifier: ExternalToolIdentifier) -> None:
+        if self._external_tool_controller.is_running():
+            QMessageBox.warning(self, "External Tool Running", "Stop or wait for the active external tool first.")
+            return
+        spec = external_tool_spec(identifier)
+        installation = self._external_tool_installations.get(identifier)
+        if installation is None:
+            QMessageBox.critical(self, f"{spec.title} Not Validated", "Validate the selected executable first.")
+            return
+        try:
+            validated = validate_external_tool_installation(spec, installation)
+        except (ExternalToolValidationError, OSError) as error:
+            self._external_tool_installations.pop(identifier, None)
+            self._external_tool_statuses[identifier].setText(f"Probe rejected: {error}")
+            self._update_external_tool_controls()
+            QMessageBox.critical(self, f"Could Not Run {spec.title}", str(error))
+            return
+        warning = (
+            f"Run the bounded read-only {spec.title} probe?\n\n"
+            f"Identity: {validated.version_or_build}\n"
+            f"Path: {validated.executable.path}\n"
+            f"SHA-256: {validated.executable.sha256}\n"
+            f"Arguments: {shlex.join(spec.probe_arguments)}\n\n"
+            f"{spec.scope}\n\n"
+            "The external tool chooses its own visible targets and does not use the toolkit's selected-device state. "
+            "Its output may contain device or simulator identifiers and remains session-local unless you preserve it."
+        )
+        if not self._confirm(f"Run {spec.probe_title}", warning):
+            return
+        try:
+            self._start_external_tool_process(identifier, "probe", validated.executable, spec.probe_arguments)
+        except (ExternalToolValidationError, OSError) as error:
+            QMessageBox.critical(self, f"Could Not Start {spec.title}", str(error))
+            self._external_tool_statuses[identifier].setText(f"Probe did not start: {error}")
+
+    def _start_external_tool_process(
+        self,
+        identifier: ExternalToolIdentifier,
+        operation: Literal["validate", "probe"],
+        executable: ExternalToolExecutable,
+        arguments: tuple[str, ...],
+    ) -> None:
+        if self._external_tool_controller.is_running():
+            raise RuntimeError("Cannot start an external tool while another adapter process is running")
+        spec = external_tool_spec(identifier)
+        current = inspect_external_tool_executable(spec, executable.path)
+        if current.sha256 != executable.sha256:
+            raise ExternalToolValidationError(
+                f"{spec.title} executable changed after review; inspect and validate it again"
+            )
+        self._external_tool_active_identifier = identifier
+        self._external_tool_operation = operation
+        self._external_tool_pending_executable = executable if operation == "validate" else None
+        output = self._external_tool_outputs[identifier]
+        output.clear()
+        output.appendPlainText(
+            f"$ {executable.path} {shlex.join(arguments)}\n"
+            f"Executable SHA-256: {executable.sha256}\n"
+            "Inherited tool-routing and secret environment variables are removed for this adapter.\n"
+        )
+        title = f"Validate {spec.title}" if operation == "validate" else spec.probe_title
+        self._begin_operation(
+            "external-tool",
+            self._host_operation_context(title, "Ecosystem Tools", f"external {spec.title} CLI", ()),
+        )
+        self._external_tool_statuses[identifier].setText(f"{title} is running with a 30-second deadline…")
+        request = finite_process_request(
+            external_tool_command(spec, executable),
+            arguments,
+            external_tool_environment(base_environment(), spec),
+            EXTERNAL_TOOL_TIMEOUT_MS,
+            PROCESS_TERMINATE_GRACE_MS,
+        )
+        self._external_tool_controller.start(request)
+        self._update_external_tool_controls()
+
+    def _external_tool_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Unexpected external-tool result type: {type(result_object).__name__}")
+        identifier = self._external_tool_active_identifier
+        operation = self._external_tool_operation
+        if identifier is None or operation is None:
+            raise RuntimeError("External tool completed without active adapter state")
+        spec = external_tool_spec(identifier)
+        output = self._external_tool_outputs[identifier]
+        combined = (result_object.stdout + result_object.stderr).decode("utf-8", errors="replace")
+        if combined:
+            output.appendPlainText(combined.rstrip())
+        if result_object.error_message:
+            output.appendPlainText(f"Process error: {result_object.error_message}")
+        output.appendPlainText(
+            f"Outcome: {result_object.outcome}; exit: "
+            f"{'unavailable' if result_object.exit_code is None else result_object.exit_code}"
+        )
+        self._complete_operation("external-tool", result_object)
+        if result_object.outcome == "succeeded" and operation == "validate":
+            pending = self._external_tool_pending_executable
+            if pending is None:
+                raise RuntimeError("External tool validation completed without a pending executable")
+            try:
+                identity = parse_external_tool_version(spec, combined)
+            except ExternalToolValidationError as error:
+                self._external_tool_installations.pop(identifier, None)
+                self._external_tool_statuses[identifier].setText(f"Version validation failed: {error}")
+            else:
+                self._external_tool_installations[identifier] = ExternalToolInstallation(pending, identity)
+                self._external_tool_statuses[identifier].setText(
+                    f"Validated {spec.title} {identity}; SHA-256 {pending.sha256}. Read-only probe is enabled."
+                )
+        elif result_object.outcome == "succeeded" and operation == "probe":
+            self._external_tool_statuses[identifier].setText(
+                f"{spec.probe_title} completed. Review the raw third-party output; it is not a toolkit capability verdict."
+            )
+        else:
+            self._external_tool_statuses[identifier].setText(
+                f"{spec.title} {operation} {result_object.outcome}; review the complete output."
+            )
+            if operation == "validate":
+                self._external_tool_installations.pop(identifier, None)
+        self._external_tool_active_identifier = None
+        self._external_tool_operation = None
+        self._external_tool_pending_executable = None
+        self._update_external_tool_controls()
+
+    def stop_external_tool(self, identifier: ExternalToolIdentifier) -> None:
+        if self._external_tool_active_identifier != identifier or not self._external_tool_controller.is_running():
+            return
+        spec = external_tool_spec(identifier)
+        self._external_tool_statuses[identifier].setText(f"Stopping {spec.title}…")
+        self._external_tool_controller.cancel()
+
+    def _update_external_tool_controls(self) -> None:
+        running = self._external_tool_controller.is_running()
+        active = self._external_tool_active_identifier
+        for spec in external_tool_specs():
+            identifier = spec.identifier
+            has_path = bool(self._external_tool_fields[identifier].text().strip())
+            self._external_tool_fields[identifier].setEnabled(not running)
+            choose_button, find_button = self._external_tool_path_buttons[identifier]
+            choose_button.setEnabled(not running)
+            find_button.setEnabled(not running)
+            self._external_tool_validate_buttons[identifier].setEnabled(not running and has_path)
+            self._external_tool_probe_buttons[identifier].setEnabled(
+                not running and identifier in self._external_tool_installations
+            )
+            self._external_tool_stop_buttons[identifier].setEnabled(running and active == identifier)
 
     def _build_manpages_page(self) -> QWidget:
         page = QWidget()
@@ -6804,6 +7265,7 @@ class MainWindow(QMainWindow):
         backup_running = self._backup_controller.is_running()
         collection_running = self._collection_controller.is_running()
         mvt_running = self._mvt_controller.is_running()
+        external_tool_running = self._external_tool_controller.is_running()
         critical_processes = tuple(
             process
             for process in (self._location_process,)
@@ -6817,13 +7279,14 @@ class MainWindow(QMainWindow):
             or backup_running
             or collection_running
             or mvt_running
+            or external_tool_running
             or self._console_controller.is_running()
             or critical_processes
         )
         if active_operations and not self._close_after_collection:
             should_close = self._confirm(
                 "Stop Active Operations?",
-                "A DDI, evidence, app, backup, MVT, Location Lab, or Command Center operation is still running. "
+                "A DDI, evidence, app, backup, MVT, ecosystem-tool, Location Lab, or Command Center operation is still running. "
                 "Stop it, allow cleanup/finalization, and close the app?",
             )
             if not should_close:
@@ -6850,6 +7313,7 @@ class MainWindow(QMainWindow):
         self._backup_controller.shutdown(10000, 3000)
         self._mvt_controller.shutdown(10000, 3000)
         self._clear_mvt_temporary_config()
+        self._external_tool_controller.shutdown(10000, 3000)
         self._collection_controller.shutdown(10000, 3000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:

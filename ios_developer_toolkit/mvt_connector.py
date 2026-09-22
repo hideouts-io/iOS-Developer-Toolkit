@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import plistlib
 import re
@@ -9,6 +8,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ios_developer_toolkit.runtime import ExecutableCommand
+from ios_developer_toolkit.file_integrity import sha256_file
 
 
 MVT_REPOSITORY_URL = "https://github.com/mvt-project/mvt"
@@ -83,14 +83,6 @@ def discover_mvt_executables(home: Path, path_environment: str) -> tuple[Path, .
     return tuple(candidates)
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as input_file:
-        for block in iter(lambda: input_file.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def inspect_mvt_executable(path: Path) -> MVTExecutable:
     expanded = path.expanduser()
     if not expanded.is_absolute():
@@ -100,7 +92,7 @@ def inspect_mvt_executable(path: Path) -> MVTExecutable:
         raise MVTValidationError(f"MVT executable does not exist: {resolved}")
     if not os.access(resolved, os.X_OK):
         raise MVTValidationError(f"MVT executable is not executable: {resolved}")
-    return MVTExecutable(resolved, _sha256_file(resolved))
+    return MVTExecutable(resolved, sha256_file(resolved))
 
 
 def mvt_command(executable: MVTExecutable) -> ExecutableCommand:

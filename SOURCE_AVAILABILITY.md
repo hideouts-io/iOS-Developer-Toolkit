@@ -14,4 +14,4 @@ The release-critical upstream source locations and license information are recor
 
 PySide6/Qt, Nuitka, CPython, and every other dependency remain subject to their own terms. Consult the generated `Contents/Resources/Licenses/` inventory in the application and the matching SBOM for the exact package set. This document is an availability and attribution statement, not legal advice.
 
-Optional UFADE and MVT integrations launch user-managed external installations. Their source is not part of the application bundle or release SBOM; consult their upstream repositories and licenses for the exact external version selected by the operator.
+Optional UFADE, MVT, go-ios, idb, and ipsw integrations launch user-managed external installations. Their source is not part of the application bundle or release SBOM; consult their upstream repositories and licenses for the exact external version selected by the operator. The Ecosystem Tools workspace records the resolved executable path, SHA-256, and reported version or build identity for go-ios, idb Companion, and ipsw before enabling a probe.

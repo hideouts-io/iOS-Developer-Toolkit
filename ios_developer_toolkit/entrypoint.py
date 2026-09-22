@@ -86,6 +86,7 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     from ios_developer_toolkit.action_palette import ActionPaletteDialog
     from ios_developer_toolkit.app import MainWindow
     from ios_developer_toolkit.backup_protocol import BackupRequest
+    from ios_developer_toolkit.external_tools import external_tool_spec, inspect_external_tool_executable
     from ios_developer_toolkit.mvt_connector import create_mvt_analysis_request
     from ios_developer_toolkit.operation_history import OperationHistoryDialog
 
@@ -274,6 +275,56 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
             raise RuntimeError(f"GUI MVT analysis did not create isolated output: {window.mvt_output.toPlainText()}")
         if "does not prove" not in window.mvt_status.text():
             raise RuntimeError("GUI MVT completion omitted the no-clean-device interpretation boundary")
+    with tempfile.TemporaryDirectory() as external_tool_temporary_directory:
+        external_root = Path(external_tool_temporary_directory)
+        go_ios_path = external_root / "ios"
+        go_ios_path.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = \"--version\" ]; then\n"
+            "  printf '{\"version\":\"1.3.2-smoke\"}\\n'\n"
+            "  exit 0\n"
+            "fi\n"
+            "printf '{\"deviceList\":[{\"name\":\"Synthetic iPhone\",\"udid\":\"REDACTED\"}]}\\n'\n",
+            encoding="utf-8",
+        )
+        go_ios_path.chmod(0o700)
+        go_ios_spec = external_tool_spec("go-ios")
+        go_ios_executable = inspect_external_tool_executable(go_ios_spec, go_ios_path)
+        window._external_tool_fields["go-ios"].setText(str(go_ios_path))
+        window._start_external_tool_process(
+            "go-ios",
+            "validate",
+            go_ios_executable,
+            go_ios_spec.version_arguments,
+        )
+        external_validation_deadline = time.monotonic() + 10
+        while window._external_tool_controller.is_running() and time.monotonic() < external_validation_deadline:
+            application.processEvents()
+            time.sleep(0.001)
+        application.processEvents()
+        installation = window._external_tool_installations.get("go-ios")
+        if window._external_tool_controller.is_running() or installation is None:
+            raise RuntimeError(
+                f"GUI go-ios validation did not complete: {window._external_tool_outputs['go-ios'].toPlainText()}"
+            )
+        if installation.version_or_build != "1.3.2-smoke":
+            raise RuntimeError("GUI go-ios adapter retained an unexpected version")
+        window._start_external_tool_process(
+            "go-ios",
+            "probe",
+            installation.executable,
+            go_ios_spec.probe_arguments,
+        )
+        external_probe_deadline = time.monotonic() + 10
+        while window._external_tool_controller.is_running() and time.monotonic() < external_probe_deadline:
+            application.processEvents()
+            time.sleep(0.001)
+        application.processEvents()
+        external_output = window._external_tool_outputs["go-ios"].toPlainText()
+        if window._external_tool_controller.is_running() or "Synthetic iPhone" not in external_output:
+            raise RuntimeError(f"GUI go-ios probe did not preserve output: {external_output}")
+        if "not a toolkit capability verdict" not in window._external_tool_statuses["go-ios"].text():
+            raise RuntimeError("GUI external-tool probe omitted the interpretation boundary")
     expected_shortcuts = {
         "shortcutRetryDeviceScan",
         "shortcutShowActionPalette",
@@ -283,6 +334,7 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         "shortcutPreviousWorkspace",
         "shortcutNextWorkspace",
         "shortcutOpenCommandCenter",
+        "shortcutOpenEcosystemTools",
         "shortcutOpenManPages",
         "shortcutOpenScopeAndSafety",
     }
