@@ -91,7 +91,7 @@ Release `v0.3.4` combines the complete 12-workspace interface with the latest co
 - Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
 - Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
 - app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one selected-device workflow;
-- native Apple Silicon and Intel release ZIPs are built separately and verified with 83 tests, embedded CLI checks, a 90-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 85 tests, embedded CLI checks, a 90-button GUI smoke test, architecture inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
 The README contains 17 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
@@ -687,7 +687,7 @@ The collector retries failed snapshots once, keeps the final artifact and a comp
 
 ![Man Pages and Possibilities workspace](docs/screenshots/man-pages.png)
 
-The Man Pages browser indexes 59 top-level and nested command routes. Selecting a route is immediate and does not start a process or contact the device. Click **Refresh Live Help** when you want the project-local executable's verbatim `--help` output. You can cancel a slow request, and the toolkit stops it automatically after 15 seconds so the page cannot remain stuck on “Loading live help.” Successful results are cached for the current app session. You can also copy the command prefix or send it to Command Center's Advanced Mode.
+The Man Pages browser indexes 59 top-level and nested command routes. Selecting a route is immediate and does not start a process or contact the device. Click **Refresh Live Help** when you want the project-local executable's verbatim `--help` output. The shared finite-operation controller drains output at completion, accepts help written to either output channel, supports cancellation and clean relaunch, and stops a request automatically after 15 seconds so the page cannot remain stuck on “Loading live help.” Successful results are cached for the current app session. You can also copy the command prefix or send it to Command Center's Advanced Mode.
 
 This is the safest source for exact syntax in the installed environment. A command listed by the client is still not proof that the selected device build advertises the corresponding Apple service.
 
@@ -1041,7 +1041,7 @@ Physical-device validation is opt-in and is not required for pull requests. Use 
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 83 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 90-button offscreen GUI smoke test, verifies the Mach-O architecture and its macOS 13.0 load-command floor, embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 85 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 90-button offscreen GUI smoke test, verifies live help from inside the app, verifies the Mach-O architecture and its macOS 13.0 load-command floor, embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The builder requires `MACOSX_DEPLOYMENT_TARGET=13.0`. It rejects a bundle whose executable targets a newer macOS version, so local release builds should use a Python toolchain that can produce macOS 13 binaries; GitHub release CI supplies this target explicitly.
 

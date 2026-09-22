@@ -572,15 +572,10 @@ class MainWindow(QMainWindow):
         self._current_preset: CommandPreset | None = None
         self._preset_parameter_fields: dict[str, QLineEdit] = {}
         self._manpages = manpage_entries()
-        self._manpage_process: QProcess | None = None
-        self._manpage_stdout = bytearray()
-        self._manpage_stderr = bytearray()
+        self._manpage_controller = FiniteProcessController(self)
+        self._manpage_controller.completed.connect(self._manpage_completed)
         self._manpage_cache: dict[tuple[str, ...], str] = {}
         self._manpage_active_path: tuple[str, ...] | None = None
-        self._manpage_cancel_reason: str | None = None
-        self._manpage_timeout_timer = QTimer(self)
-        self._manpage_timeout_timer.setSingleShot(True)
-        self._manpage_timeout_timer.timeout.connect(self._manpage_timed_out)
         self._command_drift_process: QProcess | None = None
         self._command_drift_stdout = bytearray()
         self._command_drift_stderr = bytearray()
@@ -5307,7 +5302,7 @@ class MainWindow(QMainWindow):
         cached_help = self._manpage_cache.get(entry.command_path)
         if cached_help is not None:
             self.manpage_output.setPlainText(cached_help)
-        elif self._manpage_process is None:
+        elif not self._manpage_controller.is_running():
             self.manpage_output.setPlainText(
                 f"{entry.title}\n\nCommand prefix: {prefix}\nCategory: {entry.category}\n\n"
                 "Click Refresh Live Help to query the installed pymobiledevice3 executable. Selection alone never "
@@ -5344,99 +5339,65 @@ class MainWindow(QMainWindow):
         if entry is None:
             QMessageBox.information(self, "No Help Topic", "Select a command family first.")
             return
-        if self._manpage_process is not None:
+        if self._manpage_controller.is_running():
             QMessageBox.warning(self, "Help Loading", "Wait for the current help page to finish loading.")
             return
-        self._manpage_stdout.clear()
-        self._manpage_stderr.clear()
         self._manpage_active_path = entry.command_path
-        self._manpage_cancel_reason = None
         self.manpage_output.setPlainText(
             "Loading live help from the installed pymobiledevice3…\n\n"
             "This can take several seconds on the first Python import. Use Cancel Loading to stop immediately."
         )
-        process = QProcess(self)
-        process.setProgram(str(self._pmd3.program))
-        process.setArguments(list(command_arguments(self._pmd3, (*entry.command_path, "--help"))))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.readyReadStandardOutput.connect(self._read_manpage_stdout)
-        process.readyReadStandardError.connect(self._read_manpage_stderr)
-        process.finished.connect(self._manpage_finished)
-        process.errorOccurred.connect(self._manpage_error)
-        self._manpage_process = process
+        self._manpage_controller.start(
+            finite_process_request(
+                self._pmd3,
+                (*entry.command_path, "--help"),
+                base_environment(),
+                MANPAGE_HELP_TIMEOUT_MS,
+                MANPAGE_HELP_KILL_DELAY_MS,
+            )
+        )
         self._update_manpage_controls()
-        process.start()
-        self._manpage_timeout_timer.start(MANPAGE_HELP_TIMEOUT_MS)
 
-    def _read_manpage_stdout(self) -> None:
-        if self._manpage_process is not None:
-            self._manpage_stdout.extend(bytes(self._manpage_process.readAllStandardOutput()))
-
-    def _read_manpage_stderr(self) -> None:
-        if self._manpage_process is not None:
-            self._manpage_stderr.extend(bytes(self._manpage_process.readAllStandardError()))
-
-    def _manpage_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self._manpage_timeout_timer.stop()
-        self._read_manpage_stdout()
-        self._read_manpage_stderr()
-        stdout = self._manpage_stdout.decode("utf-8", errors="replace")
-        stderr = self._manpage_stderr.decode("utf-8", errors="replace")
-        if self._manpage_cancel_reason is not None:
-            partial_output = stdout or stderr
-            suffix = f"\n\nPartial output:\n{partial_output}" if partial_output else ""
-            self.manpage_output.setPlainText(f"{self._manpage_cancel_reason}{suffix}")
-        elif exit_code == 0 and stdout:
+    def _manpage_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        stdout = result_object.stdout.decode("utf-8", errors="replace")
+        stderr = result_object.stderr.decode("utf-8", errors="replace")
+        output = stdout or stderr
+        if result_object.outcome == "cancelled":
+            suffix = f"\n\nPartial output:\n{output}" if output else ""
+            self.manpage_output.setPlainText(f"Live help loading was cancelled by the user.{suffix}")
+        elif result_object.outcome == "timed-out":
+            suffix = f"\n\nPartial output:\n{output}" if output else ""
+            self.manpage_output.setPlainText(
+                "Live help exceeded the 15-second limit and was stopped. The installed CLI did not return "
+                f"promptly; the Man Pages browser remains available.{suffix}"
+            )
+        elif result_object.outcome == "succeeded" and output:
             if self._manpage_active_path is None:
                 raise CommandCatalogError("Live help completed without an active command path")
-            self._manpage_cache[self._manpage_active_path] = stdout
-            self.manpage_output.setPlainText(stdout)
-        else:
+            self._manpage_cache[self._manpage_active_path] = output
+            self.manpage_output.setPlainText(output)
+        elif result_object.outcome == "launch-failed":
             self.manpage_output.setPlainText(
-                f"Live help failed with exit code {exit_code}.\n\n{stderr or stdout}"
+                f"Could not start live help. Verify the project runtime exists and is executable: {result_object.argv[0]}"
             )
-        self._manpage_process = None
+        else:
+            exit_detail = "unavailable" if result_object.exit_code is None else str(result_object.exit_code)
+            self.manpage_output.setPlainText(
+                f"Live help {result_object.outcome.replace('-', ' ')} with exit code {exit_detail}.\n\n{output}"
+            )
         self._manpage_active_path = None
-        self._manpage_cancel_reason = None
         self._update_manpage_controls()
 
-    def _manpage_error(self, process_error: QProcess.ProcessError) -> None:
-        if self._manpage_process is not None:
-            self.manpage_output.setPlainText(f"Could not load help: {self._manpage_process.errorString()}")
-            if process_error == QProcess.ProcessError.FailedToStart:
-                self._manpage_timeout_timer.stop()
-                self._manpage_process = None
-                self._manpage_active_path = None
-                self._manpage_cancel_reason = None
-                self._update_manpage_controls()
-
     def cancel_manpage_load(self) -> None:
-        self._cancel_manpage_load("Live help loading was cancelled by the user.")
-
-    def _manpage_timed_out(self) -> None:
-        self._cancel_manpage_load(
-            "Live help exceeded the 15-second limit and was stopped. The installed CLI did not return promptly; "
-            "the Man Pages browser remains available."
-        )
-
-    def _cancel_manpage_load(self, reason: str) -> None:
-        process = self._manpage_process
-        if process is None:
+        if not self._manpage_controller.is_running():
             return
-        self._manpage_timeout_timer.stop()
-        self._manpage_cancel_reason = reason
-        self.manpage_output.setPlainText(f"{reason}\n\nStopping the help process…")
-        process.terminate()
-        QTimer.singleShot(MANPAGE_HELP_KILL_DELAY_MS, self._kill_manpage_after_cancel)
-
-    def _kill_manpage_after_cancel(self) -> None:
-        process = self._manpage_process
-        if process is not None and process.state() != QProcess.ProcessState.NotRunning:
-            process.kill()
+        self.manpage_output.setPlainText("Live help cancellation requested.\n\nStopping the help process…")
+        self._manpage_controller.cancel()
 
     def _update_manpage_controls(self) -> None:
-        running = self._manpage_process is not None
+        running = self._manpage_controller.is_running()
         selected = self.selected_manpage_entry() is not None
         self.manpage_list.setEnabled(not running)
         self.manpage_search_field.setEnabled(not running)
@@ -5703,8 +5664,8 @@ class MainWindow(QMainWindow):
                 return
         self._scanner.stop()
         self._reconnect_timeout_timer.stop()
-        self._manpage_timeout_timer.stop()
         self._command_drift_timeout_timer.stop()
+        self._manpage_controller.shutdown(3000, 1000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
             self._terminate_capability_children(capability_process)
@@ -5718,7 +5679,7 @@ class MainWindow(QMainWindow):
             if not process.waitForFinished(10000):
                 process.kill()
                 process.waitForFinished(3000)
-        for process in (self._ipa_inspection_process, self._manpage_process, self._command_drift_process):
+        for process in (self._ipa_inspection_process, self._command_drift_process):
             if process is not None and process.state() != QProcess.ProcessState.NotRunning:
                 process.terminate()
         event.accept()

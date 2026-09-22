@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from collections.abc import Callable, Sequence
 
 from ios_developer_toolkit.runtime import (
@@ -128,6 +129,22 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError("GUI selected-command readiness action is missing")
     if command_readiness_button.isEnabled():
         raise RuntimeError("GUI selected-command readiness must remain disabled without a selected device")
+    window.navigate_to_page("Man Pages")
+    refresh_manpage_button = window.findChild(QPushButton, "refreshManpageButton")
+    if refresh_manpage_button is None or not refresh_manpage_button.isEnabled():
+        raise RuntimeError("GUI live-help action is unavailable")
+    selected_manpage = window.selected_manpage_entry()
+    if selected_manpage is None:
+        raise RuntimeError("GUI live-help index has no selected route")
+    refresh_manpage_button.click()
+    live_help_deadline = time.monotonic() + 20
+    while window._manpage_controller.is_running() and time.monotonic() < live_help_deadline:
+        application.processEvents()
+    application.processEvents()
+    if window._manpage_controller.is_running():
+        raise RuntimeError("GUI live-help action did not complete within its bounded smoke-test window")
+    if selected_manpage.command_path not in window._manpage_cache:
+        raise RuntimeError(f"GUI live-help action did not cache successful output: {window.manpage_output.toPlainText()}")
     expected_shortcuts = {
         "shortcutRetryDeviceScan",
         "shortcutFocusWorkspaceNavigation",

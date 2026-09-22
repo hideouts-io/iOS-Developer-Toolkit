@@ -249,6 +249,13 @@ class CommandDriftTests(unittest.TestCase):
 
         self.assertEqual(evaluate_command_drift((pcap,), (probe,))[0].state, "verified")
 
+    def test_live_help_evaluation_accepts_terminal_styled_options(self) -> None:
+        pcap = preset_by_identifier("pcap")
+        styled_help = "Usage: pcap \x1b[36m--\x1b[0m\x1b[36mout\x1b[0m PATH"
+        probe = HelpRouteProbe(("pcap",), 0, styled_help, "", None)
+
+        self.assertEqual(evaluate_command_drift((pcap,), (probe,))[0].state, "verified")
+
 
 class EvidenceNamingTests(unittest.TestCase):
     def test_udid_fragment_is_sanitized_and_bounded(self) -> None:

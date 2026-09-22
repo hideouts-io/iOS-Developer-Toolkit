@@ -113,7 +113,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 
 ### P1 — turn diagnostics into a coherent workbench
 
-* Continue migrating finite subprocess workflows to the reusable operation controller and typed `OperationResult`. Device discovery is the first migrated client and now has shared final-drain, timeout, cancellation, launch-failure, and structured completion semantics; Man Pages, command drift, DDI, backup, apps, and capture remain incremental migrations.
+* Continue migrating finite subprocess workflows to the reusable operation controller and typed `OperationResult`. Device discovery and Man Pages now share final-drain, timeout, cancellation, launch-failure, clean-relaunch, and structured completion semantics; command drift, DDI, backup, apps, and capture remain incremental migrations.
 * Make a contextual readiness pane for the selected action, with one-click scoped rechecks and copyable remediation.
 * Maintain the opt-in physical-device compatibility protocol and its explicit USB, usbmux, CoreDevice, developer-service, privacy, and state-changing test boundaries. A pre-release dual-architecture frozen-artifact smoke workflow is now present; it remains unexecuted until GitHub Actions runs it. The release builder also rejects a bundle whose Mach-O minimum macOS version differs from the advertised 13.0 floor.
 * Generate concise changelog/release notes from tested behavior. Source, bundle, citation, packaging, and third-party-source metadata drift is now covered by automated tests.
@@ -165,6 +165,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | 2026-09-21 | Made live-help drift checks accept successful help emitted on either standard output or standard error. | A clean GitHub runner exposed two false option mismatches while the same pinned CLI passed locally; the channel-specific regression test now preserves strict option matching without assuming a help stream. | Re-run CI on a clean runner and retain failure for genuinely absent routes or options. |
 | 2026-09-21 | Added an opt-in physical-device protocol with staged read-only, developer-service, and state-changing checks. | The current host check found no Apple mobile USB device, no usbmux device, and no CoreDevice result, so no physical compatibility claim was made. | Run the protocol with an authorized connected device and retain identifiers and raw evidence locally. |
 | 2026-09-21 | Added contextual readiness for every guided command and corrected support-bundle capability aggregation. | Command-specific tests cover untested, ready, not-applicable, and attention states; the GUI smoke verifies the new control by stable object ID. | Readiness remains a point-in-time local probe and never substitutes for an actual command result. |
+| 2026-09-21 | Migrated Man Pages live help to the shared finite-operation controller and normalized styled CLI help for command-drift checks. | The GUI smoke now completes a real live-help request; controller relaunch tests reject stale output, and ANSI-split option tokens remain strictly verifiable. | Sequential command drift and other finite workflows remain incremental migrations. |
 
 ## Research sources
 

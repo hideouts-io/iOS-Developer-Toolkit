@@ -79,6 +79,34 @@ class FiniteProcessControllerTests(unittest.TestCase):
         self.assertEqual(results[0].outcome, "cancelled")
         self.assertFalse(controller.is_running())
 
+    def test_relaunches_without_reusing_previous_output(self) -> None:
+        controller = FiniteProcessController(self.application)
+        results: list[OperationResult] = []
+        controller.completed.connect(results.append)
+        first = finite_process_request(
+            ExecutableCommand(Path(sys.executable), ()),
+            ("-c", "print('first')"),
+            {},
+            3_000,
+            500,
+        )
+        second = finite_process_request(
+            ExecutableCommand(Path(sys.executable), ()),
+            ("-c", "print('second')"),
+            {},
+            3_000,
+            500,
+        )
+
+        controller.start(first)
+        self._wait_for(lambda: len(results) == 1, 3)
+        controller.start(second)
+        self._wait_for(lambda: len(results) == 2, 3)
+
+        self.assertEqual(results[0].stdout, b"first\n")
+        self.assertEqual(results[1].stdout, b"second\n")
+        self.assertFalse(controller.is_running())
+
     def _wait_for(self, predicate: Callable[[], bool], timeout_seconds: int) -> None:
         deadline = time.monotonic() + timeout_seconds
         while not predicate() and time.monotonic() < deadline:
