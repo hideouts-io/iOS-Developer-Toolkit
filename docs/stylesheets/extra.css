@@ -1,0 +1,36 @@
+:root {
+  --md-primary-fg-color: #111827;
+  --md-accent-fg-color: #c1121f;
+}
+
+.md-header {
+  border-bottom: 3px solid #c1121f;
+}
+
+.toolkit-hero {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.8rem;
+  padding: 1.25rem;
+  background: linear-gradient(135deg, rgba(193, 18, 31, 0.1), rgba(17, 24, 39, 0.04));
+}
+
+.toolkit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.8rem;
+  margin: 1rem 0;
+}
+
+.toolkit-card {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.65rem;
+  padding: 0.9rem 1rem;
+}
+
+.toolkit-card > :first-child {
+  margin-top: 0;
+}
+
+.toolkit-card > :last-child {
+  margin-bottom: 0;
+}

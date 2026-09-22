@@ -54,6 +54,13 @@ venv/bin/python -m ios_developer_toolkit.ipa_inspector --help
 QT_QPA_PLATFORM=offscreen venv/bin/python -m ios_developer_toolkit --toolkit-internal-smoke-test
 ```
 
+Documentation changes must also pass the strict site build:
+
+```bash
+venv/bin/python -m pip install --requirement requirements/docs.txt
+venv/bin/python -m mkdocs build --strict --clean
+```
+
 Prefer a real, authorized integration check when the change touches device discovery, pairing, developer services, DDI handling, tunnels, backup, installation, location simulation, logging, or packet capture. State exactly which host, device family, OS version, connection path, and cleanup action were tested, without publishing a unique identifier.
 
 Changes to packaging must additionally build the native app, run its embedded CLI and GUI smoke checks, verify the expected Mach-O architecture, and pass `codesign --verify --deep --strict`. The app must contain a matching `Contents/Resources/BOM.cdx.json`, `SOURCE_AVAILABILITY.md`, and the generated `Contents/Resources/Licenses/` inventory; `scripts/verify_release_metadata.py` enforces those links. Release assets must remain separate for Apple Silicon and Intel until a verified universal build exists, and the release workflow must retain checksums plus build-provenance and SBOM attestations.

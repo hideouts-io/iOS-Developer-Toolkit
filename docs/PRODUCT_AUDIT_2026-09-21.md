@@ -124,7 +124,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 * Maintain the session-local typed-operation journal, explicit structured JSON manifests, and universal Action Palette that exposes only eligible operations.
 * Maintain the guided MVT backup-analysis handoff with explicit consent, no password persistence, output isolation, and no “clean device” conclusion.
 * Maintain optional user-configured adapters for `go-ios`, `idb`, and `ipsw`, each with executable provenance, version/build display, bounded read-only probes, and an explicit independent-target boundary.
-* Publish a small documentation site split into quick start, architecture, safety, troubleshooting, release verification, and contributor paths.
+* Maintain the focused documentation site split into quick start, architecture, safety, troubleshooting, release verification, contributor, physical-device testing, and product-audit paths.
 
 ### P3 — ecosystem growth and scale
 
@@ -180,6 +180,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | 2026-09-22 | Added a keyboard-first Action Palette computed from current device and process eligibility. | 116 tests and a 96-action GUI smoke passed; smoke coverage verifies disconnected-state preset filtering, host-preset access, search behavior, stable control identity, and the `⌘ K` shortcut. | Guided presets are selected for review rather than executed, and eligibility is checked again at activation. |
 | 2026-09-22 | Added a guided external MVT handoff for consented decrypted-backup analysis. | 121 tests and a 110-action GUI smoke passed; tests cover executable provenance, secret-environment removal, backup structure/encryption checks, isolated output, explicit IOC arguments, offline defaults, version validation, and an end-to-end synthetic analysis process. | MVT stays separately installed; the toolkit accepts no password and never translates completion or absent findings into a clean-device verdict. |
 | 2026-09-22 | Added separately installed go-ios, idb Companion, and ipsw adapters with provenance validation. | 126 tests and a 134-action GUI smoke passed; tests cover catalog identity, discovery, executable hashing, changed-binary rejection, upstream version/build formats, secret and target-routing removal, and a synthetic validate/probe lifecycle. | These tools keep their own discovery, pairing, tunnel, target, network, licensing, and support models; only bounded inventory probes are exposed. |
+| 2026-09-22 | Added a focused Material for MkDocs documentation site and pull-request/push workflow. | `mkdocs build --strict --clean` passes locally; the site routes beginners, developers, investigators, release verifiers, and contributors to canonical repository material without copying the complete README. | GitHub Pages publication occurs only after a documentation change reaches `main`; the site-build dependency is not part of the application bundle. |
 
 ## Research sources
 

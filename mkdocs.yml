@@ -1,0 +1,61 @@
+site_name: iOS Developer Toolkit
+site_description: Guided macOS workbench for authorized iPhone and iPad development, diagnostics, backup, and evidence preservation
+site_url: https://hideouts-io.github.io/iOS-Developer-Toolkit/
+repo_url: https://github.com/hideouts-io/iOS-Developer-Toolkit
+repo_name: hideouts-io/iOS-Developer-Toolkit
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: site
+strict: true
+
+theme:
+  name: material
+  language: en
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: red
+      toggle:
+        icon: material/weather-night
+        name: Use dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: red
+      toggle:
+        icon: material/weather-sunny
+        name: Use light mode
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Overview: index.md
+  - Quick start: quick-start.md
+  - Architecture: architecture.md
+  - Safety and privacy: safety.md
+  - Troubleshooting: troubleshooting.md
+  - Release verification: release-verification.md
+  - Contributing: contributing.md
+  - Physical-device testing: PHYSICAL_DEVICE_TEST_PROTOCOL.md
+  - Product audit and roadmap: PRODUCT_AUDIT_2026-09-21.md

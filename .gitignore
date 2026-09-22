@@ -2,6 +2,9 @@
 venv/
 build/
 dist/
+site/
+output/
+.playwright-cli/
 ios_developer_toolkit/deployment/
 packaging/deployment/
 *.egg-info/

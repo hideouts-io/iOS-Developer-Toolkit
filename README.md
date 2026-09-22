@@ -7,6 +7,7 @@
 ### iOS Developer Toolkit: a guided pymobiledevice3 GUI, Developer Disk Image mounter, and evidence workbench for macOS
 
 [![CI](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/ci.yml)
+[![Documentation](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/docs.yml/badge.svg)](https://hideouts-io.github.io/iOS-Developer-Toolkit/)
 [![Latest release](https://img.shields.io/github/v/release/hideouts-io/iOS-Developer-Toolkit?display_name=tag)](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white)
 ![Devices](https://img.shields.io/badge/device-iPhone%20%7C%20iPad-0969da)
@@ -22,6 +23,8 @@
 The current interface organizes Apple-device work into 13 focused workspaces. It mounts modern DDIs, checks device and developer-service readiness, runs validated `pymobiledevice3` presets, exposes the installed command help, simulates test locations, streams three forms of device logs, captures packets, inspects and installs eligible IPAs, inventories apps, creates encrypted backups, launches an isolated UFADE acquisition, hands decrypted backups to an external MVT analysis, validates optional ecosystem adapters, and builds hashed evidence cases.
 
 The screenshots use an illustrative device name, model, version, build, and UDID. They contain no real device capture, account identifier, backup, credential, or case evidence.
+
+Use the focused [documentation site](https://hideouts-io.github.io/iOS-Developer-Toolkit/) for quick start, architecture, safety, troubleshooting, release verification, contribution, and physical-device testing paths. This README remains the canonical complete feature and workspace reference.
 
 ## Contents
 
@@ -1153,6 +1156,15 @@ venv/bin/python -m ios_developer_toolkit.ipa_inspector --help
 ```
 
 The final launcher check opens the application and briefly verifies the process. It stops an existing toolkit process first, so do not run it during an active capture or backup.
+
+Build the focused documentation site with its isolated pinned dependency:
+
+```bash
+venv/bin/python -m pip install --requirement requirements/docs.txt
+venv/bin/python -m mkdocs build --strict --clean
+```
+
+Pull requests validate the site without publishing it. A documentation change merged to `main` publishes through the dedicated GitHub Pages workflow.
 
 Physical-device validation is opt-in and is not required for pull requests. Use the [physical-device test protocol](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md) to separate USB, usbmux, CoreDevice, Developer Mode, DDI, tunnel, DVT, and state-changing checks; publish only sanitized results.
 
