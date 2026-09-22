@@ -204,6 +204,13 @@ from ios_developer_toolkit.ufade_connector import (
     macos_setup_commands,
 )
 from ios_developer_toolkit.validation import output_indicates_failure
+from ios_developer_toolkit.xcode_handoff import (
+    XcodeHandoffError,
+    coredevice_details_handoff,
+    rvi_list_handoff,
+    validated_xcode_artifact,
+    xcode_project_handoff,
+)
 
 
 XCODE_CANDIDATE_DDI = Path("/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg")
@@ -218,6 +225,7 @@ APPS_ACTION_TIMEOUT_MS = 10 * 60_000
 IPA_INSPECTION_TIMEOUT_MS = 5 * 60_000
 IPA_INSTALL_TIMEOUT_MS = 15 * 60_000
 COLLECTION_FINALIZATION_TIMEOUT_MS = 2 * 60_000
+XCODE_HANDOFF_TIMEOUT_MS = 60_000
 PROCESS_TERMINATE_GRACE_MS = 1_500
 
 
@@ -641,7 +649,7 @@ class MainWindow(QMainWindow):
         title = QLabel("iOS Developer Toolkit")
         title.setObjectName("appTitle")
         title.setFont(QFont(title.font().family(), 24, QFont.Weight.Bold))
-        subtitle = QLabel("pymobiledevice3 Swiss-army GUI • Developer images • diagnostics • evidence")
+        subtitle = QLabel("iOS developer workbench • pymobiledevice3 • diagnostics • evidence")
         subtitle.setObjectName("appSubtitle")
         title_block.addWidget(title)
         title_block.addWidget(subtitle)
@@ -1139,11 +1147,41 @@ class MainWindow(QMainWindow):
         ddi_layout.addLayout(button_layout)
         layout.addWidget(ddi_group)
 
+        xcode_group = QGroupBox("3. Apple developer-tool handoff")
+        xcode_layout = QVBoxLayout(xcode_group)
+        xcode_explanation = QLabel(
+            "Use Apple's installed tools for CoreDevice visibility, RVI status, projects, test results, and "
+            "Instruments traces. The toolkit shows exact command output but does not reinterpret proprietary "
+            "Xcode formats."
+        )
+        xcode_explanation.setWordWrap(True)
+        xcode_layout.addWidget(xcode_explanation)
+        xcode_buttons = QHBoxLayout()
+        self.coredevice_details_button = QPushButton("CoreDevice Details")
+        self.coredevice_details_button.setObjectName("coreDeviceDetailsButton")
+        self.coredevice_details_button.clicked.connect(self.show_coredevice_details)
+        xcode_buttons.addWidget(self.coredevice_details_button)
+        self.rvi_status_button = QPushButton("List RVI Interfaces")
+        self.rvi_status_button.setObjectName("listRVIInterfacesButton")
+        self.rvi_status_button.clicked.connect(self.list_rvi_interfaces)
+        xcode_buttons.addWidget(self.rvi_status_button)
+        self.open_xcode_project_button = QPushButton("Open Xcode Project…")
+        self.open_xcode_project_button.setObjectName("openXcodeProjectButton")
+        self.open_xcode_project_button.clicked.connect(self.open_xcode_project)
+        xcode_buttons.addWidget(self.open_xcode_project_button)
+        open_artifact_button = QPushButton("Open Result / Trace…")
+        open_artifact_button.setObjectName("openXcodeArtifactButton")
+        open_artifact_button.clicked.connect(self.open_xcode_artifact)
+        xcode_buttons.addWidget(open_artifact_button)
+        xcode_buttons.addStretch()
+        xcode_layout.addLayout(xcode_buttons)
+        layout.addWidget(xcode_group)
+
         self.action_output = QPlainTextEdit()
         self.action_output.setObjectName("ddiActionOutput")
         self.action_output.setReadOnly(True)
         self.action_output.setMaximumBlockCount(3000)
-        self.action_output.setPlaceholderText("DDI and Developer Mode command output appears here.")
+        self.action_output.setPlaceholderText("DDI, Developer Mode, CoreDevice, and RVI command output appears here.")
         layout.addWidget(self.action_output, 1)
         self._ddi_source_changed()
         return tab
@@ -2550,6 +2588,11 @@ class MainWindow(QMainWindow):
         action_available = enabled and not self._action_controller.is_running()
         self.mount_button.setEnabled(action_available)
         self.remove_button.setEnabled(action_available)
+        self.coredevice_details_button.setEnabled(action_available)
+        self.rvi_status_button.setEnabled(not self._demo_mode and not self._action_controller.is_running())
+        self.open_xcode_project_button.setEnabled(
+            not self._demo_mode and not self._action_controller.is_running()
+        )
         self.start_collection_button.setEnabled(enabled and not self._collection_controller.is_running())
         self.create_case_button.setEnabled(
             enabled and not self._collection_controller.is_running() and self._active_case_path is None
@@ -3047,6 +3090,7 @@ class MainWindow(QMainWindow):
             ("--candidate", str(XCODE_CANDIDATE_DDI), "--udid", device.identifier),
             base_environment(),
             "mount-local-cryptex",
+            DDI_ACTION_TIMEOUT_MS,
         )
 
     def remove_selected_ddi(self) -> None:
@@ -3078,12 +3122,71 @@ class MainWindow(QMainWindow):
         arguments = ("mounter", "list") if self.personalized_radio.isChecked() else ("cryptex", "list")
         self._run_pmd3_action(arguments, "list-images")
 
+    def show_coredevice_details(self) -> None:
+        device = self.selected_device()
+        if device is None:
+            self._show_no_device()
+            return
+        try:
+            command, arguments = coredevice_details_handoff(device.identifier)
+        except XcodeHandoffError as error:
+            QMessageBox.critical(self, "CoreDevice Tool Unavailable", str(error))
+            return
+        self._start_action(command, arguments, base_environment(), "coredevice-details", XCODE_HANDOFF_TIMEOUT_MS)
+
+    def list_rvi_interfaces(self) -> None:
+        try:
+            command, arguments = rvi_list_handoff()
+        except XcodeHandoffError as error:
+            QMessageBox.critical(self, "RVI Tool Unavailable", str(error))
+            return
+        self._start_action(command, arguments, base_environment(), "rvi-status", XCODE_HANDOFF_TIMEOUT_MS)
+
+    def open_xcode_project(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Xcode project, workspace, or Swift package",
+            str(Path.home()),
+            "Xcode projects (*.xcodeproj *.xcworkspace);;Swift package (Package.swift)",
+        )
+        if not selected:
+            return
+        try:
+            command, arguments = xcode_project_handoff(Path(selected))
+        except XcodeHandoffError as error:
+            QMessageBox.critical(self, "Invalid Xcode Project", str(error))
+            return
+        self._start_action(command, arguments, base_environment(), "open-xcode-project", XCODE_HANDOFF_TIMEOUT_MS)
+
+    def open_xcode_artifact(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Xcode result or Instruments trace",
+            str(Path.home()),
+            "Xcode and Instruments artifacts (*.xcresult *.trace)",
+        )
+        if not selected:
+            return
+        try:
+            target = validated_xcode_artifact(Path(selected))
+        except XcodeHandoffError as error:
+            QMessageBox.critical(self, "Invalid Xcode Artifact", str(error))
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
+            QMessageBox.critical(self, "Could Not Open Artifact", f"macOS could not open the selected target:\n{target}")
+
     def _run_pmd3_action(self, arguments: tuple[str, ...], context: str) -> None:
         device = self.selected_device()
         if device is None:
             self._show_no_device()
             return
-        self._start_action(self._pmd3, arguments, device_environment(device.identifier), context)
+        self._start_action(
+            self._pmd3,
+            arguments,
+            device_environment(device.identifier),
+            context,
+            DDI_ACTION_TIMEOUT_MS,
+        )
 
     def _start_action(
         self,
@@ -3091,20 +3194,24 @@ class MainWindow(QMainWindow):
         arguments: tuple[str, ...],
         environment: Mapping[str, str],
         context: str,
+        timeout_milliseconds: int,
     ) -> None:
         if self._action_controller.is_running():
-            QMessageBox.warning(self, "Action Running", "Wait for the current DDI action to finish.")
+            QMessageBox.warning(self, "Action Running", "Wait for the current Device & DDI action to finish.")
             return
         self.action_output.appendPlainText(f"$ {command_text(program, arguments)}")
         self._action_context = context
         self.mount_button.setEnabled(False)
         self.remove_button.setEnabled(False)
+        self.coredevice_details_button.setEnabled(False)
+        self.rvi_status_button.setEnabled(False)
+        self.open_xcode_project_button.setEnabled(False)
         self._action_controller.start(
             finite_process_request(
                 program,
                 arguments,
                 environment,
-                DDI_ACTION_TIMEOUT_MS,
+                timeout_milliseconds,
                 PROCESS_TERMINATE_GRACE_MS,
             )
         )
@@ -3128,7 +3235,7 @@ class MainWindow(QMainWindow):
             self.action_output.appendPlainText(f"Process error: {result_object.error_message}")
         if result_object.outcome == "timed-out":
             self.action_output.appendPlainText(
-                "The DDI action exceeded the 15-minute safety limit and was stopped."
+                "The action exceeded its safety limit and was stopped."
             )
         if context == "developer-mode-status":
             if succeeded and b"true" in combined_output.lower():

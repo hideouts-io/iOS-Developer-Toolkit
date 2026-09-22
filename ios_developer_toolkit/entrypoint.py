@@ -99,6 +99,21 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError(f"GUI buttons are missing stable identifiers: {missing_identifiers}")
     if disconnected:
         raise RuntimeError(f"GUI buttons are missing click handlers: {disconnected}")
+    for button_name in (
+        "coreDeviceDetailsButton",
+        "listRVIInterfacesButton",
+        "openXcodeProjectButton",
+        "openXcodeArtifactButton",
+    ):
+        button = window.findChild(QPushButton, button_name)
+        if button is None:
+            raise RuntimeError(f"GUI Xcode handoff action is missing: {button_name}")
+    coredevice_button = window.findChild(QPushButton, "coreDeviceDetailsButton")
+    rvi_button = window.findChild(QPushButton, "listRVIInterfacesButton")
+    if coredevice_button is None or coredevice_button.isEnabled():
+        raise RuntimeError("GUI CoreDevice handoff must require a selected device")
+    if rvi_button is None or not rvi_button.isEnabled():
+        raise RuntimeError("GUI RVI status handoff should be available without a selected device")
     navigation_actions = {
         "homeOpenDevice&DDIButton": "Device & DDI",
         "homeOpenCapabilityMatrixButton": "Capability Matrix",
@@ -206,7 +221,7 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError("Demo mode must disable live-device log collection")
     demo_mode_button.click()
     application.processEvents()
-    window._start_action(pymobiledevice3_command(), ("version",), {}, "smoke")
+    window._start_action(pymobiledevice3_command(), ("version",), {}, "smoke", 20_000)
     action_deadline = time.monotonic() + 20
     while window._action_controller.is_running() and time.monotonic() < action_deadline:
         application.processEvents()

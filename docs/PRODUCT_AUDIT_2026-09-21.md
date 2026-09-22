@@ -117,7 +117,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 * Make a contextual readiness pane for the selected action, with one-click scoped rechecks and copyable remediation.
 * Maintain the opt-in physical-device compatibility protocol and its explicit USB, usbmux, CoreDevice, developer-service, privacy, and state-changing test boundaries. A pre-release dual-architecture frozen-artifact smoke workflow is now present. The release builder rejects any bundled Mach-O whose minimum macOS version is newer than the advertised 13.0 floor or lacks the native release architecture.
 * Generate concise changelog/release notes from tested behavior. Source, bundle, citation, packaging, and third-party-source metadata drift is now covered by automated tests.
-* Add Xcode project/device handoffs: selected `devicectl` discovery, RVI status, and `.xcresult`/`xctrace` opening without reimplementing those formats.
+* Maintain bounded Xcode project/device handoffs: selected-device `devicectl` details, RVI status, and native `.xcresult`/Instruments trace opening without parsing or reimplementing Apple's formats.
 
 ### P2 — deepen expert workflows without scope creep
 
@@ -174,6 +174,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | 2026-09-22 | Migrated local IPA inspection and device installation to the shared finite-operation controller with explicit five- and 15-minute limits. | The 95-test suite and 90-action GUI smoke passed; the smoke test now validates typed inspection metadata, streamed installation output, and structured completion. | Backup and evidence capture retain specialized worker lifecycles pending deliberate migration. |
 | 2026-09-22 | Replaced the Backup workspace's blocking, hand-buffered process path with a password-safe typed controller. | 98 tests and the 90-action GUI smoke passed; real child-process tests cover stdin-only credentials, validated streamed events, malformed-protocol termination, and one-result cancellation. | Evidence capture still needs a lifecycle designed around partial-artifact finalization rather than a generic finite command. |
 | 2026-09-22 | Added a typed Evidence Capture controller and close-safe graceful finalization. | 102 tests and the 90-action GUI smoke passed; real child-process tests cover fragmented JSON events, final-drain parsing, cancellation through `case-finished`, malformed-protocol finalization, and forced stop after the finalization deadline. | Physical-device collection remains opt-in; review each case manifest and hash inventory before relying on it. |
+| 2026-09-22 | Added native Apple developer-tool handoffs for selected-device CoreDevice details, RVI status, Xcode projects, test results, and Instruments traces. | 106 tests and a 94-action GUI smoke passed; tests validate the exact selected-device and RVI commands and reject missing or unrelated local targets. | The toolkit displays native output and opens native formats; it does not claim a stable schema for human `devicectl` output or reimplement Xcode. |
 
 ## Research sources
 

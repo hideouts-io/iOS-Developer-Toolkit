@@ -91,10 +91,10 @@ Release `v0.3.4` combines the complete 12-workspace interface with the latest co
 - Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
 - Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
 - app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one selected-device workflow;
-- native Apple Silicon and Intel release ZIPs are built separately and verified with 102 tests, embedded CLI checks, a 90-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 106 tests, embedded CLI checks, a 94-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
-The README contains 17 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
+The README contains 18 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
 
 | Prepare the device and DDI | Observe live services | Run guided commands |
 |---|---|---|
@@ -123,7 +123,7 @@ The README contains 17 sanitized screenshots. The six views below provide a quic
 | Workspace | Primary purpose | DDI needed? | Important result |
 |---|---|---:|---|
 | **Home** | Understand the workflow and jump to a task | No | Service-layer overview and guided entry points |
-| **Device & DDI** | Check Developer Mode; mount, list, or remove a developer image | For mounting | Explicit device target and image source |
+| **Device & DDI** | Check Developer Mode; manage a developer image; hand off to CoreDevice, RVI, Xcode, or Instruments | For mounting and some CoreDevice details | Explicit device target, image source, and native-tool output |
 | **Capability Matrix** | Test host, connection, trust, DDI, tunnel, and developer-service readiness | Only for the developer-service rows | Bounded per-capability state, evidence, remediation, and real-device comparison |
 | **Location Lab** | Set a coordinate or replay a validated GPX track | Usually | Structured location-event evidence and explicit Clear |
 | **Live Logs** | Open independent Unified Logs, classic syslog, and DVT OSLog windows | Only DVT OSLog | Complete raw spool plus filtered working view |
@@ -440,6 +440,19 @@ The toolkit attaches this outer host image read-only, validates its `Restore` pa
 Both modern paths normally require Apple TSS access. A cached DDI payload does not guarantee that personalization can complete offline.
 
 Developer Mode queries and DDI mount, list, unmount, install, and uninstall actions use the shared bounded operation controller. It drains both output channels at completion, reports launch failures and crashes distinctly, prevents periodic device refreshes from re-enabling conflicting controls, and stops an action that exceeds the 15-minute safety limit.
+
+#### Apple developer-tool handoff
+
+![Apple developer-tool handoff controls](docs/screenshots/xcode-handoff.png)
+
+The final group in Device & DDI deliberately hands native work back to Apple tools:
+
+- **CoreDevice Details** runs `xcrun devicectl device info details --device <selected UDID> --timeout 30` and displays Apple's human-readable output without treating it as a stable machine schema;
+- **List RVI Interfaces** runs the installed `rvictl -l` so an existing Remote Virtual Interface can be cross-checked before packet capture;
+- **Open Xcode Project…** validates an `.xcodeproj`, `.xcworkspace`, or `Package.swift` and hands it to Apple's `xed` launcher;
+- **Open Result / Trace…** validates and opens an `.xcresult` or `.trace` bundle in Xcode or Instruments.
+
+These are read-only host handoffs. They do not create a project, run tests, start a trace, create or remove an RVI, or parse proprietary Xcode result formats. CoreDevice, RVI, and `xed` handoffs have a 60-second GUI safety limit and retain the exact command and terminal result in the shared output panel.
 
 ### Device Capability Matrix
 
@@ -1021,6 +1034,7 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 │   ├── qt_process.py           # typed, bounded finite-process lifecycle controller
 │   ├── runtime.py              # source/frozen commands and device environment
 │   ├── ufade_connector.py      # isolated external UFADE validation and launch
+│   ├── xcode_handoff.py        # validated CoreDevice, RVI, project, and artifact handoffs
 │   └── assets/
 ├── .github/workflows/          # native Intel and Apple Silicon release builds
 ├── docs/screenshots/           # sanitized current-interface captures
@@ -1050,7 +1064,7 @@ Physical-device validation is opt-in and is not required for pull requests. Use 
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 102 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 90-button offscreen GUI smoke test, verifies live help from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 106 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 94-button offscreen GUI smoke test, verifies live help from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The builder requires `MACOSX_DEPLOYMENT_TARGET=13.0`. It rejects any bundled executable, library, extension, or framework slice that requires a newer macOS version or omits the native release architecture. A component may support an older minimum because the application still advertises macOS 13 as its supported floor. PySide6 is pinned to the newest validated line whose actual Shiboken load commands satisfy that floor; wheel filenames alone are not treated as compatibility evidence. Local release builds should use a Python toolchain capable of producing macOS 13-compatible binaries; GitHub release CI supplies the target explicitly.
 
