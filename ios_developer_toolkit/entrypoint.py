@@ -80,10 +80,11 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise ValueError(f"Internal smoke test does not accept arguments: {tuple(arguments)}")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PySide6.QtCore import SIGNAL
-    from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+    from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QPushButton, QTableWidget
 
     from ios_developer_toolkit.app import MainWindow
     from ios_developer_toolkit.backup_protocol import BackupRequest
+    from ios_developer_toolkit.operation_history import OperationHistoryDialog
 
     application = QApplication(["ios-developer-toolkit-smoke-test"])
     window = MainWindow()
@@ -221,7 +222,14 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError("Demo mode must disable live-device log collection")
     demo_mode_button.click()
     application.processEvents()
-    window._start_action(pymobiledevice3_command(), ("version",), {}, "smoke", 20_000)
+    window._start_action(
+        pymobiledevice3_command(),
+        ("version",),
+        {},
+        "smoke",
+        20_000,
+        window._host_operation_context("Smoke Device Action", "Device & DDI", "pymobiledevice3 host command", ()),
+    )
     action_deadline = time.monotonic() + 20
     while window._action_controller.is_running() and time.monotonic() < action_deadline:
         application.processEvents()
@@ -253,6 +261,10 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         '"ApplicationType": "User"}}'
     )
     window._apps_context = "inventory"
+    window._begin_operation(
+        "installed-apps",
+        window._host_operation_context("Smoke App Inventory", "Installed Apps", "synthetic smoke process", ()),
+    )
     window._apps_controller.start(
         finite_process_request(
             ExecutableCommand(Path("/usr/bin/printf"), ()),
@@ -288,6 +300,10 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         '"team_identifier":"SMOKETEAM","authorities":["Toolkit Smoke Authority"],'
         '"detail":"Synthetic smoke-test signature"}}'
     )
+    window._begin_operation(
+        "ipa-inspection",
+        window._host_operation_context("Smoke IPA Inspection", "Sideload IPA", "synthetic smoke process", ()),
+    )
     window._ipa_inspection_controller.start(
         finite_process_request(
             ExecutableCommand(Path("/usr/bin/printf"), ()),
@@ -308,6 +324,10 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     if window._ipa_inspection is None or window._ipa_inspection.signature.status != "valid":
         raise RuntimeError(f"GUI IPA inspection controller rejected typed metadata: {window.sideload_status.text()}")
     window._sideload_context = "smoke"
+    window._begin_operation(
+        "sideload-ipa",
+        window._host_operation_context("Smoke IPA Operation", "Sideload IPA", "synthetic smoke process", ()),
+    )
     window._sideload_controller.start(
         finite_process_request(
             ExecutableCommand(Path("/usr/bin/printf"), ()),
@@ -335,6 +355,10 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         '\\"message\\":\\"Synthetic encryption status.\\",\\"encrypted\\":true}" }'
     )
     window._backup_action = "status"
+    window._begin_operation(
+        "backup",
+        window._host_operation_context("Smoke Backup Status", "Backup", "synthetic smoke process", ()),
+    )
     window._backup_controller.start(
         ExecutableCommand(Path("/usr/bin/awk"), (backup_smoke_program,)),
         "status",
@@ -360,6 +384,15 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         '"status":"completed","failures":0}'
     )
     window._collection_case_finished = False
+    window._begin_operation(
+        "evidence-collection",
+        window._host_operation_context(
+            "Smoke Evidence Collection",
+            "Evidence Capture",
+            "synthetic smoke process",
+            (),
+        ),
+    )
     window._collection_controller.start(
         ExecutableCommand(Path("/usr/bin/printf"), ()),
         (synthetic_collection_event,),
@@ -378,6 +411,19 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError(f"GUI evidence controller did not apply finalization: {window.collection_output.toPlainText()}")
     if "Collection process finished: succeeded; exit 0." not in window.collection_output.toPlainText():
         raise RuntimeError(f"GUI evidence controller reported the wrong completion: {window.collection_output.toPlainText()}")
+    if len(window._operation_records) < 8:
+        raise RuntimeError(f"GUI session activity did not correlate typed operations: {len(window._operation_records)}")
+    activity_button = window.findChild(QPushButton, "sessionActivityButton")
+    if activity_button is None or f"({len(window._operation_records)})" not in activity_button.text():
+        raise RuntimeError("GUI session activity count did not update after typed operations")
+    activity_dialog = OperationHistoryDialog(window._operation_records, window)
+    activity_table = activity_dialog.findChild(QTableWidget, "sessionActivityTable")
+    activity_preview = activity_dialog.findChild(QPlainTextEdit, "sessionActivityManifestPreview")
+    if activity_table is None or activity_table.rowCount() != len(window._operation_records):
+        raise RuntimeError("GUI session activity dialog did not render every typed operation")
+    if activity_preview is None or '"raw_output_included": false' not in activity_preview.toPlainText():
+        raise RuntimeError("GUI session activity manifest preview did not preserve its raw-output boundary")
+    activity_dialog.close()
     window.close()
     application.processEvents()
     print(f"GUI smoke test passed with {len(buttons)} action buttons", flush=True)

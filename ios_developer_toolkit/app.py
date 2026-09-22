@@ -173,6 +173,15 @@ from ios_developer_toolkit.location_lab import (
 )
 from ios_developer_toolkit.live_logs import LiveLogError, LiveLogWindow, log_stream_specs, stream_spec
 from ios_developer_toolkit.models import DeviceDataError, IOSDevice, parse_devices_json
+from ios_developer_toolkit.operation_history import (
+    OperationContext,
+    OperationHistoryDialog,
+    OperationRecord,
+    append_operation_record,
+    operation_context,
+    operation_record,
+    with_output_paths,
+)
 from ios_developer_toolkit.qt_process import (
     FiniteProcessController,
     OperationResult,
@@ -228,6 +237,7 @@ IPA_INSTALL_TIMEOUT_MS = 15 * 60_000
 COLLECTION_FINALIZATION_TIMEOUT_MS = 2 * 60_000
 XCODE_HANDOFF_TIMEOUT_MS = 60_000
 PROCESS_TERMINATE_GRACE_MS = 1_500
+MAX_SESSION_OPERATION_RECORDS = 250
 
 
 def application_icon_path() -> Path:
@@ -616,6 +626,8 @@ class MainWindow(QMainWindow):
         self._command_drift_probes: dict[tuple[str, ...], HelpRouteProbe] = {}
         self._last_case_path: Path | None = None
         self._active_case_path: Path | None = None
+        self._operation_records: tuple[OperationRecord, ...] = ()
+        self._pending_operation_contexts: dict[str, OperationContext] = {}
         self._keyboard_shortcuts: list[QShortcut] = []
         self._build_ui()
         self._configure_accessibility()
@@ -712,6 +724,13 @@ class MainWindow(QMainWindow):
         self.navigation_list.setObjectName("workspaceNavigation")
         self.navigation_list.setSpacing(2)
         sidebar_layout.addWidget(self.navigation_list, 1)
+        self.session_activity_button = QPushButton("Session Activity (0)")
+        self.session_activity_button.setObjectName("sessionActivityButton")
+        self.session_activity_button.setToolTip(
+            "Review completed typed operations from this session and explicitly export a structured manifest"
+        )
+        self.session_activity_button.clicked.connect(self.show_session_activity)
+        sidebar_layout.addWidget(self.session_activity_button)
         version_note = QLabel(f"Toolkit {APP_VERSION}\npymobiledevice3 11.15.1")
         version_note.setObjectName("sidebarVersion")
         version_note.setWordWrap(True)
@@ -768,6 +787,10 @@ class MainWindow(QMainWindow):
         self.support_bundle_button.setAccessibleDescription(
             "Create a local ZIP that excludes device content and sensitive artifacts. The application never uploads it."
         )
+        self.session_activity_button.setAccessibleName("Session activity")
+        self.session_activity_button.setAccessibleDescription(
+            "Review completed typed operations and explicitly export a selected structured manifest."
+        )
         self.connection_banner.setAccessibleName("Device connection status")
         self.connection_banner.setAccessibleDescription(
             "Reports whether a trusted iPhone or iPad is currently available to the toolkit."
@@ -816,6 +839,7 @@ class MainWindow(QMainWindow):
         QWidget.setTabOrder(self.reconnect_device_button, self.keyboard_shortcuts_button)
         QWidget.setTabOrder(self.keyboard_shortcuts_button, self.support_bundle_button)
         QWidget.setTabOrder(self.support_bundle_button, self.navigation_list)
+        QWidget.setTabOrder(self.navigation_list, self.session_activity_button)
 
     def _configure_keyboard_shortcuts(self) -> None:
         self._add_application_shortcut("Meta+R", self._scanner_scan, "shortcutRetryDeviceScan")
@@ -954,6 +978,81 @@ class MainWindow(QMainWindow):
         buttons.accepted.connect(dialog.accept)
         layout.addWidget(buttons)
         dialog.exec()
+
+    def show_session_activity(self) -> None:
+        dialog = OperationHistoryDialog(self._operation_records, self)
+        dialog.exec()
+
+    def _host_operation_context(
+        self,
+        title: str,
+        workspace: str,
+        transport: str,
+        output_paths: tuple[str, ...],
+    ) -> OperationContext:
+        return operation_context(
+            title,
+            workspace,
+            "Local Mac",
+            transport,
+            ("device:not-required",),
+            output_paths,
+        )
+
+    def _device_operation_context(
+        self,
+        title: str,
+        workspace: str,
+        transport: str,
+        device: IOSDevice,
+        output_paths: tuple[str, ...],
+    ) -> OperationContext:
+        identifier = "".join(character for character in device.identifier.upper() if character.isalnum())
+        suffix = identifier[-6:] if len(identifier) >= 6 else "unknown"
+        target = (
+            f"{device.product_type} • iOS {device.product_version} • {device.connection_type} • "
+            f"identifier ending {suffix}"
+        )
+        observed_capabilities = tuple(
+            f"{capability_identifier}:{result.state}"
+            for capability_identifier, result in sorted(self._capability_results.items())
+            if result.state != "not-tested"
+        )
+        capability_snapshot = observed_capabilities or ("capabilities:not-tested",)
+        return operation_context(
+            title,
+            workspace,
+            target,
+            transport,
+            ("device:selected", *capability_snapshot),
+            output_paths,
+        )
+
+    def _begin_operation(self, slot: str, context: OperationContext) -> None:
+        normalized_slot = slot.strip()
+        if not normalized_slot:
+            raise ValueError("Operation slot cannot be empty")
+        if normalized_slot in self._pending_operation_contexts:
+            raise RuntimeError(f"Operation slot is already active: {normalized_slot}")
+        self._pending_operation_contexts[normalized_slot] = context
+
+    def _update_operation_output_paths(self, slot: str, output_paths: tuple[str, ...]) -> None:
+        context = self._pending_operation_contexts.get(slot)
+        if context is None:
+            raise RuntimeError(f"Cannot update output paths for inactive operation slot: {slot}")
+        self._pending_operation_contexts[slot] = with_output_paths(context, output_paths)
+
+    def _complete_operation(self, slot: str, result: OperationResult) -> None:
+        context = self._pending_operation_contexts.pop(slot, None)
+        if context is None:
+            raise RuntimeError(f"Cannot complete inactive operation slot: {slot}")
+        record = operation_record(context, result)
+        self._operation_records = append_operation_record(
+            self._operation_records,
+            record,
+            MAX_SESSION_OPERATION_RECORDS,
+        )
+        self.session_activity_button.setText(f"Session Activity ({len(self._operation_records)})")
 
     def create_support_bundle(self) -> None:
         message = (
@@ -3095,6 +3194,13 @@ class MainWindow(QMainWindow):
             base_environment(),
             "mount-local-cryptex",
             DDI_ACTION_TIMEOUT_MS,
+            self._device_operation_context(
+                "Install Local Xcode DDI",
+                "Device & DDI",
+                "local DDI worker, Apple TSS, and CoreDevice Cryptex service",
+                device,
+                (),
+            ),
         )
 
     def remove_selected_ddi(self) -> None:
@@ -3136,7 +3242,20 @@ class MainWindow(QMainWindow):
         except XcodeHandoffError as error:
             QMessageBox.critical(self, "CoreDevice Tool Unavailable", str(error))
             return
-        self._start_action(command, arguments, base_environment(), "coredevice-details", XCODE_HANDOFF_TIMEOUT_MS)
+        self._start_action(
+            command,
+            arguments,
+            base_environment(),
+            "coredevice-details",
+            XCODE_HANDOFF_TIMEOUT_MS,
+            self._device_operation_context(
+                "CoreDevice Details",
+                "Device & DDI",
+                "Apple devicectl",
+                device,
+                (),
+            ),
+        )
 
     def list_rvi_interfaces(self) -> None:
         try:
@@ -3144,7 +3263,14 @@ class MainWindow(QMainWindow):
         except XcodeHandoffError as error:
             QMessageBox.critical(self, "RVI Tool Unavailable", str(error))
             return
-        self._start_action(command, arguments, base_environment(), "rvi-status", XCODE_HANDOFF_TIMEOUT_MS)
+        self._start_action(
+            command,
+            arguments,
+            base_environment(),
+            "rvi-status",
+            XCODE_HANDOFF_TIMEOUT_MS,
+            self._host_operation_context("List RVI Interfaces", "Device & DDI", "Apple rvictl", ()),
+        )
 
     def open_xcode_project(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
@@ -3160,7 +3286,14 @@ class MainWindow(QMainWindow):
         except XcodeHandoffError as error:
             QMessageBox.critical(self, "Invalid Xcode Project", str(error))
             return
-        self._start_action(command, arguments, base_environment(), "open-xcode-project", XCODE_HANDOFF_TIMEOUT_MS)
+        self._start_action(
+            command,
+            arguments,
+            base_environment(),
+            "open-xcode-project",
+            XCODE_HANDOFF_TIMEOUT_MS,
+            self._host_operation_context("Open Xcode Project", "Device & DDI", "Apple xed", ()),
+        )
 
     def open_xcode_artifact(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
@@ -3184,12 +3317,29 @@ class MainWindow(QMainWindow):
         if device is None:
             self._show_no_device()
             return
+        titles = {
+            "developer-mode-status": "Check Developer Mode",
+            "mount-personalized": "Mount Personalized DDI",
+            "unmount-personalized": "Unmount Personalized DDI",
+            "uninstall-local-cryptex": "Uninstall Local DDI Cryptex",
+            "list-images": "List Developer Images",
+        }
+        title = titles.get(context)
+        if title is None:
+            raise KeyError(f"Unknown Device & DDI operation context: {context}")
         self._start_action(
             self._pmd3,
             arguments,
             device_environment(device.identifier),
             context,
             DDI_ACTION_TIMEOUT_MS,
+            self._device_operation_context(
+                title,
+                "Device & DDI",
+                "pymobiledevice3 selected-device transport",
+                device,
+                (),
+            ),
         )
 
     def _start_action(
@@ -3199,12 +3349,14 @@ class MainWindow(QMainWindow):
         environment: Mapping[str, str],
         context: str,
         timeout_milliseconds: int,
+        history_context: OperationContext,
     ) -> None:
         if self._action_controller.is_running():
             QMessageBox.warning(self, "Action Running", "Wait for the current Device & DDI action to finish.")
             return
         self.action_output.appendPlainText(f"$ {command_text(program, arguments)}")
         self._action_context = context
+        self._begin_operation("device-and-ddi", history_context)
         self.mount_button.setEnabled(False)
         self.remove_button.setEnabled(False)
         self.coredevice_details_button.setEnabled(False)
@@ -3227,6 +3379,7 @@ class MainWindow(QMainWindow):
     def _action_completed(self, result_object: object) -> None:
         if not isinstance(result_object, OperationResult):
             raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("device-and-ddi", result_object)
         context = self._action_context
         combined_output = result_object.stdout + result_object.stderr
         semantic_failure = output_indicates_failure(combined_output)
@@ -4014,6 +4167,17 @@ class MainWindow(QMainWindow):
         self._collection_case_finished = False
         self.start_collection_button.setEnabled(False)
         self.stop_collection_button.setEnabled(True)
+        initial_output_paths = () if self._active_case_path is None else (str(self._active_case_path),)
+        self._begin_operation(
+            "evidence-collection",
+            self._device_operation_context(
+                "Collect and Finalize Evidence",
+                "Evidence Capture",
+                "typed evidence collector worker",
+                device,
+                initial_output_paths,
+            ),
+        )
         self._collection_controller.start(
             worker,
             arguments,
@@ -4032,15 +4196,18 @@ class MainWindow(QMainWindow):
         if event.event in ("case-created", "case-attached") and event.path is not None:
             self._last_case_path = event.path
             self.open_case_button.setEnabled(True)
+            self._update_operation_output_paths("evidence-collection", (str(event.path),))
         if event.event == "case-finished":
             self._collection_case_finished = True
             if event.path is not None:
                 self._last_case_path = event.path
                 self.open_case_button.setEnabled(True)
+                self._update_operation_output_paths("evidence-collection", (str(event.path),))
 
     def _collection_completed(self, result_object: object) -> None:
         if not isinstance(result_object, OperationResult):
             raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("evidence-collection", result_object)
         exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
         self.collection_output.appendPlainText(
             f"\nCollection process finished: {result_object.outcome}; exit {exit_label}."
@@ -4105,6 +4272,15 @@ class MainWindow(QMainWindow):
         self.ipa_inspection_summary.setPlainText("Inspecting archive, provisioning profile, and code signature…")
         self.ipa_inspection_progress.setVisible(True)
         worker = worker_command("ipa-inspector")
+        self._begin_operation(
+            "ipa-inspection",
+            self._host_operation_context(
+                "Inspect IPA",
+                "Sideload IPA",
+                "local IPA inspection worker and macOS codesign",
+                (),
+            ),
+        )
         self._ipa_inspection_controller.start(
             finite_process_request(
                 worker,
@@ -4119,6 +4295,7 @@ class MainWindow(QMainWindow):
     def _ipa_inspection_completed(self, result_object: object) -> None:
         if not isinstance(result_object, OperationResult):
             raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("ipa-inspection", result_object)
         stderr_text = result_object.stderr.decode("utf-8", errors="replace").strip()
         if result_object.outcome != "succeeded":
             exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
@@ -4210,6 +4387,16 @@ class MainWindow(QMainWindow):
         self.sideload_output.appendPlainText(f"\n$ pymobiledevice3 {shlex.join(arguments)}\n")
         self.sideload_status.setText(f"Running {context} operation on {device.display_name()}…")
         self.sideload_activity_progress.setVisible(True)
+        self._begin_operation(
+            "sideload-ipa",
+            self._device_operation_context(
+                "Install IPA" if context == "install" else context.replace("-", " ").title(),
+                "Sideload IPA",
+                "pymobiledevice3 selected-device transport",
+                device,
+                (),
+            ),
+        )
         self._sideload_controller.start(
             finite_process_request(
                 self._pmd3,
@@ -4228,6 +4415,7 @@ class MainWindow(QMainWindow):
     def _sideload_completed(self, result_object: object) -> None:
         if not isinstance(result_object, OperationResult):
             raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("sideload-ipa", result_object)
         context = self._sideload_context
         semantic_failure = output_indicates_failure(result_object.stdout + result_object.stderr)
         succeeded = result_object.outcome == "succeeded" and not semantic_failure
@@ -4277,6 +4465,20 @@ class MainWindow(QMainWindow):
         self._apps_context = context
         self.apps_output.appendPlainText(f"\n$ pymobiledevice3 {shlex.join(arguments)}\n")
         self.apps_status.setText(f"Running {context} operation on {device.display_name()}…")
+        titles = {"inventory": "Refresh Installed Apps", "uninstall": "Uninstall Application"}
+        title = titles.get(context)
+        if title is None:
+            raise KeyError(f"Unknown Installed Apps operation context: {context}")
+        self._begin_operation(
+            "installed-apps",
+            self._device_operation_context(
+                title,
+                "Installed Apps",
+                "pymobiledevice3 selected-device transport",
+                device,
+                (),
+            ),
+        )
         self._apps_controller.start(
             finite_process_request(
                 self._pmd3,
@@ -4295,6 +4497,7 @@ class MainWindow(QMainWindow):
     def _apps_completed(self, result_object: object) -> None:
         if not isinstance(result_object, OperationResult):
             raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("installed-apps", result_object)
         context = self._apps_context
         combined_output = result_object.stdout + result_object.stderr
         succeeded = result_object.outcome == "succeeded" and not output_indicates_failure(combined_output)
@@ -4531,6 +4734,20 @@ class MainWindow(QMainWindow):
         )
         if action == "backup":
             self.backup_progress.setValue(0)
+        device = self.selected_device()
+        if device is None or device.identifier != request.udid:
+            raise RuntimeError("Backup operation target does not match the selected device")
+        output_paths = (str(request.destination / request.udid),) if action == "backup" else ()
+        self._begin_operation(
+            "backup",
+            self._device_operation_context(
+                "Check Backup Encryption" if action == "status" else "Create Device Backup",
+                "Backup",
+                "pymobiledevice3 MobileBackup2 worker",
+                device,
+                output_paths,
+            ),
+        )
         self._backup_controller.start(
             worker,
             action,
@@ -4554,6 +4771,7 @@ class MainWindow(QMainWindow):
             self._backup_encryption_choice_changed(self.require_encryption_checkbox.isChecked())
         if event.path is not None:
             self._last_backup_path = event.path
+            self._update_operation_output_paths("backup", (str(event.path),))
 
     def _append_backup_stderr(self, output: bytes) -> None:
         self.backup_output.moveCursor(QTextCursor.MoveOperation.End)
@@ -4562,6 +4780,7 @@ class MainWindow(QMainWindow):
     def _backup_completed(self, result_object: object) -> None:
         if not isinstance(result_object, OperationResult):
             raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("backup", result_object)
         action = self._backup_action
         if result_object.outcome == "succeeded":
             self.backup_output.appendPlainText(
@@ -5141,6 +5360,18 @@ class MainWindow(QMainWindow):
         approval = "" if profile.level == "read-only" else f"\n[safety approval: {profile.level}; acknowledgement accepted]"
         self.console_output.appendPlainText(f"\n[{title}]{approval}\n$ pymobiledevice3 {shlex.join(arguments)}\n")
         environment = base_environment() if device is None else device_environment(device.identifier)
+        history_context = (
+            self._host_operation_context(title, "Command Center", "pymobiledevice3 host command", ())
+            if device is None
+            else self._device_operation_context(
+                title,
+                "Command Center",
+                "pymobiledevice3 selected-device transport",
+                device,
+                (),
+            )
+        )
+        self._begin_operation("command-center", history_context)
         self._console_controller.start(
             self._pmd3,
             arguments,
@@ -5166,6 +5397,7 @@ class MainWindow(QMainWindow):
     def _console_completed(self, result_object: object) -> None:
         if not isinstance(result_object, OperationResult):
             raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("command-center", result_object)
         exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
         self.console_output.appendPlainText(f"\n[finished: {result_object.outcome}; exit {exit_label}]")
         if result_object.error_message:
@@ -5381,6 +5613,15 @@ class MainWindow(QMainWindow):
             "Loading live help from the installed pymobiledevice3…\n\n"
             "This can take several seconds on the first Python import. Use Cancel Loading to stop immediately."
         )
+        self._begin_operation(
+            "manpage",
+            self._host_operation_context(
+                f"Load Live Help: {entry.display_name()}",
+                "Man Pages",
+                "pymobiledevice3 host help route",
+                (),
+            ),
+        )
         self._manpage_controller.start(
             finite_process_request(
                 self._pmd3,
@@ -5395,6 +5636,7 @@ class MainWindow(QMainWindow):
     def _manpage_completed(self, result_object: object) -> None:
         if not isinstance(result_object, OperationResult):
             raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("manpage", result_object)
         stdout = result_object.stdout.decode("utf-8", errors="replace")
         stderr = result_object.stderr.decode("utf-8", errors="replace")
         output = stdout or stderr
