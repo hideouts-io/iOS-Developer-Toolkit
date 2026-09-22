@@ -70,7 +70,8 @@ from ios_developer_toolkit.action_safety import (
     confirmation_phrase,
     guided_action_safety,
 )
-from ios_developer_toolkit.backup_protocol import BackupEvent, BackupRequestError, parse_backup_event
+from ios_developer_toolkit.backup_process import BackupProcessController
+from ios_developer_toolkit.backup_protocol import BackupAction, BackupEvent, BackupRequest, BackupRequestError
 from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case
 from ios_developer_toolkit.capability_matrix import (
     CapabilityMatrixError,
@@ -545,10 +546,11 @@ class MainWindow(QMainWindow):
         self._apps_controller.completed.connect(self._apps_completed)
         self._apps_context = ""
         self._installed_apps: tuple[InstalledApp, ...] = ()
-        self._backup_process: QProcess | None = None
-        self._backup_action = ""
-        self._backup_stdout = bytearray()
-        self._backup_stderr = bytearray()
+        self._backup_controller = BackupProcessController(self)
+        self._backup_controller.event_received.connect(self._handle_backup_event)
+        self._backup_controller.stderr_received.connect(self._append_backup_stderr)
+        self._backup_controller.completed.connect(self._backup_completed)
+        self._backup_action: BackupAction | None = None
         self._backup_encryption_state: bool | None = None
         self._last_backup_path: Path | None = None
         self._ufade_installation: UFADEInstallation | None = None
@@ -4299,19 +4301,15 @@ class MainWindow(QMainWindow):
         except BackupRequestError as error:
             QMessageBox.critical(self, "Invalid Backup Destination", str(error))
             return
-        request: dict[str, str | bool] = {
-            "udid": device.identifier,
-            "destination": str(destination),
-            "require_encryption": False,
-            "new_password": "",
-            "full": False,
-        }
+        request = BackupRequest(device.identifier, destination, False, "", False)
         self._start_backup_worker("status", request)
 
     def _backup_encryption_choice_changed(self, checked: bool) -> None:
         needs_new_password = checked and self._backup_encryption_state is not True
         controls_enabled = (
-            needs_new_password and self._backup_process is None and self.selected_device() is not None
+            needs_new_password
+            and not self._backup_controller.is_running()
+            and self.selected_device() is not None
         )
         self.backup_password_field.setEnabled(controls_enabled)
         self.backup_password_confirmation_field.setEnabled(controls_enabled)
@@ -4367,84 +4365,41 @@ class MainWindow(QMainWindow):
         if not self._confirm_action("Start Device Backup", warning, profile, device.identifier):
             return
         self._record_action_approval(self.backup_output, "Start Device Backup", profile)
-        request: dict[str, str | bool] = {
-            "udid": device.identifier,
-            "destination": str(destination),
-            "require_encryption": require_encryption,
-            "new_password": password,
-            "full": self.full_backup_checkbox.isChecked(),
-        }
+        request = BackupRequest(
+            device.identifier,
+            destination,
+            require_encryption,
+            password,
+            self.full_backup_checkbox.isChecked(),
+        )
         self._start_backup_worker("backup", request)
         self.backup_password_field.clear()
         self.backup_password_confirmation_field.clear()
 
-    def _start_backup_worker(self, action: str, request: dict[str, str | bool]) -> None:
-        if self._backup_process is not None:
+    def _start_backup_worker(self, action: BackupAction, request: BackupRequest) -> None:
+        if self._backup_controller.is_running():
             QMessageBox.warning(self, "Backup Operation Running", "Stop or wait for the active backup operation first.")
             return
         self._backup_action = action
-        self._backup_stdout.clear()
-        self._backup_stderr.clear()
         worker = worker_command("backup")
-        process = QProcess(self)
-        process.setProgram(str(worker.program))
-        process.setArguments(list(command_arguments(worker, (action,))))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.readyReadStandardOutput.connect(self._read_backup_stdout)
-        process.readyReadStandardError.connect(self._read_backup_stderr)
-        process.finished.connect(self._backup_finished)
-        process.errorOccurred.connect(self._backup_error)
-        self._backup_process = process
         self.backup_output.appendPlainText(
             "Checking backup encryption…" if action == "status" else "Starting device backup…"
         )
         if action == "backup":
             self.backup_progress.setValue(0)
+        self._backup_controller.start(
+            worker,
+            action,
+            request,
+            base_environment(),
+            PROCESS_TERMINATE_GRACE_MS,
+        )
         self._update_backup_controls()
-        process.start()
-        if not process.waitForStarted(3000):
-            self.backup_output.appendPlainText(f"Could not start backup helper: {process.errorString()}")
-            self._backup_process = None
-            self._backup_action = ""
-            self._update_backup_controls()
-            return
-        request_payload = json.dumps(request).encode("utf-8")
-        accepted_bytes = process.write(request_payload)
-        if accepted_bytes != len(request_payload):
-            process.kill()
-            process.waitForFinished(3000)
-            self._backup_process = None
-            self._backup_action = ""
-            self._update_backup_controls()
-            message = f"Backup helper accepted {accepted_bytes} of {len(request_payload)} request bytes."
-            self.backup_output.appendPlainText(message)
-            QMessageBox.critical(
-                self,
-                "Backup Request Failed",
-                f"{message}\nNo backup operation was started.",
-            )
-            return
-        process.closeWriteChannel()
 
-    def _read_backup_stdout(self) -> None:
-        if self._backup_process is None:
-            return
-        self._backup_stdout.extend(bytes(self._backup_process.readAllStandardOutput()))
-        while b"\n" in self._backup_stdout:
-            line, _, remainder = self._backup_stdout.partition(b"\n")
-            self._backup_stdout = bytearray(remainder)
-            if line.strip():
-                self._handle_backup_event_line(line)
-
-    def _handle_backup_event_line(self, line: bytes) -> None:
-        try:
-            event = parse_backup_event(line.decode("utf-8"))
-        except (BackupRequestError, json.JSONDecodeError, UnicodeDecodeError) as error:
-            self.backup_output.appendPlainText(f"Invalid backup helper event: {error}")
-            return
-        self._handle_backup_event(event)
-
-    def _handle_backup_event(self, event: BackupEvent) -> None:
+    def _handle_backup_event(self, event_object: object) -> None:
+        if not isinstance(event_object, BackupEvent):
+            raise TypeError(f"Expected BackupEvent, received {type(event_object).__name__}")
+        event = event_object
         self.backup_output.appendPlainText(event.message)
         if event.percent is not None:
             self.backup_progress.setValue(max(0, min(100, event.percent)))
@@ -4456,40 +4411,38 @@ class MainWindow(QMainWindow):
         if event.path is not None:
             self._last_backup_path = event.path
 
-    def _read_backup_stderr(self) -> None:
-        if self._backup_process is None:
-            return
-        output = bytes(self._backup_process.readAllStandardError())
-        self._backup_stderr.extend(output)
+    def _append_backup_stderr(self, output: bytes) -> None:
         self.backup_output.moveCursor(QTextCursor.MoveOperation.End)
         self.backup_output.insertPlainText(output.decode("utf-8", errors="replace"))
 
-    def _backup_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self._read_backup_stdout()
-        self._read_backup_stderr()
-        if self._backup_stdout.strip():
-            self._handle_backup_event_line(bytes(self._backup_stdout))
-            self._backup_stdout.clear()
+    def _backup_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
         action = self._backup_action
-        if exit_code == 0:
+        if result_object.outcome == "succeeded":
             self.backup_output.appendPlainText(
                 "Encryption status check completed." if action == "status" else "Backup operation completed successfully."
             )
+        elif result_object.outcome == "cancelled":
+            self.backup_output.appendPlainText(
+                "Encryption status check stopped."
+                if action == "status"
+                else "Backup operation stopped. Any partial destination remains incomplete and must be reviewed before reuse."
+            )
         else:
-            self.backup_output.appendPlainText(f"{action.capitalize()} failed with exit code {exit_code}.")
-        self._backup_process = None
-        self._backup_action = ""
+            action_label = "Backup" if action is None else action.capitalize()
+            exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+            self.backup_output.appendPlainText(
+                f"{action_label} failed ({result_object.outcome}; exit {exit_label})."
+            )
+            if result_object.error_message:
+                self.backup_output.appendPlainText(f"Process error: {result_object.error_message}")
+        self._backup_action = None
         self._update_backup_controls()
         self._backup_encryption_choice_changed(self.require_encryption_checkbox.isChecked())
 
-    def _backup_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._backup_process is not None:
-            self.backup_output.appendPlainText(f"Process error: {self._backup_process.errorString()}")
-
     def _update_backup_controls(self) -> None:
-        running = self._backup_process is not None
+        running = self._backup_controller.is_running()
         device_available = self.selected_device() is not None
         self.start_backup_button.setEnabled(device_available and not running)
         self.check_encryption_button.setEnabled(device_available and not running)
@@ -4503,11 +4456,14 @@ class MainWindow(QMainWindow):
         self._backup_encryption_choice_changed(self.require_encryption_checkbox.isChecked())
 
     def stop_backup(self) -> None:
-        if self._backup_process is not None:
-            self.backup_output.appendPlainText(
-                "Stopping the backup. The partial destination may be incomplete and will not be treated as valid incremental state."
-            )
-            self._backup_process.terminate()
+        if self._backup_controller.is_running():
+            if self._backup_action == "status":
+                self.backup_output.appendPlainText("Stopping the encryption status check…")
+            else:
+                self.backup_output.appendPlainText(
+                    "Stopping the backup. The partial destination may be incomplete and will not be treated as valid incremental state."
+                )
+            self._backup_controller.cancel()
 
     def open_backup_folder(self) -> None:
         try:
@@ -5590,17 +5546,24 @@ class MainWindow(QMainWindow):
         apps_running = self._apps_controller.is_running()
         ipa_inspection_running = self._ipa_inspection_controller.is_running()
         sideload_running = self._sideload_controller.is_running()
+        backup_running = self._backup_controller.is_running()
         critical_processes = tuple(
             process
             for process in (
                 self._collection_process,
-                self._backup_process,
                 self._console_process,
                 self._location_process,
             )
             if process is not None and process.state() != QProcess.ProcessState.NotRunning
         )
-        if action_running or apps_running or ipa_inspection_running or sideload_running or critical_processes:
+        if (
+            action_running
+            or apps_running
+            or ipa_inspection_running
+            or sideload_running
+            or backup_running
+            or critical_processes
+        ):
             should_close = self._confirm(
                 "Stop Active Operations?",
                 "A DDI, evidence, app, backup, Location Lab, or Command Center operation is still running. "
@@ -5617,6 +5580,7 @@ class MainWindow(QMainWindow):
         self._apps_controller.shutdown(10000, 3000)
         self._ipa_inspection_controller.shutdown(10000, 3000)
         self._sideload_controller.shutdown(10000, 3000)
+        self._backup_controller.shutdown(10000, 3000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
             self._terminate_capability_children(capability_process)

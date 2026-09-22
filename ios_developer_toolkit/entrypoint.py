@@ -83,6 +83,7 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
     from ios_developer_toolkit.app import MainWindow
+    from ios_developer_toolkit.backup_protocol import BackupRequest
 
     application = QApplication(["ios-developer-toolkit-smoke-test"])
     window = MainWindow()
@@ -301,6 +302,30 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError(f"GUI IPA installation controller did not preserve its output: {sideload_output}")
     if window.sideload_status.text() != "Smoke completed successfully.":
         raise RuntimeError(f"GUI IPA installation controller reported the wrong state: {window.sideload_status.text()}")
+    backup_smoke_program = (
+        'BEGIN { delete ARGV[1] } END { print "{\\"event\\":\\"encryption-state\\",'
+        '\\"message\\":\\"Synthetic encryption status.\\",\\"encrypted\\":true}" }'
+    )
+    window._backup_action = "status"
+    window._backup_controller.start(
+        ExecutableCommand(Path("/usr/bin/awk"), (backup_smoke_program,)),
+        "status",
+        BackupRequest("toolkit-smoke-device", Path("/tmp"), False, "", False),
+        {},
+        500,
+    )
+    backup_deadline = time.monotonic() + 10
+    while window._backup_controller.is_running() and time.monotonic() < backup_deadline:
+        application.processEvents()
+        time.sleep(0.001)
+    application.processEvents()
+    if window._backup_controller.is_running():
+        window._backup_controller.cancel()
+        raise RuntimeError("GUI backup controller did not complete within its bounded smoke-test window")
+    if window._backup_encryption_state is not True:
+        raise RuntimeError(f"GUI backup controller did not apply its typed event: {window.backup_output.toPlainText()}")
+    if "Encryption status check completed." not in window.backup_output.toPlainText():
+        raise RuntimeError(f"GUI backup controller reported the wrong completion: {window.backup_output.toPlainText()}")
     window.close()
     application.processEvents()
     print(f"GUI smoke test passed with {len(buttons)} action buttons", flush=True)
