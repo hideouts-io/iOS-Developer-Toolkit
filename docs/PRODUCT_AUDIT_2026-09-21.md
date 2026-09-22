@@ -130,8 +130,8 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 
 * Maintain the opt-in sanitized compatibility export with an exact local preview, owner-only JSON and Markdown files, host/toolchain context, tested device family and build metadata, and no automatic upload.
 * Maintain local team/workspace profile import-export with a strict versioned schema, exact preview, owner-only export, active-operation guard, and no targets, paths, credentials, coordinates, parameters, case text, or output.
-* Notarized Developer ID distribution when an eligible signing identity exists.
-* Optional device-lab integration through external services, never a mandatory cloud account.
+* **Blocked externally:** notarized Developer ID distribution requires an eligible Apple Developer signing identity, which is not available for this project. The existing release remains explicitly ad-hoc signed and unnotarized.
+* **Deferred by design:** no device-lab service or account is in project scope. Add a provider-specific, optional adapter only after a concrete service, authentication model, data boundary, target-selection contract, and test environment are selected; do not add a speculative cloud abstraction.
 
 ### Do not build
 
@@ -142,17 +142,11 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 * A cloud telemetry/sync system for device identifiers, logs, captures, backups, or case records.
 * A second bundled iOS protocol stack merely for feature-count parity.
 
-## Single best next thing to build
+## Audit implementation status
 
-**Reliable startup and lossless device discovery.** This is the right first build because the device picker is a dependency for nearly every existing workspace, there is direct evidence of a released UI/CLI disagreement, and the current eager import makes a non-backup dependency capable of blocking the app before the user can receive diagnostics. It improves both personas: beginners see a usable application and accurate connection state; experts get predictable process results that can later underpin every operation.
+The original single best next build—reliable startup and lossless device discovery—is complete. Backup protocol parsing is isolated from desktop startup, terminal discovery output is drained before evaluation, deterministic fast-exit tests exist, the connection diagnostic exposes failure layers without raw identity, and the project pins the validated `pymobiledevice3` 11.15.1 runtime.
 
-## Implementation plan
-
-1. Extract backup request/event schema validation into a dependency-free `backup_protocol` module. The desktop UI and tests import that module; only the backup worker imports the MobileBackup2 transport implementation.
-2. Make `DeviceScanner` consume any remaining stdout/stderr synchronously in its completion handler before evaluating exit status or parsing JSON.
-3. Add tests for the backup protocol and a real, short-lived QProcess whose valid JSON is available only after it has exited.
-4. Update the README’s troubleshooting and architecture material to explain the connection behavior and the no-sudo boundary.
-5. Validate `pymobiledevice3` 11.15.1 in the project environment, then run the full 94-test suite, 90-action headless GUI smoke, CLI discovery, and every command-catalog live-help route. Review the diff before handoff.
+The repository-side P0, P1, P2, compatibility-export, and local workspace-profile work is implemented on the audit branch and recorded below. The remaining P3 items are intentionally not represented as unfinished local code: notarization is blocked by the absent signing identity, and device-lab integration is deferred until a specific optional provider and data contract exist. CI and native frozen-artifact checks remain the acceptance authority for each pushed revision.
 
 ## Continuous improvement log
 
