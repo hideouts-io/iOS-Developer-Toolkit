@@ -113,7 +113,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 
 ### P1 — turn diagnostics into a coherent workbench
 
-* Continue migrating finite subprocess workflows to the reusable operation controller and typed `OperationResult`. Device discovery, Man Pages, sequential command drift, DDI/developer-image actions, and Installed Apps inventory/uninstall now share final-drain, timeout, cancellation, launch-failure, clean-relaunch, and structured completion semantics; backup, IPA inspection/install, and capture remain incremental migrations.
+* Continue migrating finite subprocess workflows to the reusable operation controller and typed `OperationResult`. Device discovery, Man Pages, sequential command drift, DDI/developer-image actions, Installed Apps inventory/uninstall, and IPA inspection/install now share final-drain, timeout, cancellation where user-facing cancellation is appropriate, launch-failure, clean-relaunch, and structured completion semantics; backup and capture remain specialized incremental migrations.
 * Make a contextual readiness pane for the selected action, with one-click scoped rechecks and copyable remediation.
 * Maintain the opt-in physical-device compatibility protocol and its explicit USB, usbmux, CoreDevice, developer-service, privacy, and state-changing test boundaries. A pre-release dual-architecture frozen-artifact smoke workflow is now present. The release builder rejects any bundled Mach-O whose minimum macOS version is newer than the advertised 13.0 floor or lacks the native release architecture.
 * Generate concise changelog/release notes from tested behavior. Source, bundle, citation, packaging, and third-party-source metadata drift is now covered by automated tests.
@@ -171,6 +171,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | 2026-09-21 | Migrated sequential command-drift probes to the shared finite-operation controller. | A clean Python 3.13 environment passed the 94-test suite and the GUI smoke now runs the entire 49-route drift check through the real asynchronous UI path. | DDI, backup, app, and capture operations remain incremental controller migrations. |
 | 2026-09-22 | Migrated DDI and Developer Mode actions to the shared finite-operation controller. | The 95-test suite and 90-action GUI smoke passed; the smoke test now executes a real bounded host-only command through the migrated path. | Backup, app, and capture operations remain incremental controller migrations. |
 | 2026-09-22 | Migrated Installed Apps inventory and uninstall operations to the shared finite-operation controller. | The 95-test suite and 90-action GUI smoke passed; the smoke test now renders a synthetic inventory through the migrated asynchronous result path. | Backup, IPA inspection/install, and capture operations remain incremental controller migrations. |
+| 2026-09-22 | Migrated local IPA inspection and device installation to the shared finite-operation controller with explicit five- and 15-minute limits. | The 95-test suite and 90-action GUI smoke passed; the smoke test now validates typed inspection metadata, streamed installation output, and structured completion. | Backup and evidence capture retain specialized worker lifecycles pending deliberate migration. |
 
 ## Research sources
 

@@ -212,6 +212,8 @@ RECONNECT_TIMEOUT_MS = 30_000
 DEVICE_SCAN_TIMEOUT_MS = 10_000
 DDI_ACTION_TIMEOUT_MS = 15 * 60_000
 APPS_ACTION_TIMEOUT_MS = 10 * 60_000
+IPA_INSPECTION_TIMEOUT_MS = 5 * 60_000
+IPA_INSTALL_TIMEOUT_MS = 15 * 60_000
 PROCESS_TERMINATE_GRACE_MS = 1_500
 
 
@@ -529,14 +531,15 @@ class MainWindow(QMainWindow):
         except DeviceCompatibilityError as error:
             self._compatibility_history_error = str(error)
         self._collection_process: QProcess | None = None
-        self._ipa_inspection_process: QProcess | None = None
-        self._ipa_inspection_stdout = bytearray()
-        self._ipa_inspection_stderr = bytearray()
+        self._ipa_inspection_controller = FiniteProcessController(self)
+        self._ipa_inspection_controller.completed.connect(self._ipa_inspection_completed)
         self._ipa_inspection: IPAInspection | None = None
         self._selected_ipa: Path | None = None
-        self._sideload_process: QProcess | None = None
+        self._sideload_controller = FiniteProcessController(self)
+        self._sideload_controller.stdout_received.connect(self._append_sideload_output)
+        self._sideload_controller.stderr_received.connect(self._append_sideload_output)
+        self._sideload_controller.completed.connect(self._sideload_completed)
         self._sideload_context = ""
-        self._sideload_buffer = bytearray()
         self._apps_controller = FiniteProcessController(self)
         self._apps_controller.stderr_received.connect(self._append_apps_stderr)
         self._apps_controller.completed.connect(self._apps_completed)
@@ -3948,48 +3951,40 @@ class MainWindow(QMainWindow):
         selected_ipa = self._selected_ipa
         if selected_ipa is None:
             raise IPAInspectionError("No IPA path was selected for inspection")
-        if self._ipa_inspection_process is not None:
+        if self._ipa_inspection_controller.is_running():
             QMessageBox.warning(self, "Inspection Running", "Wait for the current IPA inspection to finish.")
             return
         self._ipa_inspection = None
-        self._ipa_inspection_stdout.clear()
-        self._ipa_inspection_stderr.clear()
         self.ipa_inspection_summary.clear()
         self.ipa_inspection_summary.setPlainText("Inspecting archive, provisioning profile, and code signature…")
         self.ipa_inspection_progress.setVisible(True)
         worker = worker_command("ipa-inspector")
-        process = QProcess(self)
-        process.setProgram(str(worker.program))
-        process.setArguments(list(command_arguments(worker, (str(selected_ipa),))))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.readyReadStandardOutput.connect(self._read_ipa_inspection_stdout)
-        process.readyReadStandardError.connect(self._read_ipa_inspection_stderr)
-        process.finished.connect(self._ipa_inspection_finished)
-        process.errorOccurred.connect(self._ipa_inspection_error)
-        self._ipa_inspection_process = process
+        self._ipa_inspection_controller.start(
+            finite_process_request(
+                worker,
+                (str(selected_ipa),),
+                base_environment(),
+                IPA_INSPECTION_TIMEOUT_MS,
+                PROCESS_TERMINATE_GRACE_MS,
+            )
+        )
         self._update_sideload_controls()
-        process.start()
 
-    def _read_ipa_inspection_stdout(self) -> None:
-        if self._ipa_inspection_process is not None:
-            self._ipa_inspection_stdout.extend(bytes(self._ipa_inspection_process.readAllStandardOutput()))
-
-    def _read_ipa_inspection_stderr(self) -> None:
-        if self._ipa_inspection_process is not None:
-            self._ipa_inspection_stderr.extend(bytes(self._ipa_inspection_process.readAllStandardError()))
-
-    def _ipa_inspection_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self._read_ipa_inspection_stdout()
-        self._read_ipa_inspection_stderr()
-        stderr_text = self._ipa_inspection_stderr.decode("utf-8", errors="replace").strip()
-        if exit_code != 0:
-            message = stderr_text or f"IPA inspector exited with status {exit_code}"
+    def _ipa_inspection_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        stderr_text = result_object.stderr.decode("utf-8", errors="replace").strip()
+        if result_object.outcome != "succeeded":
+            exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+            message = stderr_text or result_object.error_message or f"IPA inspector exited with status {exit_label}"
             self.ipa_inspection_summary.setPlainText(message)
-            self.sideload_status.setText("IPA inspection failed. Correct the package error before installation.")
+            if result_object.outcome == "timed-out":
+                self.sideload_status.setText("IPA inspection exceeded the five-minute safety limit and was stopped.")
+            else:
+                self.sideload_status.setText("IPA inspection failed. Correct the package error before installation.")
         else:
             try:
-                inspection = parse_inspection_json(self._ipa_inspection_stdout.decode("utf-8"))
+                inspection = parse_inspection_json(result_object.stdout.decode("utf-8"))
             except (IPAInspectionError, UnicodeDecodeError) as error:
                 self.ipa_inspection_summary.setPlainText(f"IPA inspection output validation failed: {error}")
                 self.sideload_status.setText("IPA inspection failed. The inspector returned malformed data.")
@@ -4004,21 +3999,13 @@ class MainWindow(QMainWindow):
                     self.sideload_status.setText(
                         f"Installation is disabled because the extracted bundle signature is {inspection.signature.status}."
                     )
-        self._ipa_inspection_process = None
         self.ipa_inspection_progress.setVisible(False)
         self._update_sideload_controls()
 
-    def _ipa_inspection_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._ipa_inspection_process is not None:
-            self.ipa_inspection_summary.setPlainText(
-                f"Could not start IPA inspection: {self._ipa_inspection_process.errorString()}"
-            )
-
     def _update_sideload_controls(self) -> None:
         device_available = self.selected_device() is not None
-        action_running = self._sideload_process is not None
-        inspection_running = self._ipa_inspection_process is not None
+        action_running = self._sideload_controller.is_running()
+        inspection_running = self._ipa_inspection_controller.is_running()
         signature_valid = self._ipa_inspection is not None and self._ipa_inspection.signature.status == "valid"
         self.choose_ipa_button.setEnabled(not inspection_running and not action_running)
         self.install_ipa_button.setEnabled(device_available and signature_valid and not action_running and not inspection_running)
@@ -4070,63 +4057,58 @@ class MainWindow(QMainWindow):
         if device is None:
             self._show_no_device()
             return
-        if self._sideload_process is not None:
+        if self._sideload_controller.is_running():
             QMessageBox.warning(self, "App Operation Running", "Stop or wait for the active app operation first.")
             return
-        self._sideload_buffer.clear()
         self._sideload_context = context
         self.sideload_output.appendPlainText(f"\n$ pymobiledevice3 {shlex.join(arguments)}\n")
-        process = QProcess(self)
-        process.setProgram(str(self._pmd3.program))
-        process.setArguments(list(command_arguments(self._pmd3, arguments)))
-        process.setWorkingDirectory(str(Path.home()))
-        process.setProcessEnvironment(qprocess_environment(device_environment(device.identifier)))
-        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        process.readyReadStandardOutput.connect(self._read_sideload_output)
-        process.finished.connect(self._sideload_finished)
-        process.errorOccurred.connect(self._sideload_error)
-        self._sideload_process = process
         self.sideload_status.setText(f"Running {context} operation on {device.display_name()}…")
         self.sideload_activity_progress.setVisible(True)
+        self._sideload_controller.start(
+            finite_process_request(
+                self._pmd3,
+                arguments,
+                device_environment(device.identifier),
+                IPA_INSTALL_TIMEOUT_MS,
+                PROCESS_TERMINATE_GRACE_MS,
+            )
+        )
         self._update_sideload_controls()
-        process.start()
 
-    def _read_sideload_output(self) -> None:
-        if self._sideload_process is None:
-            return
-        output = bytes(self._sideload_process.readAllStandardOutput())
-        self._sideload_buffer.extend(output)
+    def _append_sideload_output(self, output: bytes) -> None:
         self.sideload_output.moveCursor(QTextCursor.MoveOperation.End)
         self.sideload_output.insertPlainText(output.decode("utf-8", errors="replace"))
 
-    def _sideload_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self._read_sideload_output()
+    def _sideload_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
         context = self._sideload_context
-        semantic_failure = output_indicates_failure(bytes(self._sideload_buffer))
-        succeeded = exit_code == 0 and not semantic_failure
-        self.sideload_output.appendPlainText(f"\n[finished: exit {exit_code}]\n")
-        self.sideload_status.setText(
-            f"{context.capitalize()} completed successfully."
-            if succeeded
-            else f"{context.capitalize()} failed; review the complete command output above."
+        semantic_failure = output_indicates_failure(result_object.stdout + result_object.stderr)
+        succeeded = result_object.outcome == "succeeded" and not semantic_failure
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        self.sideload_output.appendPlainText(
+            f"\n[finished: {result_object.outcome}; exit {exit_label}]\n"
         )
-        self._sideload_process = None
+        if result_object.error_message:
+            self.sideload_output.appendPlainText(f"Process error: {result_object.error_message}")
+        if succeeded:
+            self.sideload_status.setText(f"{context.capitalize()} completed successfully.")
+        elif result_object.outcome == "timed-out":
+            self.sideload_status.setText("IPA installation exceeded the 15-minute safety limit and was stopped.")
+        elif result_object.outcome == "cancelled":
+            self.sideload_status.setText("IPA installation was cancelled; verify device state before retrying.")
+        else:
+            self.sideload_status.setText(f"{context.capitalize()} failed; review the complete command output above.")
         self._sideload_context = ""
         self.sideload_activity_progress.setVisible(False)
         self._update_sideload_controls()
         if succeeded and context == "install" and not self._apps_controller.is_running():
             QTimer.singleShot(0, self.refresh_app_inventory)
 
-    def _sideload_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._sideload_process is not None:
-            self.sideload_output.appendPlainText(f"\nProcess error: {self._sideload_process.errorString()}")
-
     def stop_sideload_action(self) -> None:
-        if self._sideload_process is not None:
+        if self._sideload_controller.is_running():
             self.sideload_output.appendPlainText("\nRequesting app operation stop…")
-            self._sideload_process.terminate()
+            self._sideload_controller.cancel()
 
     def refresh_app_inventory(self) -> None:
         device = self.selected_device()
@@ -5606,18 +5588,19 @@ class MainWindow(QMainWindow):
                 return
         action_running = self._action_controller.is_running()
         apps_running = self._apps_controller.is_running()
+        ipa_inspection_running = self._ipa_inspection_controller.is_running()
+        sideload_running = self._sideload_controller.is_running()
         critical_processes = tuple(
             process
             for process in (
                 self._collection_process,
-                self._sideload_process,
                 self._backup_process,
                 self._console_process,
                 self._location_process,
             )
             if process is not None and process.state() != QProcess.ProcessState.NotRunning
         )
-        if action_running or apps_running or critical_processes:
+        if action_running or apps_running or ipa_inspection_running or sideload_running or critical_processes:
             should_close = self._confirm(
                 "Stop Active Operations?",
                 "A DDI, evidence, app, backup, Location Lab, or Command Center operation is still running. "
@@ -5632,6 +5615,8 @@ class MainWindow(QMainWindow):
         self._command_drift_controller.shutdown(3000, 1000)
         self._action_controller.shutdown(10000, 3000)
         self._apps_controller.shutdown(10000, 3000)
+        self._ipa_inspection_controller.shutdown(10000, 3000)
+        self._sideload_controller.shutdown(10000, 3000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
             self._terminate_capability_children(capability_process)
@@ -5645,9 +5630,6 @@ class MainWindow(QMainWindow):
             if not process.waitForFinished(10000):
                 process.kill()
                 process.waitForFinished(3000)
-        for process in (self._ipa_inspection_process,):
-            if process is not None and process.state() != QProcess.ProcessState.NotRunning:
-                process.terminate()
         event.accept()
 
 

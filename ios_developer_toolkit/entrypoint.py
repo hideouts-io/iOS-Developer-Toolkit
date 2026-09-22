@@ -245,6 +245,62 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError(
             f"GUI installed-apps controller did not render its synthetic inventory: {window.apps_status.text()}"
         )
+    synthetic_inspection = (
+        '{"ipa_path":"/tmp/ToolkitSmoke.ipa","app_name":"Toolkit Smoke",'
+        '"bundle_identifier":"com.example.toolkit-smoke","version":"1.0","build":"1",'
+        '"minimum_os_version":"17.0","executable_name":"ToolkitSmoke",'
+        '"provisioning":{"status":"present","name":"Toolkit Smoke Profile","uuid":"smoke-uuid",'
+        '"team_identifiers":["SMOKETEAM"],'
+        '"application_identifier":"SMOKETEAM.com.example.toolkit-smoke",'
+        '"expiration":"2030-01-01T00:00:00+00:00","provisioned_device_count":1,'
+        '"provisions_all_devices":false,"get_task_allow":true,'
+        '"developer_certificate_count":1,"detail":"Synthetic smoke-test profile"},'
+        '"signature":{"status":"valid","identifier":"com.example.toolkit-smoke",'
+        '"team_identifier":"SMOKETEAM","authorities":["Toolkit Smoke Authority"],'
+        '"detail":"Synthetic smoke-test signature"}}'
+    )
+    window._ipa_inspection_controller.start(
+        finite_process_request(
+            ExecutableCommand(Path("/usr/bin/printf"), ()),
+            (synthetic_inspection,),
+            {},
+            5_000,
+            500,
+        )
+    )
+    inspection_deadline = time.monotonic() + 10
+    while window._ipa_inspection_controller.is_running() and time.monotonic() < inspection_deadline:
+        application.processEvents()
+        time.sleep(0.001)
+    application.processEvents()
+    if window._ipa_inspection_controller.is_running():
+        window._ipa_inspection_controller.cancel()
+        raise RuntimeError("GUI IPA inspection controller did not complete within its bounded smoke-test window")
+    if window._ipa_inspection is None or window._ipa_inspection.signature.status != "valid":
+        raise RuntimeError(f"GUI IPA inspection controller rejected typed metadata: {window.sideload_status.text()}")
+    window._sideload_context = "smoke"
+    window._sideload_controller.start(
+        finite_process_request(
+            ExecutableCommand(Path("/usr/bin/printf"), ()),
+            ("Synthetic IPA operation output",),
+            {},
+            5_000,
+            500,
+        )
+    )
+    sideload_deadline = time.monotonic() + 10
+    while window._sideload_controller.is_running() and time.monotonic() < sideload_deadline:
+        application.processEvents()
+        time.sleep(0.001)
+    application.processEvents()
+    if window._sideload_controller.is_running():
+        window._sideload_controller.cancel()
+        raise RuntimeError("GUI IPA installation controller did not complete within its bounded smoke-test window")
+    sideload_output = window.sideload_output.toPlainText()
+    if "Synthetic IPA operation output" not in sideload_output or "[finished: succeeded; exit 0]" not in sideload_output:
+        raise RuntimeError(f"GUI IPA installation controller did not preserve its output: {sideload_output}")
+    if window.sideload_status.text() != "Smoke completed successfully.":
+        raise RuntimeError(f"GUI IPA installation controller reported the wrong state: {window.sideload_status.text()}")
     window.close()
     application.processEvents()
     print(f"GUI smoke test passed with {len(buttons)} action buttons", flush=True)
