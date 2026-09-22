@@ -439,6 +439,8 @@ The toolkit attaches this outer host image read-only, validates its `Restore` pa
 
 Both modern paths normally require Apple TSS access. A cached DDI payload does not guarantee that personalization can complete offline.
 
+Developer Mode queries and DDI mount, list, unmount, install, and uninstall actions use the shared bounded operation controller. It drains both output channels at completion, reports launch failures and crashes distinctly, prevents periodic device refreshes from re-enabling conflicting controls, and stops an action that exceeds the 15-minute safety limit.
+
 ### Device Capability Matrix
 
 ![Device Capability Matrix workspace](docs/screenshots/capability-matrix.png)

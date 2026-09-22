@@ -210,6 +210,7 @@ MANPAGE_HELP_KILL_DELAY_MS = 1_500
 COMMAND_DRIFT_HELP_TIMEOUT_MS = 5_000
 RECONNECT_TIMEOUT_MS = 30_000
 DEVICE_SCAN_TIMEOUT_MS = 10_000
+DDI_ACTION_TIMEOUT_MS = 15 * 60_000
 PROCESS_TERMINATE_GRACE_MS = 1_500
 
 
@@ -505,9 +506,11 @@ class MainWindow(QMainWindow):
         self._reconnect_timeout_timer = QTimer(self)
         self._reconnect_timeout_timer.setSingleShot(True)
         self._reconnect_timeout_timer.timeout.connect(self._reconnect_timed_out)
-        self._action_process: QProcess | None = None
+        self._action_controller = FiniteProcessController(self)
+        self._action_controller.stdout_received.connect(self._append_action_output)
+        self._action_controller.stderr_received.connect(self._append_action_output)
+        self._action_controller.completed.connect(self._action_completed)
         self._action_context = ""
-        self._action_buffer = bytearray()
         self._capability_process: QProcess | None = None
         self._capability_stdout_buffer = bytearray()
         self._capability_stderr = bytearray()
@@ -2529,8 +2532,9 @@ class MainWindow(QMainWindow):
                 else "Connect a trusted device, then refresh the inventory."
             )
         enabled = device is not None and not self._demo_mode
-        self.mount_button.setEnabled(enabled)
-        self.remove_button.setEnabled(enabled)
+        action_available = enabled and not self._action_controller.is_running()
+        self.mount_button.setEnabled(action_available)
+        self.remove_button.setEnabled(action_available)
         self.start_collection_button.setEnabled(enabled and self._collection_process is None)
         self.create_case_button.setEnabled(enabled and self._collection_process is None and self._active_case_path is None)
         self.case_readiness_button.setEnabled(enabled and self._capability_process is None)
@@ -3071,54 +3075,55 @@ class MainWindow(QMainWindow):
         environment: Mapping[str, str],
         context: str,
     ) -> None:
-        if self._action_process is not None and self._action_process.state() != QProcess.ProcessState.NotRunning:
+        if self._action_controller.is_running():
             QMessageBox.warning(self, "Action Running", "Wait for the current DDI action to finish.")
             return
         self.action_output.appendPlainText(f"$ {command_text(program, arguments)}")
-        self._action_buffer.clear()
-        process = QProcess(self)
-        process.setProgram(str(program.program))
-        process.setArguments(list(command_arguments(program, arguments)))
-        process.setProcessEnvironment(qprocess_environment(environment))
-        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        process.readyReadStandardOutput.connect(self._read_action_output)
-        process.finished.connect(self._action_finished)
-        process.errorOccurred.connect(self._action_error)
-        self._action_process = process
         self._action_context = context
         self.mount_button.setEnabled(False)
         self.remove_button.setEnabled(False)
-        process.start()
+        self._action_controller.start(
+            finite_process_request(
+                program,
+                arguments,
+                environment,
+                DDI_ACTION_TIMEOUT_MS,
+                PROCESS_TERMINATE_GRACE_MS,
+            )
+        )
 
-    def _read_action_output(self) -> None:
-        if self._action_process is not None:
-            text = bytes(self._action_process.readAllStandardOutput()).decode("utf-8", errors="replace")
-            self._action_buffer.extend(text.encode("utf-8"))
-            self.action_output.moveCursor(QTextCursor.MoveOperation.End)
-            self.action_output.insertPlainText(text)
+    def _append_action_output(self, output: bytes) -> None:
+        self.action_output.moveCursor(QTextCursor.MoveOperation.End)
+        self.action_output.insertPlainText(output.decode("utf-8", errors="replace"))
 
-    def _action_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
+    def _action_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
         context = self._action_context
-        self.action_output.appendPlainText(f"\n[finished: exit {exit_code}]\n")
-        semantic_failure = output_indicates_failure(bytes(self._action_buffer))
+        combined_output = result_object.stdout + result_object.stderr
+        semantic_failure = output_indicates_failure(combined_output)
+        succeeded = result_object.outcome == "succeeded" and not semantic_failure
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        self.action_output.appendPlainText(
+            f"\n[finished: {result_object.outcome}; exit {exit_label}]\n"
+        )
+        if result_object.error_message:
+            self.action_output.appendPlainText(f"Process error: {result_object.error_message}")
+        if result_object.outcome == "timed-out":
+            self.action_output.appendPlainText(
+                "The DDI action exceeded the 15-minute safety limit and was stopped."
+            )
         if context == "developer-mode-status":
-            recent_text = self.action_output.toPlainText().lower()
-            if exit_code == 0 and not semantic_failure and "true" in recent_text.split("$ ")[-1]:
+            if succeeded and b"true" in combined_output.lower():
                 self.developer_mode_status.setText("Developer Mode is enabled")
-            elif exit_code == 0 and not semantic_failure:
+            elif succeeded:
                 self.developer_mode_status.setText("Developer Mode appears disabled — follow the on-device steps")
             else:
                 self.developer_mode_status.setText("Could not query Developer Mode; see command output")
-        elif exit_code == 0 and not semantic_failure and context.startswith("mount"):
+        elif succeeded and context.startswith("mount"):
             self.developer_mode_status.setText("Developer image operation completed successfully")
-        self._action_process = None
+        self._action_context = ""
         self._update_device_fields(self.selected_device())
-
-    def _action_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._action_process is not None:
-            self.action_output.appendPlainText(f"\nProcess error: {self._action_process.errorString()}")
 
     def _apply_location_coordinates(self, coordinates: Coordinates) -> None:
         self.location_latitude_field.setText(format(coordinates.latitude, ".12g"))
@@ -5609,10 +5614,10 @@ class MainWindow(QMainWindow):
             if window.isVisible():
                 event.ignore()
                 return
+        action_running = self._action_controller.is_running()
         critical_processes = tuple(
             process
             for process in (
-                self._action_process,
                 self._collection_process,
                 self._sideload_process,
                 self._apps_process,
@@ -5622,7 +5627,7 @@ class MainWindow(QMainWindow):
             )
             if process is not None and process.state() != QProcess.ProcessState.NotRunning
         )
-        if critical_processes:
+        if action_running or critical_processes:
             should_close = self._confirm(
                 "Stop Active Operations?",
                 "A DDI, evidence, app, backup, Location Lab, or Command Center operation is still running. "
@@ -5635,6 +5640,7 @@ class MainWindow(QMainWindow):
         self._reconnect_timeout_timer.stop()
         self._manpage_controller.shutdown(3000, 1000)
         self._command_drift_controller.shutdown(3000, 1000)
+        self._action_controller.shutdown(10000, 3000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
             self._terminate_capability_children(capability_process)

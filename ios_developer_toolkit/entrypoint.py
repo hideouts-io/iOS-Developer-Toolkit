@@ -10,6 +10,7 @@ from ios_developer_toolkit.runtime import (
     INTERNAL_SMOKE_TEST_FLAG,
     INTERNAL_WORKER_FLAG,
     ToolkitWorker,
+    pymobiledevice3_command,
 )
 
 
@@ -200,6 +201,18 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError("Demo mode must disable live-device log collection")
     demo_mode_button.click()
     application.processEvents()
+    window._start_action(pymobiledevice3_command(), ("version",), {}, "smoke")
+    action_deadline = time.monotonic() + 20
+    while window._action_controller.is_running() and time.monotonic() < action_deadline:
+        application.processEvents()
+        time.sleep(0.001)
+    application.processEvents()
+    if window._action_controller.is_running():
+        window._action_controller.cancel()
+        raise RuntimeError("GUI DDI action controller did not complete within its bounded smoke-test window")
+    action_output = window.action_output.toPlainText()
+    if "[finished: succeeded; exit 0]" not in action_output:
+        raise RuntimeError(f"GUI DDI action controller failed its host-only smoke command: {action_output}")
     window.close()
     application.processEvents()
     print(f"GUI smoke test passed with {len(buttons)} action buttons", flush=True)
