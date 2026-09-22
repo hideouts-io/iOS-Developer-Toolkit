@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Literal, Mapping
 
+from ios_developer_toolkit.command_catalog import CommandPreset
 from ios_developer_toolkit.models import IOSDevice
 from ios_developer_toolkit.runtime import ExecutableCommand, command_argv, command_text, device_environment
 from ios_developer_toolkit.validation import output_indicates_failure
@@ -70,6 +71,16 @@ class CapabilityWorkerCompleted:
 
 
 CapabilityWorkerEvent = CapabilityWorkerStarted | CapabilityResult | CapabilityWorkerCompleted
+
+
+PresetReadinessState = Literal["ready", "not-tested", "needs-attention"]
+
+
+@dataclass(frozen=True)
+class PresetReadiness:
+    state: PresetReadinessState
+    summary: str
+    remediation: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -183,6 +194,62 @@ def untested_capability_results() -> tuple[CapabilityResult, ...]:
             definition.remediation,
         )
         for definition in capability_definitions()
+    )
+
+
+def capability_state_counts(results: Iterable[CapabilityResult]) -> tuple[tuple[CapabilityState, int], ...]:
+    materialized = tuple(results)
+    return tuple((state, sum(result.state == state for result in materialized)) for state in CAPABILITY_STATES)
+
+
+def preset_capability_identifiers(preset: CommandPreset) -> tuple[str, ...]:
+    identifiers: list[str] = []
+    if preset.requires_device:
+        identifiers.extend(("device-connection", "pairing-trust"))
+    if preset.requires_developer_services:
+        identifiers.extend(("developer-mode", "developer-image", "rsd-tunnel"))
+        if preset.argument_template[:2] == ("developer", "core-device"):
+            identifiers.append("coredevice")
+        else:
+            identifiers.append("dvt")
+    if preset.argument_template and preset.argument_template[0] == "webinspector":
+        identifiers.append("webinspector")
+    return tuple(dict.fromkeys(identifiers))
+
+
+def evaluate_preset_readiness(
+    preset: CommandPreset,
+    results: Mapping[str, CapabilityResult],
+) -> PresetReadiness:
+    identifiers = preset_capability_identifiers(preset)
+    if not identifiers:
+        return PresetReadiness("ready", "No device capability check is required for this preset.", ())
+    missing = tuple(identifier for identifier in identifiers if identifier not in results)
+    if missing:
+        raise CapabilityMatrixError(f"Capability results are missing required identifiers: {', '.join(missing)}")
+    required = tuple(results[identifier] for identifier in identifiers)
+    not_tested = tuple(result for result in required if result.state == "not-tested")
+    if not_tested:
+        titles = ", ".join(result.title for result in not_tested)
+        return PresetReadiness(
+            "not-tested",
+            f"Readiness not checked for: {titles}.",
+            ("Run the one-click Device Readiness Check before this command.",),
+        )
+    attention = tuple(result for result in required if result.state in ("attention", "unavailable", "blocked"))
+    if attention:
+        summary = "; ".join(
+            f"{result.title}: {capability_state_label(result.state)}" for result in attention
+        )
+        return PresetReadiness(
+            "needs-attention",
+            summary,
+            tuple(dict.fromkeys(result.remediation for result in attention)),
+        )
+    return PresetReadiness(
+        "ready",
+        "Every tested requirement is ready or not applicable for the selected device.",
+        (),
     )
 
 

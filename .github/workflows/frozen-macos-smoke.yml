@@ -1,0 +1,68 @@
+name: Frozen macOS smoke
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/frozen-macos-smoke.yml"
+      - "ios_developer_toolkit/**"
+      - "macos/**"
+      - "packaging/**"
+      - "requirements/**"
+      - "scripts/build_macos_release.sh"
+      - "scripts/collect_third_party_licenses.py"
+      - "scripts/verify_release_metadata.py"
+      - "scripts/verify_macos_bundle.py"
+      - "scripts/verify_command_catalog.py"
+      - "pyproject.toml"
+      - "tests/**"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frozen-macos-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-verify:
+    name: Build and verify ${{ matrix.architecture }} bundle
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: arm64
+            python_architecture: arm64
+          - runner: macos-15-intel
+            architecture: x86_64
+            python_architecture: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          architecture: ${{ matrix.python_architecture }}
+          cache: pip
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/nuitka-cache
+          key: nuitka-${{ runner.os }}-${{ matrix.architecture }}-${{ hashFiles('pyproject.toml', 'requirements/**', 'packaging/**') }}
+          restore-keys: |
+            nuitka-${{ runner.os }}-${{ matrix.architecture }}-
+      - name: Build the frozen application and run embedded checks
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
+          NUITKA_CACHE_DIR: ${{ runner.temp }}/nuitka-cache
+        run: |
+          release_version="$(python3 -c 'from ios_developer_toolkit import APP_VERSION; print(APP_VERSION)')"
+          ./scripts/build_macos_release.sh "$release_version" "$RUNNER_TEMP/release-smoke" python3
+      - name: Confirm smoke artifacts exist
+        run: |
+          find "$RUNNER_TEMP/release-smoke" -maxdepth 1 -type f -name '*.zip' -size +0c -print -quit | grep -q .
+          find "$RUNNER_TEMP/release-smoke" -maxdepth 1 -type f -name '*.cdx.json' -size +0c -print -quit | grep -q .

@@ -1,3 +1,3 @@
-"""iOS Device Workbench package."""
+"""iOS Developer Toolkit package."""
 
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.4"

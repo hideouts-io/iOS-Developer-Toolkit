@@ -8,6 +8,7 @@ from ios_developer_toolkit.command_catalog import CommandPreset
 
 
 CommandDriftState = Literal["verified", "route-missing", "option-mismatch", "check-failed", "not-checked"]
+ANSI_CONTROL_SEQUENCE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,8 @@ def expected_option_tokens(preset: CommandPreset) -> tuple[str, ...]:
 
 def help_includes_option(help_text: str, option: str) -> bool:
     pattern = rf"(?<![A-Za-z0-9_-]){re.escape(option)}(?![A-Za-z0-9_-])"
-    return re.search(pattern, help_text) is not None
+    normalized_help = ANSI_CONTROL_SEQUENCE.sub("", help_text)
+    return re.search(pattern, normalized_help) is not None
 
 
 def evaluate_command_drift(
@@ -81,16 +83,17 @@ def _evaluate_preset(preset: CommandPreset, probe: HelpRouteProbe | None) -> Com
             "route-missing",
             f"Live help exited with status {probe.exit_code}.{suffix}",
         )
-    if not probe.stdout.strip():
+    help_text = "\n".join(output for output in (probe.stdout, probe.stderr) if output.strip())
+    if not help_text:
         return CommandDriftResult(
             preset.identifier,
             preset.title,
             preset.manpage_path,
             expected_options,
             "check-failed",
-            "Live help exited successfully but returned no standard output.",
+            "Live help exited successfully but returned no output.",
         )
-    missing_options = tuple(option for option in expected_options if not help_includes_option(probe.stdout, option))
+    missing_options = tuple(option for option in expected_options if not help_includes_option(help_text, option))
     if missing_options:
         return CommandDriftResult(
             preset.identifier,

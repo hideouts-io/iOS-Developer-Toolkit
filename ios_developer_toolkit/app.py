@@ -70,7 +70,7 @@ from ios_developer_toolkit.action_safety import (
     confirmation_phrase,
     guided_action_safety,
 )
-from ios_developer_toolkit.backup_worker import BackupEvent, BackupRequestError, parse_backup_event
+from ios_developer_toolkit.backup_protocol import BackupEvent, BackupRequestError, parse_backup_event
 from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case
 from ios_developer_toolkit.capability_matrix import (
     CapabilityMatrixError,
@@ -79,9 +79,21 @@ from ios_developer_toolkit.capability_matrix import (
     CapabilityWorkerCompleted,
     CapabilityWorkerStarted,
     capability_definitions,
+    capability_state_counts,
     capability_state_label,
+    evaluate_preset_readiness,
     parse_capability_worker_event,
     untested_capability_results,
+)
+from ios_developer_toolkit.connection_diagnostics import (
+    ConnectionDiagnostic,
+    devices_connection_diagnostic,
+    failed_connection_diagnostic,
+    initial_connection_diagnostic,
+    launch_failed_connection_diagnostic,
+    malformed_output_connection_diagnostic,
+    process_error_connection_diagnostic,
+    timed_out_connection_diagnostic,
 )
 from ios_developer_toolkit.device_compatibility import (
     DeviceCompatibilityError,
@@ -157,6 +169,11 @@ from ios_developer_toolkit.location_lab import (
 )
 from ios_developer_toolkit.live_logs import LiveLogError, LiveLogWindow, log_stream_specs, stream_spec
 from ios_developer_toolkit.models import DeviceDataError, IOSDevice, parse_devices_json
+from ios_developer_toolkit.qt_process import (
+    FiniteProcessController,
+    OperationResult,
+    finite_process_request,
+)
 from ios_developer_toolkit.runtime import (
     ExecutableCommand,
     command_arguments,
@@ -192,6 +209,8 @@ MANPAGE_HELP_TIMEOUT_MS = 15_000
 MANPAGE_HELP_KILL_DELAY_MS = 1_500
 COMMAND_DRIFT_HELP_TIMEOUT_MS = 5_000
 RECONNECT_TIMEOUT_MS = 30_000
+DEVICE_SCAN_TIMEOUT_MS = 10_000
+PROCESS_TERMINATE_GRACE_MS = 1_500
 
 
 def application_icon_path() -> Path:
@@ -225,6 +244,7 @@ def base_environment() -> Mapping[str, str]:
 class DeviceScanner(QObject):
     devices_changed = Signal(object)
     scan_error = Signal(str)
+    diagnostic_changed = Signal(object)
 
     def __init__(self, executable: ExecutableCommand) -> None:
         super().__init__()
@@ -232,9 +252,8 @@ class DeviceScanner(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(3000)
         self._timer.timeout.connect(self.scan)
-        self._process: QProcess | None = None
-        self._stdout = bytearray()
-        self._stderr = bytearray()
+        self._controller = FiniteProcessController(self)
+        self._controller.completed.connect(self._completed)
         self._stopping = False
 
     def start(self) -> None:
@@ -245,50 +264,59 @@ class DeviceScanner(QObject):
     def stop(self) -> None:
         self._stopping = True
         self._timer.stop()
-        if self._process is not None and self._process.state() != QProcess.ProcessState.NotRunning:
-            self._process.terminate()
-            if not self._process.waitForFinished(3000):
-                self._process.kill()
-                self._process.waitForFinished(1000)
+        self._controller.shutdown(3000, 1000)
 
     def scan(self) -> None:
         if self._stopping:
             return
-        if self._process is not None and self._process.state() != QProcess.ProcessState.NotRunning:
+        if self._controller.is_running():
             return
-        self._stdout.clear()
-        self._stderr.clear()
-        process = QProcess(self)
-        process.setProgram(str(self._executable.program))
-        process.setArguments(list(command_arguments(self._executable, ("usbmux", "list"))))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.readyReadStandardOutput.connect(self._read_stdout)
-        process.readyReadStandardError.connect(self._read_stderr)
-        process.finished.connect(self._finished)
-        self._process = process
-        process.start()
+        request = finite_process_request(
+            self._executable,
+            ("usbmux", "list"),
+            base_environment(),
+            DEVICE_SCAN_TIMEOUT_MS,
+            PROCESS_TERMINATE_GRACE_MS,
+        )
+        self._controller.start(request)
 
-    def _read_stdout(self) -> None:
-        if self._process is not None:
-            self._stdout.extend(bytes(self._process.readAllStandardOutput()))
-
-    def _read_stderr(self) -> None:
-        if self._process is not None:
-            self._stderr.extend(bytes(self._process.readAllStandardError()))
-
-    def _finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
+    def _completed(self, result_object: object) -> None:
         if self._stopping:
             return
-        if exit_code != 0:
-            message = self._stderr.decode("utf-8", errors="replace").strip()
-            self.scan_error.emit(message or f"Device scan failed with exit code {exit_code}")
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        if result_object.outcome == "launch-failed":
+            diagnostic = launch_failed_connection_diagnostic()
+            self.diagnostic_changed.emit(diagnostic)
+            self.scan_error.emit(diagnostic.detail)
             return
+        if result_object.outcome == "timed-out":
+            diagnostic = timed_out_connection_diagnostic()
+            self.diagnostic_changed.emit(diagnostic)
+            self.scan_error.emit(diagnostic.detail)
+            return
+        if result_object.outcome in ("crashed", "cancelled"):
+            diagnostic = process_error_connection_diagnostic()
+            self.diagnostic_changed.emit(diagnostic)
+            self.scan_error.emit(diagnostic.detail)
+            return
+        if result_object.outcome == "failed":
+            if result_object.exit_code is None:
+                raise RuntimeError("Failed device discovery did not provide an exit code")
+            diagnostic = failed_connection_diagnostic(result_object.exit_code)
+            self.diagnostic_changed.emit(diagnostic)
+            self.scan_error.emit(diagnostic.detail)
+            return
+        if result_object.outcome != "succeeded":
+            raise RuntimeError(f"Unsupported device discovery outcome: {result_object.outcome}")
         try:
-            devices = parse_devices_json(self._stdout.decode("utf-8"))
-        except (DeviceDataError, json.JSONDecodeError, UnicodeDecodeError) as error:
-            self.scan_error.emit(f"Could not parse device discovery output: {error}")
+            devices = parse_devices_json(result_object.stdout.decode("utf-8"))
+        except (DeviceDataError, json.JSONDecodeError, UnicodeDecodeError):
+            diagnostic = malformed_output_connection_diagnostic()
+            self.diagnostic_changed.emit(diagnostic)
+            self.scan_error.emit(diagnostic.detail)
             return
+        self.diagnostic_changed.emit(devices_connection_diagnostic(len(devices)))
         self.devices_changed.emit(devices)
 
 
@@ -459,7 +487,7 @@ class UFADEGuideDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(f"iOS Device Workbench {APP_VERSION}")
+        self.setWindowTitle(f"iOS Developer Toolkit {APP_VERSION}")
         self.setAccessibleName("iOS Developer Toolkit main window")
         self.setAccessibleDescription(
             "Keyboard-first workspace for authorized iPhone and iPad development, diagnostics, backup, and evidence collection."
@@ -468,6 +496,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 840)
         self._pmd3 = pymobiledevice3_command()
         self._devices: tuple[IOSDevice, ...] = ()
+        self._connection_diagnostic = initial_connection_diagnostic()
         self._demo_mode = False
         self._demo_device = demo_device()
         self._active_device_identifier: str | None = None
@@ -543,27 +572,18 @@ class MainWindow(QMainWindow):
         self._current_preset: CommandPreset | None = None
         self._preset_parameter_fields: dict[str, QLineEdit] = {}
         self._manpages = manpage_entries()
-        self._manpage_process: QProcess | None = None
-        self._manpage_stdout = bytearray()
-        self._manpage_stderr = bytearray()
+        self._manpage_controller = FiniteProcessController(self)
+        self._manpage_controller.completed.connect(self._manpage_completed)
         self._manpage_cache: dict[tuple[str, ...], str] = {}
         self._manpage_active_path: tuple[str, ...] | None = None
-        self._manpage_cancel_reason: str | None = None
-        self._manpage_timeout_timer = QTimer(self)
-        self._manpage_timeout_timer.setSingleShot(True)
-        self._manpage_timeout_timer.timeout.connect(self._manpage_timed_out)
-        self._command_drift_process: QProcess | None = None
-        self._command_drift_stdout = bytearray()
-        self._command_drift_stderr = bytearray()
+        self._command_drift_controller = FiniteProcessController(self)
+        self._command_drift_controller.completed.connect(self._command_drift_probe_completed)
         self._command_drift_paths: tuple[tuple[str, ...], ...] = ()
         self._command_drift_index = 0
         self._command_drift_active_path: tuple[str, ...] | None = None
-        self._command_drift_active_error: str | None = None
+        self._command_drift_session_active = False
         self._command_drift_cancelled = False
         self._command_drift_probes: dict[tuple[str, ...], HelpRouteProbe] = {}
-        self._command_drift_timeout_timer = QTimer(self)
-        self._command_drift_timeout_timer.setSingleShot(True)
-        self._command_drift_timeout_timer.timeout.connect(self._command_drift_timed_out)
         self._last_case_path: Path | None = None
         self._active_case_path: Path | None = None
         self._keyboard_shortcuts: list[QShortcut] = []
@@ -573,6 +593,7 @@ class MainWindow(QMainWindow):
         self._scanner = DeviceScanner(self._pmd3)
         self._scanner.devices_changed.connect(self._devices_changed)
         self._scanner.scan_error.connect(self._scan_error)
+        self._scanner.diagnostic_changed.connect(self._connection_diagnostic_changed)
         self._scanner.start()
 
     def _build_ui(self) -> None:
@@ -599,7 +620,7 @@ class MainWindow(QMainWindow):
         logo.setAccessibleName("iOS Developer Toolkit logo")
         header_layout.addWidget(logo)
         title_block = QVBoxLayout()
-        title = QLabel("iOS Device Workbench")
+        title = QLabel("iOS Developer Toolkit")
         title.setObjectName("appTitle")
         title.setFont(QFont(title.font().family(), 24, QFont.Weight.Bold))
         subtitle = QLabel("pymobiledevice3 Swiss-army GUI • Developer images • diagnostics • evidence")
@@ -661,7 +682,7 @@ class MainWindow(QMainWindow):
         self.navigation_list.setObjectName("workspaceNavigation")
         self.navigation_list.setSpacing(2)
         sidebar_layout.addWidget(self.navigation_list, 1)
-        version_note = QLabel(f"Toolkit {APP_VERSION}\npymobiledevice3 10.11.0")
+        version_note = QLabel(f"Toolkit {APP_VERSION}\npymobiledevice3 11.15.1")
         version_note.setObjectName("sidebarVersion")
         version_note.setWordWrap(True)
         sidebar_layout.addWidget(version_note)
@@ -943,12 +964,10 @@ class MainWindow(QMainWindow):
         current_item = self.navigation_list.currentItem()
         if current_item is None:
             raise RuntimeError("Cannot create a support bundle without a selected workspace")
-        capability_counts = tuple(
-            (state, sum(result.state == state for result in self._capability_results.values()))
-            for state in ("ready", "needs-attention", "unavailable", "blocked", "not-tested", "not-applicable")
-        )
+        capability_counts = capability_state_counts(self._capability_results.values())
         statuses = (
             SupportStatus("connection", self.connection_banner.text()),
+            SupportStatus("connection_diagnostic", self._connection_diagnostic.report()),
             SupportStatus("developer_mode", self.developer_mode_status.text()),
             SupportStatus("capability_matrix", self.capability_status.text()),
             SupportStatus("command_drift", self.command_drift_status.text()),
@@ -1025,6 +1044,18 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setSpacing(14)
+
+        diagnostic_group = QGroupBox("Connection diagnostic")
+        diagnostic_layout = QVBoxLayout(diagnostic_group)
+        self.connection_diagnostic_value = QLabel(self._connection_diagnostic.report())
+        self.connection_diagnostic_value.setObjectName("connectionDiagnosticValue")
+        self.connection_diagnostic_value.setWordWrap(True)
+        self.connection_diagnostic_value.setAccessibleName("Connection discovery diagnostic")
+        self.connection_diagnostic_value.setAccessibleDescription(
+            "Reports the most recent usbmux discovery result without including device identity or raw command output."
+        )
+        diagnostic_layout.addWidget(self.connection_diagnostic_value)
+        layout.addWidget(diagnostic_group)
 
         device_group = QGroupBox("Connected device")
         device_layout = QGridLayout(device_group)
@@ -2046,7 +2077,7 @@ class MainWindow(QMainWindow):
 
         browser_splitter = QSplitter(Qt.Orientation.Horizontal)
         browser_splitter.setObjectName("commandBrowserSplitter")
-        browser_splitter.setMaximumHeight(390)
+        browser_splitter.setMaximumHeight(470)
 
         preset_browser = QFrame()
         preset_browser.setObjectName("commandPresetBrowser")
@@ -2092,6 +2123,22 @@ class MainWindow(QMainWindow):
         self.command_prerequisites.setObjectName("commandPrerequisites")
         self.command_prerequisites.setWordWrap(True)
         detail_layout.addWidget(self.command_prerequisites)
+
+        readiness_group = QGroupBox("Selected command readiness")
+        readiness_layout = QHBoxLayout(readiness_group)
+        self.command_readiness_status = QLabel("Choose a preset to evaluate its device requirements.")
+        self.command_readiness_status.setObjectName("commandReadinessStatus")
+        self.command_readiness_status.setWordWrap(True)
+        self.command_readiness_status.setAccessibleName("Selected command readiness")
+        readiness_layout.addWidget(self.command_readiness_status, 1)
+        self.command_readiness_button = QPushButton("Run Device Readiness Check")
+        self.command_readiness_button.setObjectName("runCommandReadinessButton")
+        self.command_readiness_button.setAccessibleDescription(
+            "Runs the bounded read-only Capability Matrix for the selected physical device."
+        )
+        self.command_readiness_button.clicked.connect(self.run_selected_command_readiness_check)
+        readiness_layout.addWidget(self.command_readiness_button)
+        detail_layout.addWidget(readiness_group)
 
         self.preset_parameters_group = QGroupBox("Required values")
         self.preset_parameters_layout = QFormLayout(self.preset_parameters_group)
@@ -2383,6 +2430,13 @@ class MainWindow(QMainWindow):
             "complete the cable, unlock, and Finder Trust checks."
         )
 
+    def _connection_diagnostic_changed(self, diagnostic_object: object) -> None:
+        if not isinstance(diagnostic_object, ConnectionDiagnostic):
+            self._connection_diagnostic = malformed_output_connection_diagnostic()
+        else:
+            self._connection_diagnostic = diagnostic_object
+        self.connection_diagnostic_value.setText(self._connection_diagnostic.report())
+
     def _device_selected(self, index: int) -> None:
         del index
         self._update_device_fields(self._displayed_device())
@@ -2519,6 +2573,7 @@ class MainWindow(QMainWindow):
         )
         self._populate_capability_matrix()
         self._update_capability_controls()
+        self._update_selected_command_readiness()
 
     def _capability_state_brush(self, state: CapabilityState) -> QBrush:
         colors: Mapping[CapabilityState, str] = {
@@ -2764,6 +2819,7 @@ class MainWindow(QMainWindow):
                 f"{capability_state_label(event.state)}"
             )
             self._populate_capability_matrix()
+            self._update_selected_command_readiness()
             return
         if isinstance(event, CapabilityWorkerCompleted):
             self._capability_worker_completed = True
@@ -2810,6 +2866,7 @@ class MainWindow(QMainWindow):
             )
         self._populate_capability_matrix()
         self._update_capability_controls()
+        self._update_selected_command_readiness()
 
     def _capability_error(self, process_error: QProcess.ProcessError) -> None:
         if self._capability_process is None:
@@ -2819,6 +2876,7 @@ class MainWindow(QMainWindow):
             self._capability_process = None
             self.case_readiness_button.setEnabled(self.selected_device() is not None)
             self._update_capability_controls()
+            self._update_selected_command_readiness()
 
     def cancel_capability_matrix(self) -> None:
         self._stop_capability_process("Capability refresh was cancelled.")
@@ -4864,7 +4922,45 @@ class MainWindow(QMainWindow):
             self.preset_run_button.setText(
                 "Run Guided Command" if preset.risk == "read-only" else "Review && Run Guided Command"
             )
+        self._update_selected_command_readiness()
         self._update_advanced_safety_note()
+
+    def _update_selected_command_readiness(self) -> None:
+        preset = self._current_preset
+        if preset is None:
+            self.command_readiness_status.setText("Choose a preset to evaluate its device requirements.")
+            self.command_readiness_button.setEnabled(False)
+            return
+        if preset.requires_device and self.selected_device() is None:
+            self.command_readiness_status.setText(
+                "Blocked — connect, unlock, trust, and select the intended physical device first."
+            )
+            self.command_readiness_button.setEnabled(False)
+            return
+        readiness = evaluate_preset_readiness(preset, self._capability_results)
+        next_steps = " ".join(readiness.remediation)
+        suffix = f" Next step: {next_steps}" if next_steps else ""
+        labels = {
+            "ready": "Ready",
+            "not-tested": "Not checked",
+            "needs-attention": "Needs attention",
+        }
+        self.command_readiness_status.setText(f"{labels[readiness.state]} — {readiness.summary}{suffix}")
+        self.command_readiness_button.setEnabled(
+            preset.requires_device and self.selected_device() is not None and self._capability_process is None
+        )
+
+    def run_selected_command_readiness_check(self) -> None:
+        preset = self._current_preset
+        if preset is None:
+            raise CommandCatalogError("Cannot run command readiness without a selected preset")
+        if not preset.requires_device:
+            raise CommandCatalogError("The selected preset does not require a device readiness check")
+        if self.selected_device() is None:
+            self._show_no_device()
+            return
+        self.navigate_to_page("Capability Matrix")
+        self.refresh_capability_matrix()
 
     def _update_advanced_safety_note(self) -> None:
         raw_arguments = self.console_input.text().strip()
@@ -5016,13 +5112,13 @@ class MainWindow(QMainWindow):
             self._console_process.terminate()
 
     def start_command_drift_check(self) -> None:
-        if self._command_drift_process is not None:
+        if self._command_drift_session_active:
             QMessageBox.information(self, "Command Drift Check", "The live-help drift check is already running.")
             return
         self._command_drift_paths = help_routes_for_presets(self._presets)
         self._command_drift_index = 0
         self._command_drift_active_path = None
-        self._command_drift_active_error = None
+        self._command_drift_session_active = True
         self._command_drift_cancelled = False
         self._command_drift_probes = {}
         self.command_drift_output.clear()
@@ -5041,88 +5137,59 @@ class MainWindow(QMainWindow):
             return
         command_path = self._command_drift_paths[self._command_drift_index]
         self._command_drift_active_path = command_path
-        self._command_drift_active_error = None
-        self._command_drift_stdout.clear()
-        self._command_drift_stderr.clear()
         self.command_drift_status.setText(
             f"Checking {self._command_drift_index + 1}/{len(self._command_drift_paths)}: "
             f"pymobiledevice3 {shlex.join(command_path)} --help"
         )
-        process = QProcess(self)
-        process.setProgram(str(self._pmd3.program))
-        process.setArguments(list(command_arguments(self._pmd3, (*command_path, "--help"))))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.readyReadStandardOutput.connect(self._read_command_drift_stdout)
-        process.readyReadStandardError.connect(self._read_command_drift_stderr)
-        process.finished.connect(self._command_drift_probe_finished)
-        process.errorOccurred.connect(self._command_drift_probe_error)
-        self._command_drift_process = process
-        self._update_command_drift_controls()
-        process.start()
-        self._command_drift_timeout_timer.start(COMMAND_DRIFT_HELP_TIMEOUT_MS)
-
-    def _read_command_drift_stdout(self) -> None:
-        if self._command_drift_process is not None:
-            self._command_drift_stdout.extend(bytes(self._command_drift_process.readAllStandardOutput()))
-
-    def _read_command_drift_stderr(self) -> None:
-        if self._command_drift_process is not None:
-            self._command_drift_stderr.extend(bytes(self._command_drift_process.readAllStandardError()))
-
-    def _command_drift_probe_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        if self.sender() is not self._command_drift_process:
-            return
-        self._complete_command_drift_probe(exit_code, self._command_drift_active_error)
-
-    def _command_drift_probe_error(self, process_error: QProcess.ProcessError) -> None:
-        if self.sender() is not self._command_drift_process:
-            return
-        if process_error == QProcess.ProcessError.FailedToStart and self._command_drift_process is not None:
-            self._complete_command_drift_probe(None, self._command_drift_process.errorString())
-
-    def _command_drift_timed_out(self) -> None:
-        process = self._command_drift_process
-        if process is None:
-            return
-        self._command_drift_active_error = (
-            f"Live help exceeded the {COMMAND_DRIFT_HELP_TIMEOUT_MS // 1000}-second per-route limit."
+        self._command_drift_controller.start(
+            finite_process_request(
+                self._pmd3,
+                (*command_path, "--help"),
+                base_environment(),
+                COMMAND_DRIFT_HELP_TIMEOUT_MS,
+                PROCESS_TERMINATE_GRACE_MS,
+            )
         )
-        process.kill()
+        self._update_command_drift_controls()
 
-    def _complete_command_drift_probe(self, exit_code: int | None, error: str | None) -> None:
+    def _command_drift_probe_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
         command_path = self._command_drift_active_path
-        process = self._command_drift_process
-        if command_path is None or process is None:
-            return
-        self._command_drift_timeout_timer.stop()
-        self._read_command_drift_stdout()
-        self._read_command_drift_stderr()
+        if command_path is None:
+            raise CommandCatalogError("Live-help drift probe completed without an active command path")
+        if result_object.outcome == "timed-out":
+            error = f"Live help exceeded the {COMMAND_DRIFT_HELP_TIMEOUT_MS // 1000}-second per-route limit."
+        elif result_object.outcome == "cancelled":
+            error = "Live-help drift check was cancelled by the user."
+        elif result_object.outcome == "launch-failed":
+            detail = result_object.error_message or "the operating system did not provide an error"
+            error = f"Could not start live help: {detail}"
+        elif result_object.outcome == "crashed":
+            error = "Live help terminated unexpectedly before returning a complete result."
+        else:
+            error = None
         self._command_drift_probes[command_path] = HelpRouteProbe(
             command_path,
-            exit_code,
-            self._command_drift_stdout.decode("utf-8", errors="replace"),
-            self._command_drift_stderr.decode("utf-8", errors="replace"),
+            result_object.exit_code,
+            result_object.stdout.decode("utf-8", errors="replace"),
+            result_object.stderr.decode("utf-8", errors="replace"),
             error,
         )
-        self._command_drift_process = None
         self._command_drift_active_path = None
-        self._command_drift_active_error = None
         self._command_drift_index += 1
         self._update_command_drift_controls()
         QTimer.singleShot(0, self._start_next_command_drift_probe)
 
     def cancel_command_drift_check(self) -> None:
-        process = self._command_drift_process
-        if process is None:
+        if not self._command_drift_session_active:
             return
         self._command_drift_cancelled = True
-        self._command_drift_active_error = "Live-help drift check was cancelled by the user."
         self.command_drift_status.setText("Cancelling the current live-help check…")
-        process.kill()
+        self._command_drift_controller.cancel()
 
     def _finish_command_drift_check(self) -> None:
-        self._command_drift_timeout_timer.stop()
+        self._command_drift_session_active = False
         results = evaluate_command_drift(self._presets, tuple(self._command_drift_probes.values()))
         report = render_command_drift_report(results)
         self.command_drift_output.setPlainText(report)
@@ -5139,7 +5206,7 @@ class MainWindow(QMainWindow):
         self._update_command_drift_controls()
 
     def _update_command_drift_controls(self) -> None:
-        running = self._command_drift_process is not None
+        running = self._command_drift_session_active
         self.command_drift_check_button.setEnabled(not running)
         self.command_drift_cancel_button.setEnabled(running)
         self.command_drift_copy_button.setEnabled(bool(self.command_drift_output.toPlainText().strip()) and not running)
@@ -5202,7 +5269,7 @@ class MainWindow(QMainWindow):
         cached_help = self._manpage_cache.get(entry.command_path)
         if cached_help is not None:
             self.manpage_output.setPlainText(cached_help)
-        elif self._manpage_process is None:
+        elif not self._manpage_controller.is_running():
             self.manpage_output.setPlainText(
                 f"{entry.title}\n\nCommand prefix: {prefix}\nCategory: {entry.category}\n\n"
                 "Click Refresh Live Help to query the installed pymobiledevice3 executable. Selection alone never "
@@ -5239,99 +5306,67 @@ class MainWindow(QMainWindow):
         if entry is None:
             QMessageBox.information(self, "No Help Topic", "Select a command family first.")
             return
-        if self._manpage_process is not None:
+        if self._manpage_controller.is_running():
             QMessageBox.warning(self, "Help Loading", "Wait for the current help page to finish loading.")
             return
-        self._manpage_stdout.clear()
-        self._manpage_stderr.clear()
         self._manpage_active_path = entry.command_path
-        self._manpage_cancel_reason = None
         self.manpage_output.setPlainText(
             "Loading live help from the installed pymobiledevice3…\n\n"
             "This can take several seconds on the first Python import. Use Cancel Loading to stop immediately."
         )
-        process = QProcess(self)
-        process.setProgram(str(self._pmd3.program))
-        process.setArguments(list(command_arguments(self._pmd3, (*entry.command_path, "--help"))))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.readyReadStandardOutput.connect(self._read_manpage_stdout)
-        process.readyReadStandardError.connect(self._read_manpage_stderr)
-        process.finished.connect(self._manpage_finished)
-        process.errorOccurred.connect(self._manpage_error)
-        self._manpage_process = process
+        self._manpage_controller.start(
+            finite_process_request(
+                self._pmd3,
+                (*entry.command_path, "--help"),
+                base_environment(),
+                MANPAGE_HELP_TIMEOUT_MS,
+                MANPAGE_HELP_KILL_DELAY_MS,
+            )
+        )
         self._update_manpage_controls()
-        process.start()
-        self._manpage_timeout_timer.start(MANPAGE_HELP_TIMEOUT_MS)
 
-    def _read_manpage_stdout(self) -> None:
-        if self._manpage_process is not None:
-            self._manpage_stdout.extend(bytes(self._manpage_process.readAllStandardOutput()))
-
-    def _read_manpage_stderr(self) -> None:
-        if self._manpage_process is not None:
-            self._manpage_stderr.extend(bytes(self._manpage_process.readAllStandardError()))
-
-    def _manpage_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self._manpage_timeout_timer.stop()
-        self._read_manpage_stdout()
-        self._read_manpage_stderr()
-        stdout = self._manpage_stdout.decode("utf-8", errors="replace")
-        stderr = self._manpage_stderr.decode("utf-8", errors="replace")
-        if self._manpage_cancel_reason is not None:
-            partial_output = stdout or stderr
-            suffix = f"\n\nPartial output:\n{partial_output}" if partial_output else ""
-            self.manpage_output.setPlainText(f"{self._manpage_cancel_reason}{suffix}")
-        elif exit_code == 0 and stdout:
+    def _manpage_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        stdout = result_object.stdout.decode("utf-8", errors="replace")
+        stderr = result_object.stderr.decode("utf-8", errors="replace")
+        output = stdout or stderr
+        if result_object.outcome == "cancelled":
+            suffix = f"\n\nPartial output:\n{output}" if output else ""
+            self.manpage_output.setPlainText(f"Live help loading was cancelled by the user.{suffix}")
+        elif result_object.outcome == "timed-out":
+            suffix = f"\n\nPartial output:\n{output}" if output else ""
+            self.manpage_output.setPlainText(
+                "Live help exceeded the 15-second limit and was stopped. The installed CLI did not return "
+                f"promptly; the Man Pages browser remains available.{suffix}"
+            )
+        elif result_object.outcome == "succeeded" and output:
             if self._manpage_active_path is None:
                 raise CommandCatalogError("Live help completed without an active command path")
-            self._manpage_cache[self._manpage_active_path] = stdout
-            self.manpage_output.setPlainText(stdout)
-        else:
+            self._manpage_cache[self._manpage_active_path] = output
+            self.manpage_output.setPlainText(output)
+        elif result_object.outcome == "launch-failed":
+            error_detail = result_object.error_message or "QProcess did not provide an operating-system error"
             self.manpage_output.setPlainText(
-                f"Live help failed with exit code {exit_code}.\n\n{stderr or stdout}"
+                "Could not start live help. Verify the project runtime exists and is executable:\n"
+                f"{result_object.argv[0]}\n\nSystem error: {error_detail}"
             )
-        self._manpage_process = None
+        else:
+            exit_detail = "unavailable" if result_object.exit_code is None else str(result_object.exit_code)
+            self.manpage_output.setPlainText(
+                f"Live help {result_object.outcome.replace('-', ' ')} with exit code {exit_detail}.\n\n{output}"
+            )
         self._manpage_active_path = None
-        self._manpage_cancel_reason = None
         self._update_manpage_controls()
 
-    def _manpage_error(self, process_error: QProcess.ProcessError) -> None:
-        if self._manpage_process is not None:
-            self.manpage_output.setPlainText(f"Could not load help: {self._manpage_process.errorString()}")
-            if process_error == QProcess.ProcessError.FailedToStart:
-                self._manpage_timeout_timer.stop()
-                self._manpage_process = None
-                self._manpage_active_path = None
-                self._manpage_cancel_reason = None
-                self._update_manpage_controls()
-
     def cancel_manpage_load(self) -> None:
-        self._cancel_manpage_load("Live help loading was cancelled by the user.")
-
-    def _manpage_timed_out(self) -> None:
-        self._cancel_manpage_load(
-            "Live help exceeded the 15-second limit and was stopped. The installed CLI did not return promptly; "
-            "the Man Pages browser remains available."
-        )
-
-    def _cancel_manpage_load(self, reason: str) -> None:
-        process = self._manpage_process
-        if process is None:
+        if not self._manpage_controller.is_running():
             return
-        self._manpage_timeout_timer.stop()
-        self._manpage_cancel_reason = reason
-        self.manpage_output.setPlainText(f"{reason}\n\nStopping the help process…")
-        process.terminate()
-        QTimer.singleShot(MANPAGE_HELP_KILL_DELAY_MS, self._kill_manpage_after_cancel)
-
-    def _kill_manpage_after_cancel(self) -> None:
-        process = self._manpage_process
-        if process is not None and process.state() != QProcess.ProcessState.NotRunning:
-            process.kill()
+        self.manpage_output.setPlainText("Live help cancellation requested.\n\nStopping the help process…")
+        self._manpage_controller.cancel()
 
     def _update_manpage_controls(self) -> None:
-        running = self._manpage_process is not None
+        running = self._manpage_controller.is_running()
         selected = self.selected_manpage_entry() is not None
         self.manpage_list.setEnabled(not running)
         self.manpage_search_field.setEnabled(not running)
@@ -5598,8 +5633,8 @@ class MainWindow(QMainWindow):
                 return
         self._scanner.stop()
         self._reconnect_timeout_timer.stop()
-        self._manpage_timeout_timer.stop()
-        self._command_drift_timeout_timer.stop()
+        self._manpage_controller.shutdown(3000, 1000)
+        self._command_drift_controller.shutdown(3000, 1000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
             self._terminate_capability_children(capability_process)
@@ -5613,7 +5648,7 @@ class MainWindow(QMainWindow):
             if not process.waitForFinished(10000):
                 process.kill()
                 process.waitForFinished(3000)
-        for process in (self._ipa_inspection_process, self._manpage_process, self._command_drift_process):
+        for process in (self._ipa_inspection_process,):
             if process is not None and process.state() != QProcess.ProcessState.NotRunning:
                 process.terminate()
         event.accept()
@@ -5621,8 +5656,8 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     application = QApplication(sys.argv)
-    application.setApplicationName("iOS Device Workbench")
-    application.setOrganizationName("Local Security Tools")
+    application.setApplicationName("iOS Developer Toolkit")
+    application.setOrganizationName("hideouts.io")
     application_icon = QIcon(str(application_icon_path()))
     if application_icon.isNull():
         raise RuntimeError(f"Could not load application icon: {application_icon_path()}")

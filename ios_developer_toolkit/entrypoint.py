@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from collections.abc import Callable, Sequence
 
 from ios_developer_toolkit.runtime import (
@@ -74,7 +75,7 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise ValueError(f"Internal smoke test does not accept arguments: {tuple(arguments)}")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PySide6.QtCore import SIGNAL
-    from PySide6.QtWidgets import QApplication, QPushButton
+    from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
     from ios_developer_toolkit.app import MainWindow
 
@@ -120,6 +121,46 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
             raise RuntimeError(f"GUI command-drift action is missing: {button_name}")
         if button.isEnabled():
             raise RuntimeError(f"GUI command-drift action should be disabled before a drift check: {button_name}")
+    command_drift_button = window.findChild(QPushButton, "checkCommandDriftButton")
+    command_drift_copy_button = window.findChild(QPushButton, "copyCommandDriftReportButton")
+    if command_drift_button is None or command_drift_copy_button is None:
+        raise RuntimeError("GUI command-drift controls are incomplete")
+    command_drift_button.click()
+    command_drift_deadline = time.monotonic() + 180
+    while not command_drift_copy_button.isEnabled() and time.monotonic() < command_drift_deadline:
+        application.processEvents()
+        time.sleep(0.001)
+    application.processEvents()
+    if not command_drift_copy_button.isEnabled():
+        window.cancel_command_drift_check()
+        raise RuntimeError("GUI command-drift check did not complete within its bounded smoke-test window")
+    command_drift_report = window.command_drift_output.toPlainText()
+    if "Verified: 49" not in command_drift_report or "All guided preset routes" not in command_drift_report:
+        raise RuntimeError(f"GUI command-drift check reported incompatible guidance: {command_drift_report}")
+    command_readiness = window.findChild(QLabel, "commandReadinessStatus")
+    if command_readiness is None or not command_readiness.text().strip():
+        raise RuntimeError("GUI selected-command readiness has no visible state")
+    command_readiness_button = window.findChild(QPushButton, "runCommandReadinessButton")
+    if command_readiness_button is None:
+        raise RuntimeError("GUI selected-command readiness action is missing")
+    if command_readiness_button.isEnabled():
+        raise RuntimeError("GUI selected-command readiness must remain disabled without a selected device")
+    window.navigate_to_page("Man Pages")
+    refresh_manpage_button = window.findChild(QPushButton, "refreshManpageButton")
+    if refresh_manpage_button is None or not refresh_manpage_button.isEnabled():
+        raise RuntimeError("GUI live-help action is unavailable")
+    selected_manpage = window.selected_manpage_entry()
+    if selected_manpage is None:
+        raise RuntimeError("GUI live-help index has no selected route")
+    refresh_manpage_button.click()
+    live_help_deadline = time.monotonic() + 20
+    while window._manpage_controller.is_running() and time.monotonic() < live_help_deadline:
+        application.processEvents()
+    application.processEvents()
+    if window._manpage_controller.is_running():
+        raise RuntimeError("GUI live-help action did not complete within its bounded smoke-test window")
+    if selected_manpage.command_path not in window._manpage_cache:
+        raise RuntimeError(f"GUI live-help action did not cache successful output: {window.manpage_output.toPlainText()}")
     expected_shortcuts = {
         "shortcutRetryDeviceScan",
         "shortcutFocusWorkspaceNavigation",
@@ -135,6 +176,11 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     missing_shortcuts = expected_shortcuts - actual_shortcuts
     if missing_shortcuts:
         raise RuntimeError(f"GUI keyboard shortcuts are missing: {sorted(missing_shortcuts)}")
+    connection_diagnostic = window.findChild(QLabel, "connectionDiagnosticValue")
+    if connection_diagnostic is None:
+        raise RuntimeError("GUI connection diagnostic is missing")
+    if not connection_diagnostic.text().strip():
+        raise RuntimeError("GUI connection diagnostic has no visible state")
     support_bundle_button = window.findChild(QPushButton, "createSupportBundleButton")
     if support_bundle_button is None:
         raise RuntimeError("GUI support-bundle action is missing")

@@ -8,7 +8,7 @@ icon = macos/iOSDeveloperToolkit.icns
 
 [python]
 python_path =
-packages = Nuitka==4.1.1
+packages = Nuitka==4.2.1
 android_packages =
 
 [qt]
@@ -25,7 +25,7 @@ plugins =
 [nuitka]
 macos.permissions =
 mode = standalone
-extra_args = --quiet --assume-yes-for-downloads --noinclude-qt-translations --include-package=ios_developer_toolkit --include-package=pymobiledevice3 --include-package=developer_disk_image --include-data-dir=ios_developer_toolkit/assets=ios_developer_toolkit/assets --include-package-data=pymobiledevice3 --include-package-data=developer_disk_image --nofollow-import-to=IPython --nofollow-import-to=jedi --macos-app-name="iOS Developer Toolkit" --macos-app-version=0.3.1 --macos-app-mode=gui
+extra_args = --quiet --assume-yes-for-downloads --noinclude-qt-translations --include-package=ios_developer_toolkit --include-package=pymobiledevice3 --include-package=developer_disk_image --include-data-dir=ios_developer_toolkit/assets=ios_developer_toolkit/assets --include-package-data=pymobiledevice3 --include-package-data=developer_disk_image --nofollow-import-to=IPython --nofollow-import-to=jedi --macos-app-name="iOS Developer Toolkit" --macos-app-version=0.3.4 --macos-app-macos-min-version=13.0 --macos-app-mode=gui
 
 [buildozer]
 mode = release
