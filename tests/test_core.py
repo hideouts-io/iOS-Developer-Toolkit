@@ -33,6 +33,7 @@ from ios_developer_toolkit.connection_diagnostics import (
     launch_failed_connection_diagnostic,
     malformed_output_connection_diagnostic,
     process_error_connection_diagnostic,
+    timed_out_connection_diagnostic,
 )
 from ios_developer_toolkit.collector import safe_udid_fragment
 from ios_developer_toolkit.demo_mode import DEMO_DEVICE_IDENTIFIER, demo_connection_banner, demo_device
@@ -242,6 +243,12 @@ class CommandDriftTests(unittest.TestCase):
         self.assertEqual(evaluate_command_drift((pcap,), (matching,))[0].state, "verified")
         self.assertEqual(evaluate_command_drift((pcap,), (nonmatching,))[0].state, "option-mismatch")
 
+    def test_live_help_evaluation_accepts_help_written_to_standard_error(self) -> None:
+        pcap = next(preset for preset in command_presets() if preset.identifier == "pcap")
+        probe = HelpRouteProbe(("pcap",), 0, "", "Usage: pcap --out=PATH", None)
+
+        self.assertEqual(evaluate_command_drift((pcap,), (probe,))[0].state, "verified")
+
 
 class EvidenceNamingTests(unittest.TestCase):
     def test_udid_fragment_is_sanitized_and_bounded(self) -> None:
@@ -297,6 +304,7 @@ class ConnectionDiagnosticTests(unittest.TestCase):
             launch_failed_connection_diagnostic(),
             failed_connection_diagnostic(7),
             process_error_connection_diagnostic(),
+            timed_out_connection_diagnostic(),
             malformed_output_connection_diagnostic(),
             devices_connection_diagnostic(0),
             devices_connection_diagnostic(2),
@@ -307,6 +315,7 @@ class ConnectionDiagnosticTests(unittest.TestCase):
                 "launch-failed",
                 "discovery-failed",
                 "discovery-failed",
+                "discovery-timed-out",
                 "malformed-output",
                 "no-devices",
                 "devices-available",

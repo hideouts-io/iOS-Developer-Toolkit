@@ -81,16 +81,17 @@ def _evaluate_preset(preset: CommandPreset, probe: HelpRouteProbe | None) -> Com
             "route-missing",
             f"Live help exited with status {probe.exit_code}.{suffix}",
         )
-    if not probe.stdout.strip():
+    help_text = "\n".join(output for output in (probe.stdout, probe.stderr) if output.strip())
+    if not help_text:
         return CommandDriftResult(
             preset.identifier,
             preset.title,
             preset.manpage_path,
             expected_options,
             "check-failed",
-            "Live help exited successfully but returned no standard output.",
+            "Live help exited successfully but returned no output.",
         )
-    missing_options = tuple(option for option in expected_options if not help_includes_option(probe.stdout, option))
+    missing_options = tuple(option for option in expected_options if not help_includes_option(help_text, option))
     if missing_options:
         return CommandDriftResult(
             preset.identifier,

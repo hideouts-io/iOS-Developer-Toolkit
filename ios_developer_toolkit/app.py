@@ -91,6 +91,7 @@ from ios_developer_toolkit.connection_diagnostics import (
     launch_failed_connection_diagnostic,
     malformed_output_connection_diagnostic,
     process_error_connection_diagnostic,
+    timed_out_connection_diagnostic,
 )
 from ios_developer_toolkit.device_compatibility import (
     DeviceCompatibilityError,
@@ -166,6 +167,11 @@ from ios_developer_toolkit.location_lab import (
 )
 from ios_developer_toolkit.live_logs import LiveLogError, LiveLogWindow, log_stream_specs, stream_spec
 from ios_developer_toolkit.models import DeviceDataError, IOSDevice, parse_devices_json
+from ios_developer_toolkit.qt_process import (
+    FiniteProcessController,
+    OperationResult,
+    finite_process_request,
+)
 from ios_developer_toolkit.runtime import (
     ExecutableCommand,
     command_arguments,
@@ -201,6 +207,8 @@ MANPAGE_HELP_TIMEOUT_MS = 15_000
 MANPAGE_HELP_KILL_DELAY_MS = 1_500
 COMMAND_DRIFT_HELP_TIMEOUT_MS = 5_000
 RECONNECT_TIMEOUT_MS = 30_000
+DEVICE_SCAN_TIMEOUT_MS = 10_000
+PROCESS_TERMINATE_GRACE_MS = 1_500
 
 
 def application_icon_path() -> Path:
@@ -231,12 +239,6 @@ def base_environment() -> Mapping[str, str]:
     return environment
 
 
-def drain_process_output(process: QProcess, stdout: bytearray, stderr: bytearray) -> None:
-    """Append every byte currently buffered by a completed or running QProcess."""
-    stdout.extend(bytes(process.readAllStandardOutput()))
-    stderr.extend(bytes(process.readAllStandardError()))
-
-
 class DeviceScanner(QObject):
     devices_changed = Signal(object)
     scan_error = Signal(str)
@@ -248,11 +250,9 @@ class DeviceScanner(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(3000)
         self._timer.timeout.connect(self.scan)
-        self._process: QProcess | None = None
-        self._stdout = bytearray()
-        self._stderr = bytearray()
+        self._controller = FiniteProcessController(self)
+        self._controller.completed.connect(self._completed)
         self._stopping = False
-        self._error_reported = False
 
     def start(self) -> None:
         self._stopping = False
@@ -262,64 +262,53 @@ class DeviceScanner(QObject):
     def stop(self) -> None:
         self._stopping = True
         self._timer.stop()
-        if self._process is not None and self._process.state() != QProcess.ProcessState.NotRunning:
-            self._process.terminate()
-            if not self._process.waitForFinished(3000):
-                self._process.kill()
-                self._process.waitForFinished(1000)
+        self._controller.shutdown(3000, 1000)
 
     def scan(self) -> None:
         if self._stopping:
             return
-        if self._process is not None and self._process.state() != QProcess.ProcessState.NotRunning:
+        if self._controller.is_running():
             return
-        self._stdout.clear()
-        self._stderr.clear()
-        self._error_reported = False
-        process = QProcess(self)
-        process.setProgram(str(self._executable.program))
-        process.setArguments(list(command_arguments(self._executable, ("usbmux", "list"))))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.readyReadStandardOutput.connect(self._read_stdout)
-        process.readyReadStandardError.connect(self._read_stderr)
-        process.errorOccurred.connect(self._process_error)
-        process.finished.connect(self._finished)
-        self._process = process
-        process.start()
+        request = finite_process_request(
+            self._executable,
+            ("usbmux", "list"),
+            base_environment(),
+            DEVICE_SCAN_TIMEOUT_MS,
+            PROCESS_TERMINATE_GRACE_MS,
+        )
+        self._controller.start(request)
 
-    def _read_stdout(self) -> None:
-        if self._process is not None:
-            drain_process_output(self._process, self._stdout, self._stderr)
-
-    def _read_stderr(self) -> None:
-        if self._process is not None:
-            drain_process_output(self._process, self._stdout, self._stderr)
-
-    def _process_error(self, process_error: QProcess.ProcessError) -> None:
-        if self._stopping or self._error_reported:
-            return
-        diagnostic = launch_failed_connection_diagnostic()
-        if process_error != QProcess.ProcessError.FailedToStart:
-            diagnostic = process_error_connection_diagnostic()
-        self._error_reported = True
-        self.diagnostic_changed.emit(diagnostic)
-        self.scan_error.emit(diagnostic.detail)
-
-    def _finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        if self._process is not None:
-            drain_process_output(self._process, self._stdout, self._stderr)
+    def _completed(self, result_object: object) -> None:
         if self._stopping:
             return
-        if self._error_reported:
-            return
-        if exit_code != 0:
-            diagnostic = failed_connection_diagnostic(exit_code)
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        if result_object.outcome == "launch-failed":
+            diagnostic = launch_failed_connection_diagnostic()
             self.diagnostic_changed.emit(diagnostic)
             self.scan_error.emit(diagnostic.detail)
             return
+        if result_object.outcome == "timed-out":
+            diagnostic = timed_out_connection_diagnostic()
+            self.diagnostic_changed.emit(diagnostic)
+            self.scan_error.emit(diagnostic.detail)
+            return
+        if result_object.outcome in ("crashed", "cancelled"):
+            diagnostic = process_error_connection_diagnostic()
+            self.diagnostic_changed.emit(diagnostic)
+            self.scan_error.emit(diagnostic.detail)
+            return
+        if result_object.outcome == "failed":
+            if result_object.exit_code is None:
+                raise RuntimeError("Failed device discovery did not provide an exit code")
+            diagnostic = failed_connection_diagnostic(result_object.exit_code)
+            self.diagnostic_changed.emit(diagnostic)
+            self.scan_error.emit(diagnostic.detail)
+            return
+        if result_object.outcome != "succeeded":
+            raise RuntimeError(f"Unsupported device discovery outcome: {result_object.outcome}")
         try:
-            devices = parse_devices_json(self._stdout.decode("utf-8"))
+            devices = parse_devices_json(result_object.stdout.decode("utf-8"))
         except (DeviceDataError, json.JSONDecodeError, UnicodeDecodeError):
             diagnostic = malformed_output_connection_diagnostic()
             self.diagnostic_changed.emit(diagnostic)
@@ -638,7 +627,7 @@ class MainWindow(QMainWindow):
         logo.setAccessibleName("iOS Developer Toolkit logo")
         header_layout.addWidget(logo)
         title_block = QVBoxLayout()
-        title = QLabel("iOS Device Workbench")
+        title = QLabel("iOS Developer Toolkit")
         title.setObjectName("appTitle")
         title.setFont(QFont(title.font().family(), 24, QFont.Weight.Bold))
         subtitle = QLabel("pymobiledevice3 Swiss-army GUI • Developer images • diagnostics • evidence")
@@ -5680,8 +5669,8 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     application = QApplication(sys.argv)
-    application.setApplicationName("iOS Device Workbench")
-    application.setOrganizationName("Local Security Tools")
+    application.setApplicationName("iOS Developer Toolkit")
+    application.setOrganizationName("hideouts.io")
     application_icon = QIcon(str(application_icon_path()))
     if application_icon.isNull():
         raise RuntimeError(f"Could not load application icon: {application_icon_path()}")

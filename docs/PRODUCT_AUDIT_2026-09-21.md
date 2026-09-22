@@ -113,9 +113,9 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 
 ### P1 — turn diagnostics into a coherent workbench
 
-* Introduce a reusable operation controller and typed `OperationResult`; migrate scanner, Man Pages, command drift, DDI, backup, apps, and capture incrementally.
+* Continue migrating finite subprocess workflows to the reusable operation controller and typed `OperationResult`. Device discovery is the first migrated client and now has shared final-drain, timeout, cancellation, launch-failure, and structured completion semantics; Man Pages, command drift, DDI, backup, apps, and capture remain incremental migrations.
 * Make a contextual readiness pane for the selected action, with one-click scoped rechecks and copyable remediation.
-* Add a physical-device compatibility test protocol. A pre-release dual-architecture frozen-artifact smoke workflow is now present; it remains unexecuted until GitHub Actions runs it. The release builder now also rejects a bundle whose Mach-O minimum macOS version differs from the advertised 13.0 floor.
+* Maintain the opt-in physical-device compatibility protocol and its explicit USB, usbmux, CoreDevice, developer-service, privacy, and state-changing test boundaries. A pre-release dual-architecture frozen-artifact smoke workflow is now present; it remains unexecuted until GitHub Actions runs it. The release builder also rejects a bundle whose Mach-O minimum macOS version differs from the advertised 13.0 floor.
 * Generate concise changelog/release notes from tested behavior. Source, bundle, citation, packaging, and third-party-source metadata drift is now covered by automated tests.
 * Add Xcode project/device handoffs: selected `devicectl` discovery, RVI status, and `.xcresult`/`xctrace` opening without reimplementing those formats.
 
@@ -161,6 +161,9 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | 2026-09-21 | Moved backup transport imports out of desktop startup; fixed terminal output draining for usbmux discovery; added privacy-safe connection diagnostics. | 75 tests, headless GUI smoke, source launcher verification, and deterministic QProcess tests passed. | Real-device discovery remains separately opt-in and time-specific. |
 | 2026-09-21 | Upgraded the pinned `pymobiledevice3` runtime to 11.15.1 and reconciled source, bundle, citation, packaging, and third-party source metadata. | CLI version reports 11.15.1; 77 tests and all 49 catalog live-help routes passed locally. | The next packaged artifact must be built by CI before distribution. |
 | 2026-09-21 | Added a dual-architecture frozen-artifact smoke workflow, CI command-catalog verification, and a native Mach-O minimum-version gate. | A clean local build passed its full 77-test suite and produced a signed arm64 app; the host's Homebrew Python targets macOS 26, so the new 13.0 gate correctly stopped that incompatible local artifact before ZIP creation. | GitHub Actions runs with `MACOSX_DEPLOYMENT_TARGET=13.0`; its first Apple Silicon and Intel runs remain required before distribution. |
+| 2026-09-21 | Added a reusable typed finite-process controller and migrated device discovery to it. | Real child-process tests cover terminal stdout/stderr, fast completion, launch failure, cancellation, timeout, and one-result semantics; the full suite now contains 81 tests. | Migrate other finite QProcess workflows incrementally; long-running streams retain their separate lifecycle. |
+| 2026-09-21 | Made live-help drift checks accept successful help emitted on either standard output or standard error. | A clean GitHub runner exposed two false option mismatches while the same pinned CLI passed locally; the channel-specific regression test now preserves strict option matching without assuming a help stream. | Re-run CI on a clean runner and retain failure for genuinely absent routes or options. |
+| 2026-09-21 | Added an opt-in physical-device protocol with staged read-only, developer-service, and state-changing checks. | The current host check found no Apple mobile USB device, no usbmux device, and no CoreDevice result, so no physical compatibility claim was made. | Run the protocol with an authorized connected device and retain identifiers and raw evidence locally. |
 
 ## Research sources
 

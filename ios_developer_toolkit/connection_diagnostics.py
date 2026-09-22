@@ -9,6 +9,7 @@ ConnectionDiagnosticState = Literal[
     "not-scanned",
     "launch-failed",
     "discovery-failed",
+    "discovery-timed-out",
     "malformed-output",
     "no-devices",
     "devices-available",
@@ -43,6 +44,10 @@ def failed_connection_diagnostic(exit_code: int) -> ConnectionDiagnostic:
 
 def process_error_connection_diagnostic() -> ConnectionDiagnostic:
     return _diagnostic("discovery-failed", 0, "The usbmux discovery process stopped before returning a device list")
+
+
+def timed_out_connection_diagnostic() -> ConnectionDiagnostic:
+    return _diagnostic("discovery-timed-out", 0, "usbmux discovery exceeded its 10-second limit")
 
 
 def malformed_output_connection_diagnostic() -> ConnectionDiagnostic:

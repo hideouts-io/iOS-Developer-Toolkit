@@ -4,9 +4,10 @@ import json
 import sys
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QProcess
+from PySide6.QtCore import QCoreApplication
 
 from ios_developer_toolkit.app import DeviceScanner
 from ios_developer_toolkit.models import IOSDevice
@@ -31,23 +32,17 @@ class DeviceScannerTests(unittest.TestCase):
                 }
             ]
         )
-        process = QProcess()
-        process.setProgram(sys.executable)
-        process.setArguments(("-c", f"import sys; sys.stdout.write({payload!r})"))
-        process.start()
-        self.assertTrue(process.waitForStarted(3_000))
-        self.assertTrue(process.waitForFinished(3_000))
-
-        scanner = DeviceScanner(ExecutableCommand(Path(sys.executable), ()))
+        scanner = DeviceScanner(
+            ExecutableCommand(Path(sys.executable), ("-c", f"import sys; sys.stdout.write({payload!r})"))
+        )
         observed_devices: list[tuple[IOSDevice, ...]] = []
         observed_errors: list[str] = []
         observed_diagnostics: list[object] = []
         scanner.devices_changed.connect(observed_devices.append)
         scanner.scan_error.connect(observed_errors.append)
         scanner.diagnostic_changed.connect(observed_diagnostics.append)
-        scanner._process = process
-
-        scanner._finished(0, QProcess.ExitStatus.NormalExit)
+        scanner.scan()
+        self._wait_for(lambda: bool(observed_devices), 3)
 
         self.assertEqual(observed_errors, [])
         self.assertEqual(len(observed_devices), 1)
@@ -72,6 +67,13 @@ class DeviceScannerTests(unittest.TestCase):
         self.assertEqual(len(observed_diagnostics), 1)
         self.assertEqual(observed_diagnostics[0].state, "launch-failed")
         self.assertEqual(observed_errors, ["The usbmux discovery process could not start"])
+
+    def _wait_for(self, predicate: Callable[[], bool], timeout_seconds: int) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        while not predicate() and time.monotonic() < deadline:
+            self.application.processEvents()
+            time.sleep(0.01)
+        self.application.processEvents()
 
 
 if __name__ == "__main__":
