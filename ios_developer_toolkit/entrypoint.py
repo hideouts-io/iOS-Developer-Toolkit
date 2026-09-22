@@ -350,6 +350,16 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
     support_bundle_button = window.findChild(QPushButton, "createSupportBundleButton")
     if support_bundle_button is None:
         raise RuntimeError("GUI support-bundle action is missing")
+    for button_name in ("exportWorkspaceProfileButton", "importWorkspaceProfileButton"):
+        if window.findChild(QPushButton, button_name) is None:
+            raise RuntimeError(f"GUI workspace-profile action is missing: {button_name}")
+    workspace_profile = window._workspace_profile_from_controls(
+        "Smoke profile",
+        "Synthetic non-sensitive control defaults",
+    )
+    window._apply_workspace_profile(workspace_profile)
+    if window.navigation_list.currentItem() is None:
+        raise RuntimeError("GUI workspace-profile application lost the selected workspace")
     demo_mode_button = window.findChild(QPushButton, "demoModeButton")
     if demo_mode_button is None:
         raise RuntimeError("GUI demo-mode action is missing")

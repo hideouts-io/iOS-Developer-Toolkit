@@ -82,7 +82,7 @@ The application executes the project-pinned binary directly. Guided values becom
 
 ## Current release additions and visual tour
 
-Release `v0.3.4` combines the complete 12-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
+Release `v0.3.4` combines the complete 13-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
 
 - **Guided Command Drift** checks the live `pymobiledevice3 --help` surface for all 49 presets before a device command is run, highlighting missing routes, changed options, failed checks, and cancellations without contacting a device;
 - **Action Safety** makes state boundaries explicit: local-output actions require review, device changes require a typed device-bound `RUN` phrase, and high-impact actions additionally require a current-backup acknowledgement and an `IRREVERSIBLE` phrase;
@@ -92,6 +92,7 @@ Release `v0.3.4` combines the complete 12-workspace interface with the latest co
 - **Selected command readiness** maps each guided Command Center action to the exact connection, trust, Developer Mode, DDI, tunnel, CoreDevice, DVT, or Web Inspector checks it needs, with a one-click route to the bounded read-only matrix;
 - **Action Palette** (`⌘ K`) searches all workspaces, guided presets, utilities, and currently eligible read actions while withholding device-only operations until a physical target is selected;
 - **Session Activity** correlates completed typed operations with workspace, target, transport, exact argument vector, timing, terminal status, prerequisite snapshot, output paths, and output hashes without automatically persisting raw command output;
+- **Workspace Profiles** preview and import/export reviewed control defaults for team reuse without including device identity, credentials, paths, coordinates, case text, command parameters, or output;
 - **MVT Analysis** validates a user-installed `mvt-ios` executable and runs a consented decrypted-backup analysis with isolated output, opt-in indicators, network access off by default, no password input, and no clean-device verdict;
 - **Ecosystem Tools** validates user-selected go-ios, idb Companion, and ipsw executables by path, SHA-256, and version/build identity, then enables one bounded read-only inventory probe per adapter;
 - the desktop UI starts independently of the MobileBackup2 transport, and device discovery consumes output both while the child process runs and after it exits, so a fast successful `usbmux list` result is not lost before the picker is updated;
@@ -101,7 +102,7 @@ Release `v0.3.4` combines the complete 12-workspace interface with the latest co
 - Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
 - Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
 - app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, external MVT analysis, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one workbench;
-- native Apple Silicon and Intel release ZIPs are built separately and verified with 129 tests, embedded CLI checks, a 136-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 133 tests, embedded CLI checks, a 138-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
 The README contains 22 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
@@ -129,6 +130,7 @@ The README contains 22 sanitized screenshots. The six views below provide a quic
 | Demo Mode | Shows a local simulated iPhone for an honest product walkthrough or screenshot. | The banner identifies the simulation and no device service, command, mount, capture, backup, or location operation can run. |
 | Eligible Action Palette | Searches workspaces, utilities, guided presets, and read actions that are valid for the current device and process state. | Selecting a preset opens it for review; it never runs automatically or bypasses confirmation. |
 | Session Activity | Correlates completed typed operations and previews an exportable structured JSON manifest. | Session-only by default; raw output is omitted, and explicit exports can still contain identifiers and local paths. |
+| Workspace Profiles | Shares reviewed DDI, guided-command, app, backup, evidence, and location-control defaults as validated JSON. | Exact preview; owner-only, no-overwrite export; import changes controls only and never runs a command. |
 | Guided MVT handoff | Validates and records external MVT provenance, then analyzes one authorized decrypted backup into a new result path. | No password input; inherited password/IOC variables are removed, network is off by default, and no result is translated into a clean-device claim. |
 
 ## What the workbench covers
@@ -172,6 +174,12 @@ Choosing a guided preset opens Command Center with that preset selected and its 
 Each record distinguishes the workspace and target from the transport, exact argument vector, start and finish timestamps, duration, terminal process outcome, exit code, process error, prerequisite-state snapshot, declared output paths, and SHA-256 plus byte count for each captured output channel. The manifest does **not** embed stdout or stderr. The UI keeps at most 250 records in memory and writes nothing automatically.
 
 Use **Copy Selected Manifest** or **Save Selected Manifest…** only when you intend to preserve a record. A saved JSON file is created with owner-only permissions and is never overwritten. Because exact arguments and targets can include a UDID, device details, IPA or GPX paths, case locations, and other sensitive values, review the manifest before sharing it. Session Activity is separate from the sanitized support bundle, which continues to exclude command arguments and device identity.
+
+### Local workspace profiles
+
+Use **Export Workspace…** and **Import Workspace…** below the workspace list to share reviewed workflow defaults without copying operational data. A profile can set the default workspace, DDI source, guided-command category and preset, app-inventory and IPA-install options, backup policy, evidence coverage and duration, and non-coordinate Location Lab timing and route-builder settings.
+
+Export shows the exact JSON before creating an owner-only file and refuses to overwrite an existing file. Import accepts only the bounded versioned schema, previews every proposed setting, refuses to apply while an operation is active, and rechecks the imported values immediately before changing the controls. It does not persist automatically, run a command, choose a device, fill a path, import an acknowledgement, or start a device action. The schema excludes device identity, credential fields, local paths, coordinates, command parameters, case text, and captured output. Profile name and description are user-supplied text; common path, account, device, and network identifier patterns are rejected, but the exact preview still must be reviewed before sharing.
 
 ### Sanitized support bundle
 
@@ -1172,7 +1180,7 @@ Physical-device validation is opt-in and is not required for pull requests. Use 
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 129 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 136-button offscreen GUI smoke test, verifies live help and a synthetic external-adapter lifecycle from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 133 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 138-button offscreen GUI smoke test, verifies live help and a synthetic external-adapter lifecycle from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The builder requires `MACOSX_DEPLOYMENT_TARGET=13.0`. It rejects any bundled executable, library, extension, or framework slice that requires a newer macOS version or omits the native release architecture. A component may support an older minimum because the application still advertises macOS 13 as its supported floor. PySide6 is pinned to the newest validated line whose actual Shiboken load commands satisfy that floor; wheel filenames alone are not treated as compatibility evidence. Local release builds should use a Python toolchain capable of producing macOS 13-compatible binaries; GitHub release CI supplies the target explicitly.
 

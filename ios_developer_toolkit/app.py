@@ -261,6 +261,19 @@ from ios_developer_toolkit.ufade_connector import (
     macos_setup_commands,
 )
 from ios_developer_toolkit.validation import output_indicates_failure
+from ios_developer_toolkit.workspace_profile import (
+    AppWorkflowPreferences,
+    BackupWorkflowPreferences,
+    EvidenceWorkflowPreferences,
+    LocationWorkflowPreferences,
+    WorkspaceProfile,
+    WorkspaceProfileError,
+    load_workspace_profile,
+    render_workspace_profile_json,
+    render_workspace_profile_preview,
+    validate_workspace_profile,
+    write_workspace_profile,
+)
 from ios_developer_toolkit.xcode_handoff import (
     XcodeHandoffError,
     coredevice_details_handoff,
@@ -866,6 +879,20 @@ class MainWindow(QMainWindow):
         )
         self.session_activity_button.clicked.connect(self.show_session_activity)
         sidebar_layout.addWidget(self.session_activity_button)
+        self.export_workspace_profile_button = QPushButton("Export Workspace…")
+        self.export_workspace_profile_button.setObjectName("exportWorkspaceProfileButton")
+        self.export_workspace_profile_button.setToolTip(
+            "Export reviewed control defaults without device identity, paths, credentials, coordinates, or output"
+        )
+        self.export_workspace_profile_button.clicked.connect(self.export_workspace_profile)
+        sidebar_layout.addWidget(self.export_workspace_profile_button)
+        self.import_workspace_profile_button = QPushButton("Import Workspace…")
+        self.import_workspace_profile_button.setObjectName("importWorkspaceProfileButton")
+        self.import_workspace_profile_button.setToolTip(
+            "Preview and apply a local workspace profile without running any command"
+        )
+        self.import_workspace_profile_button.clicked.connect(self.import_workspace_profile)
+        sidebar_layout.addWidget(self.import_workspace_profile_button)
         version_note = QLabel(f"Toolkit {APP_VERSION}\npymobiledevice3 11.15.1")
         version_note.setObjectName("sidebarVersion")
         version_note.setWordWrap(True)
@@ -926,6 +953,14 @@ class MainWindow(QMainWindow):
         self.session_activity_button.setAccessibleName("Session activity")
         self.session_activity_button.setAccessibleDescription(
             "Review completed typed operations and explicitly export a selected structured manifest."
+        )
+        self.export_workspace_profile_button.setAccessibleName("Export workspace profile")
+        self.export_workspace_profile_button.setAccessibleDescription(
+            "Preview and save non-sensitive workflow control defaults without running a command."
+        )
+        self.import_workspace_profile_button.setAccessibleName("Import workspace profile")
+        self.import_workspace_profile_button.setAccessibleDescription(
+            "Preview and apply validated workflow control defaults without running a command."
         )
         self.action_palette_button.setAccessibleName("Action palette")
         self.action_palette_button.setAccessibleDescription(
@@ -1182,6 +1217,20 @@ class MainWindow(QMainWindow):
                     "Review keyboard-first navigation without running a device action.",
                     ("accessibility", "keyboard", "hotkeys"),
                 ),
+                action_palette_entry(
+                    "utility:export-workspace-profile",
+                    "Export Workspace Profile",
+                    "Utility",
+                    "Preview and save non-sensitive workflow control defaults for local or team reuse.",
+                    ("team", "workspace", "profile", "configuration", "export"),
+                ),
+                action_palette_entry(
+                    "utility:import-workspace-profile",
+                    "Import Workspace Profile",
+                    "Utility",
+                    "Preview and apply validated workflow control defaults without running a command.",
+                    ("team", "workspace", "profile", "configuration", "import"),
+                ),
             )
         )
         if self.refresh_devices_button.isEnabled() and not self._demo_mode:
@@ -1329,6 +1378,8 @@ class MainWindow(QMainWindow):
         actions: Mapping[str, Callable[[], None]] = {
             "utility:session-activity": self.show_session_activity,
             "utility:keyboard-shortcuts": self.show_keyboard_shortcuts,
+            "utility:export-workspace-profile": self.export_workspace_profile,
+            "utility:import-workspace-profile": self.import_workspace_profile,
             "action:retry-device-scan": self._scanner_scan,
             "action:developer-mode-status": self.check_developer_mode,
             "action:list-developer-images": self.list_mounted_images,
@@ -1381,6 +1432,256 @@ class MainWindow(QMainWindow):
     def show_session_activity(self) -> None:
         dialog = OperationHistoryDialog(self._operation_records, self)
         dialog.exec()
+
+    def _request_workspace_profile_metadata(self) -> tuple[str, str] | None:
+        dialog = QDialog(self)
+        dialog.setObjectName("workspaceProfileMetadataDialog")
+        dialog.setWindowTitle("Describe Workspace Profile")
+        layout = QVBoxLayout(dialog)
+        explanation = QLabel(
+            "The profile contains reviewed control defaults only. Device identity, paths, credentials, coordinates, "
+            "case text, command parameters, and output are excluded by schema."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        form = QFormLayout()
+        name_field = QLineEdit("Team workflow")
+        name_field.setObjectName("workspaceProfileName")
+        form.addRow("Name", name_field)
+        description_field = QLineEdit()
+        description_field.setObjectName("workspaceProfileDescription")
+        description_field.setPlaceholderText("Purpose or expected use; do not enter sensitive data")
+        form.addRow("Description", description_field)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.setObjectName("workspaceProfileMetadataButtons")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        name_field.selectAll()
+        name_field.setFocus(Qt.FocusReason.OtherFocusReason)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return name_field.text(), description_field.text()
+
+    def _workspace_profile_from_controls(self, name: str, description: str) -> WorkspaceProfile:
+        current_item = self.navigation_list.currentItem()
+        if current_item is None:
+            raise WorkspaceProfileError("Cannot export a profile without a selected workspace")
+        preset = self._current_preset
+        if preset is None:
+            raise WorkspaceProfileError("Cannot export a profile without a selected guided command preset")
+        speed_preset = self.location_route_speed_preset.currentData()
+        if not isinstance(speed_preset, int):
+            raise WorkspaceProfileError("Cannot export a profile without a valid location speed preset")
+        return validate_workspace_profile(
+            WorkspaceProfile(
+                created_with_version=APP_VERSION,
+                name=name,
+                description=description,
+                default_workspace=current_item.text(),
+                ddi_source="local-xcode" if self.local_radio.isChecked() else "personalized",
+                command_category=self.command_category_combo.currentText(),
+                command_preset=preset.identifier,
+                app_workflow=AppWorkflowPreferences(
+                    self.calculate_app_sizes_checkbox.isChecked(),
+                    self.developer_package_checkbox.isChecked(),
+                ),
+                backup_workflow=BackupWorkflowPreferences(
+                    self.full_backup_checkbox.isChecked(),
+                    self.require_encryption_checkbox.isChecked(),
+                ),
+                evidence_workflow=EvidenceWorkflowPreferences(
+                    self.capture_duration.value(),
+                    self.include_syslog.isChecked(),
+                    self.include_oslog.isChecked(),
+                    self.include_pcap.isChecked(),
+                    self.include_screenshot.isChecked(),
+                    self.include_crash_pull.isChecked(),
+                ),
+                location_workflow=LocationWorkflowPreferences(
+                    self.location_timing_randomness.value(),
+                    self.location_disable_sleep.isChecked(),
+                    speed_preset,
+                    self.location_route_speed.value(),
+                    self.location_route_interval.value(),
+                    self.location_route_traversals.value(),
+                ),
+            )
+        )
+
+    def _review_workspace_profile(
+        self,
+        title: str,
+        explanation_text: str,
+        content: str,
+        accept_label: str,
+    ) -> bool:
+        dialog = QDialog(self)
+        dialog.setObjectName("workspaceProfilePreviewDialog")
+        dialog.setWindowTitle(title)
+        dialog.resize(820, 650)
+        layout = QVBoxLayout(dialog)
+        explanation = QLabel(explanation_text)
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        preview = QPlainTextEdit()
+        preview.setObjectName("workspaceProfilePreview")
+        preview.setReadOnly(True)
+        preview.setPlainText(content)
+        layout.addWidget(preview, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        buttons.setObjectName("workspaceProfilePreviewButtons")
+        buttons.addButton(accept_label, QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def export_workspace_profile(self) -> None:
+        metadata = self._request_workspace_profile_metadata()
+        if metadata is None:
+            return
+        try:
+            profile = self._workspace_profile_from_controls(*metadata)
+        except WorkspaceProfileError as error:
+            QMessageBox.critical(self, "Could Not Prepare Workspace Profile", str(error))
+            return
+        if not self._review_workspace_profile(
+            "Review Workspace Profile Export",
+            "Review the exact JSON before saving. The application never uploads the file.",
+            render_workspace_profile_json(profile),
+            "Save Profile",
+        ):
+            return
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+        suggested = Path.home() / f"iOSDeveloperToolkit-workspace-{timestamp}.json"
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Workspace Profile",
+            str(suggested),
+            "JSON (*.json)",
+        )
+        if not selected:
+            return
+        destination = Path(selected)
+        if destination.suffix.casefold() != ".json":
+            destination = destination.with_suffix(".json")
+        try:
+            path = write_workspace_profile(destination, profile)
+        except WorkspaceProfileError as error:
+            QMessageBox.critical(self, "Could Not Export Workspace Profile", str(error))
+            return
+        QMessageBox.information(
+            self,
+            "Workspace Profile Created",
+            f"Created owner-only local profile:\n{path}\n\nReview it before sharing.",
+        )
+
+    def _workspace_profile_import_is_available(self) -> bool:
+        finite_controllers = (
+            self._action_controller,
+            self._ipa_inspection_controller,
+            self._sideload_controller,
+            self._apps_controller,
+            self._external_tool_controller,
+            self._manpage_controller,
+            self._command_drift_controller,
+        )
+        stream_controllers = (
+            self._collection_controller,
+            self._backup_controller,
+            self._mvt_controller,
+            self._console_controller,
+        )
+        return (
+            self._capability_process is None
+            and self._location_process is None
+            and all(not controller.is_running() for controller in finite_controllers)
+            and all(not controller.is_running() for controller in stream_controllers)
+        )
+
+    def import_workspace_profile(self) -> None:
+        if not self._workspace_profile_import_is_available():
+            QMessageBox.information(
+                self,
+                "Workspace Profile Import Unavailable",
+                "Stop or wait for active operations before changing workflow controls.",
+            )
+            return
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Workspace Profile",
+            str(Path.home()),
+            "JSON (*.json)",
+        )
+        if not selected:
+            return
+        try:
+            profile = load_workspace_profile(Path(selected))
+        except WorkspaceProfileError as error:
+            QMessageBox.critical(self, "Invalid Workspace Profile", str(error))
+            return
+        if not self._review_workspace_profile(
+            "Review Workspace Profile Import",
+            "Review every control change. Applying this profile never runs a command or starts a device operation.",
+            render_workspace_profile_preview(profile),
+            "Apply Profile",
+        ):
+            return
+        try:
+            self._apply_workspace_profile(profile)
+        except WorkspaceProfileError as error:
+            QMessageBox.critical(self, "Could Not Apply Workspace Profile", str(error))
+            return
+        QMessageBox.information(
+            self,
+            "Workspace Profile Applied",
+            f"Applied {profile.name!r}. No command or device operation was started.",
+        )
+
+    def _apply_workspace_profile(self, profile: WorkspaceProfile) -> None:
+        validated = validate_workspace_profile(profile)
+        if not self._workspace_profile_import_is_available():
+            raise WorkspaceProfileError("An operation started while the workspace profile was being reviewed")
+        self.personalized_radio.setChecked(validated.ddi_source == "personalized")
+        self.local_radio.setChecked(validated.ddi_source == "local-xcode")
+        self.command_category_combo.setCurrentText(validated.command_category)
+        self.command_search_field.clear()
+        matching_rows = tuple(
+            row
+            for row in range(self.command_preset_list.count())
+            if self.command_preset_list.item(row).data(Qt.ItemDataRole.UserRole) == validated.command_preset
+        )
+        if len(matching_rows) != 1:
+            raise WorkspaceProfileError(
+                f"Validated preset is not visible in its configured category: {validated.command_preset!r}"
+            )
+        self.command_preset_list.setCurrentRow(matching_rows[0])
+        self.calculate_app_sizes_checkbox.setChecked(validated.app_workflow.calculate_app_sizes)
+        self.developer_package_checkbox.setChecked(validated.app_workflow.install_as_developer_package)
+        self.full_backup_checkbox.setChecked(validated.backup_workflow.force_full_backup)
+        self.require_encryption_checkbox.setChecked(validated.backup_workflow.require_encryption)
+        evidence = validated.evidence_workflow
+        self.capture_duration.setValue(evidence.capture_duration_seconds)
+        self.include_syslog.setChecked(evidence.include_syslog)
+        self.include_oslog.setChecked(evidence.include_oslog)
+        self.include_pcap.setChecked(evidence.include_pcap)
+        self.include_screenshot.setChecked(evidence.include_screenshot)
+        self.include_crash_pull.setChecked(evidence.include_crash_pull)
+        location = validated.location_workflow
+        self.location_timing_randomness.setValue(location.timing_randomness_ms)
+        self.location_disable_sleep.setChecked(location.ignore_timing_delays)
+        speed_index = self.location_route_speed_preset.findData(location.route_speed_preset_kmh)
+        if speed_index < 0:
+            raise WorkspaceProfileError(
+                f"Validated location speed preset is unavailable: {location.route_speed_preset_kmh}"
+            )
+        self.location_route_speed_preset.setCurrentIndex(speed_index)
+        self.location_route_speed.setValue(location.route_speed_kmh)
+        self.location_route_interval.setValue(location.route_interval_seconds)
+        self.location_route_traversals.setValue(location.route_traversals)
+        self.navigate_to_page(validated.default_workspace)
 
     def _host_operation_context(
         self,

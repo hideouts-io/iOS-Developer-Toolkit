@@ -61,7 +61,7 @@ Use the public tests, dual-architecture packaging checks, SBOMs, checksums, and 
 
 ## Current product map
 
-The application contains 13 workspaces spanning connection and DDI readiness, location testing, live logs, guided commands, app inventory, backup providers, IPA inspection, evidence capture, optional ecosystem tools, installed-command help, and visible scope boundaries.
+The application contains 13 workspaces spanning connection and DDI readiness, location testing, live logs, guided commands, app inventory, backup providers, IPA inspection, evidence capture, optional ecosystem tools, installed-command help, and visible scope boundaries. Local workspace profiles can move reviewed control defaults between team members without carrying targets, paths, credentials, coordinates, case text, parameters, or output.
 
 The [canonical README](https://github.com/hideouts-io/iOS-Developer-Toolkit#readme) remains the complete feature reference and screenshot walkthrough. This site separates the most common audience paths so setup, architecture, safety, troubleshooting, release verification, and contribution material are easier to find without maintaining a second copy of every command.
 
