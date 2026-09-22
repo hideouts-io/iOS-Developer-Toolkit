@@ -5,6 +5,9 @@ import tomllib
 import unittest
 from pathlib import Path
 
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
+
 from ios_developer_toolkit import APP_VERSION
 
 
@@ -12,6 +15,17 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProjectMetadataTests(unittest.TestCase):
+    def test_python_range_matches_the_pinned_qt_runtime(self) -> None:
+        pyproject = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        project = pyproject["project"]
+        self.assertIsInstance(project, dict)
+        supported_python = SpecifierSet(str(project["requires-python"]))
+
+        self.assertNotIn(Version("3.9"), supported_python)
+        self.assertIn(Version("3.10"), supported_python)
+        self.assertIn(Version("3.13"), supported_python)
+        self.assertNotIn(Version("3.14"), supported_python)
+
     def test_source_and_packaging_metadata_match_application_version(self) -> None:
         pyproject = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         project = pyproject["project"]

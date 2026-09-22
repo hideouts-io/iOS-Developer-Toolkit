@@ -10,7 +10,7 @@
 [![Latest release](https://img.shields.io/github/v/release/hideouts-io/iOS-Developer-Toolkit?display_name=tag)](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white)
 ![Devices](https://img.shields.io/badge/device-iPhone%20%7C%20iPad-0969da)
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776ab?logo=python&logoColor=white)
 ![GUI](https://img.shields.io/badge/GUI-PySide6-41cd52)
 ![pymobiledevice3](https://img.shields.io/badge/pymobiledevice3-11.15.1-8250df)
 [![License](https://img.shields.io/badge/license-MIT-2da44e)](LICENSE)
@@ -200,7 +200,7 @@ These layers are related but not interchangeable:
 ## Requirements
 
 - macOS 13 or later;
-- Python 3.10 or later for this project;
+- Python 3.10 through 3.13 for this project;
 - an unlocked iPhone or iPad you are authorized to test or examine;
 - a data-capable USB cable;
 - enough protected disk space for logs, PCAPs, backups, crash reports, and case output;
@@ -211,7 +211,7 @@ Current pinned runtime:
 
 | Component | Version or path |
 |---|---|
-| Python | `>=3.10` |
+| Python | `>=3.10,<3.14` |
 | PySide6 Essentials | `6.9.3` |
 | pymobiledevice3 | `11.15.1` |
 | Local Xcode candidate | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` |
@@ -241,7 +241,7 @@ cd iOS-Developer-Toolkit
 
 The launcher:
 
-1. creates `venv/` when needed;
+1. creates `venv/` when needed, or safely rebuilds it with a compatible Python if the interpreter or pinned runtime has drifted;
 2. installs the pinned project dependencies into that environment;
 3. stages `dist/iOS Developer Toolkit.app`;
 4. opens the staged app.
@@ -338,7 +338,7 @@ python3 --version
 xcode-select -p
 ```
 
-If `python3` is missing or older than 3.10, install a supported Python locally before launching. Dependencies belong in the project-created `venv/`; do not install this project's pinned packages globally.
+If Python 3.10 through 3.13 is unavailable, install a supported Python locally before launching. Dependencies belong in the project-created `venv/`; do not install this project's pinned packages globally.
 
 If macOS warns about downloaded content, follow [Open the ad-hoc-signed app safely](#open-the-ad-hoc-signed-app-safely). Source installations and local development wrappers are also not a substitute for Developer ID signing and notarization.
 
@@ -1041,7 +1041,7 @@ Physical-device validation is opt-in and is not required for pull requests. Use 
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 94 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 90-button offscreen GUI smoke test, verifies live help from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 95 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 90-button offscreen GUI smoke test, verifies live help from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The builder requires `MACOSX_DEPLOYMENT_TARGET=13.0`. It rejects any bundled executable, library, extension, or framework slice that requires a newer macOS version or omits the native release architecture. A component may support an older minimum because the application still advertises macOS 13 as its supported floor. PySide6 is pinned to the newest validated line whose actual Shiboken load commands satisfy that floor; wheel filenames alone are not treated as compatibility evidence. Local release builds should use a Python toolchain capable of producing macOS 13-compatible binaries; GitHub release CI supplies the target explicitly.
 
