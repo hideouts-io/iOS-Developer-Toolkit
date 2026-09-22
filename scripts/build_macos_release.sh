@@ -38,7 +38,10 @@ fi
 
 release_root="$(cd "$repository_root" && mkdir -p "$output_directory" && cd "$output_directory" && pwd)"
 staging_root="$(mktemp -d /private/tmp/iosdevtoolkit-release.XXXXXX)"
-export NUITKA_CACHE_DIR="$staging_root/nuitka-cache"
+if [[ -z "${NUITKA_CACHE_DIR:-}" ]]; then
+  export NUITKA_CACHE_DIR="$staging_root/nuitka-cache"
+fi
+/bin/mkdir -p "$NUITKA_CACHE_DIR"
 build_environment="$staging_root/release-venv"
 metadata_environment="$staging_root/metadata-venv"
 deployment_project_directory="$staging_root/deployment-project"
@@ -146,10 +149,22 @@ compiled_minimum_macos_version="$(/usr/bin/otool -l "$compiled_executable" | /us
   /LC_BUILD_VERSION/ { in_build_version = 1; next }
   in_build_version && /minos/ { print $2; exit }
 ')"
-if [[ "$compiled_minimum_macos_version" != "$required_macos_version" ]]; then
-  echo "Compiled executable requires macOS ${compiled_minimum_macos_version:-an unknown version}; expected $required_macos_version" >&2
+compiled_macos_major="${compiled_minimum_macos_version%%.*}"
+compiled_macos_minor="${compiled_minimum_macos_version#*.}"
+compiled_macos_minor="${compiled_macos_minor%%.*}"
+required_macos_major="${required_macos_version%%.*}"
+required_macos_minor="${required_macos_version#*.}"
+required_macos_minor="${required_macos_minor%%.*}"
+if [[ -z "$compiled_minimum_macos_version" || ! "$compiled_macos_major" =~ ^[0-9]+$ || ! "$compiled_macos_minor" =~ ^[0-9]+$ ]]; then
+  echo "Could not parse the compiled executable's minimum macOS version: ${compiled_minimum_macos_version:-missing}" >&2
   exit 72
 fi
+if (( compiled_macos_major > required_macos_major )) || \
+   (( compiled_macos_major == required_macos_major && compiled_macos_minor > required_macos_minor )); then
+  echo "Compiled executable requires macOS $compiled_minimum_macos_version, newer than the advertised $required_macos_version floor" >&2
+  exit 72
+fi
+echo "Compiled executable supports macOS $compiled_minimum_macos_version; advertised application floor is $required_macos_version"
 
 "$compiled_executable" --toolkit-internal-pymobiledevice3 version
 "$compiled_executable" --toolkit-internal-worker capability --help
