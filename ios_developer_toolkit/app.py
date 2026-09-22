@@ -5379,8 +5379,10 @@ class MainWindow(QMainWindow):
             self._manpage_cache[self._manpage_active_path] = output
             self.manpage_output.setPlainText(output)
         elif result_object.outcome == "launch-failed":
+            error_detail = result_object.error_message or "QProcess did not provide an operating-system error"
             self.manpage_output.setPlainText(
-                f"Could not start live help. Verify the project runtime exists and is executable: {result_object.argv[0]}"
+                "Could not start live help. Verify the project runtime exists and is executable:\n"
+                f"{result_object.argv[0]}\n\nSystem error: {error_detail}"
             )
         else:
             exit_detail = "unavailable" if result_object.exit_code is None else str(result_object.exit_code)

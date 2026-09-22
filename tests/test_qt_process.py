@@ -107,6 +107,27 @@ class FiniteProcessControllerTests(unittest.TestCase):
         self.assertEqual(results[1].stdout, b"second\n")
         self.assertFalse(controller.is_running())
 
+    def test_reports_operating_system_error_when_launch_fails(self) -> None:
+        controller = FiniteProcessController(self.application)
+        results: list[OperationResult] = []
+        controller.completed.connect(results.append)
+        request = finite_process_request(
+            ExecutableCommand(Path("/path/that/does/not/exist"), ()),
+            (),
+            {},
+            3_000,
+            500,
+        )
+
+        controller.start(request)
+        self._wait_for(lambda: bool(results), 3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].outcome, "launch-failed")
+        self.assertIsNotNone(results[0].error_message)
+        self.assertTrue(results[0].error_message)
+        self.assertFalse(controller.is_running())
+
     def _wait_for(self, predicate: Callable[[], bool], timeout_seconds: int) -> None:
         deadline = time.monotonic() + timeout_seconds
         while not predicate() and time.monotonic() < deadline:

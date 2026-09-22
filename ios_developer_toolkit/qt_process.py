@@ -28,6 +28,7 @@ class OperationResult:
     started_at: str
     finished_at: str
     exit_code: int | None
+    error_message: str | None
     stdout: bytes
     stderr: bytes
 
@@ -66,6 +67,7 @@ class FiniteProcessController(QObject):
         self._stdout = bytearray()
         self._stderr = bytearray()
         self._started_at = ""
+        self._error_message: str | None = None
         self._stop_outcome: Literal["timed-out", "cancelled"] | None = None
         self._completed = False
         self._timeout_timer = QTimer(self)
@@ -86,6 +88,7 @@ class FiniteProcessController(QObject):
         self._stdout.clear()
         self._stderr.clear()
         self._started_at = datetime.now(timezone.utc).isoformat()
+        self._error_message = None
         self._stop_outcome = None
         self._completed = False
 
@@ -140,6 +143,10 @@ class FiniteProcessController(QObject):
             self.stderr_received.emit(stderr)
 
     def _process_error(self, process_error: QProcess.ProcessError) -> None:
+        process = self._process
+        if process is None:
+            raise RuntimeError("Finite process reported an error without an active process")
+        self._error_message = process.errorString()
         if process_error == QProcess.ProcessError.FailedToStart:
             self._finish_once("launch-failed", None)
 
@@ -190,6 +197,7 @@ class FiniteProcessController(QObject):
             self._started_at,
             datetime.now(timezone.utc).isoformat(),
             exit_code,
+            self._error_message,
             bytes(self._stdout),
             bytes(self._stderr),
         )

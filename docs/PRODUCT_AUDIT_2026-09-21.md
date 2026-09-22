@@ -152,14 +152,14 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 2. Make `DeviceScanner` consume any remaining stdout/stderr synchronously in its completion handler before evaluating exit status or parsing JSON.
 3. Add tests for the backup protocol and a real, short-lived QProcess whose valid JSON is available only after it has exited.
 4. Update the README’s troubleshooting and architecture material to explain the connection behavior and the no-sudo boundary.
-5. Validate `pymobiledevice3` 11.15.1 in the project environment, then run the full 77-test suite, 89-action headless GUI smoke, CLI discovery, and every command-catalog live-help route. Review the diff before handoff.
+5. Validate `pymobiledevice3` 11.15.1 in the project environment, then run the full 94-test suite, 90-action headless GUI smoke, CLI discovery, and every command-catalog live-help route. Review the diff before handoff.
 
 ## Continuous improvement log
 
 | Date | Improvement | Verification | Follow-up boundary |
 | --- | --- | --- | --- |
 | 2026-09-21 | Moved backup transport imports out of desktop startup; fixed terminal output draining for usbmux discovery; added privacy-safe connection diagnostics. | 75 tests, headless GUI smoke, source launcher verification, and deterministic QProcess tests passed. | Real-device discovery remains separately opt-in and time-specific. |
-| 2026-09-21 | Upgraded the pinned `pymobiledevice3` runtime to 11.15.1 and reconciled source, bundle, citation, packaging, and third-party source metadata. | CLI version reports 11.15.1; 77 tests and all 49 catalog live-help routes passed locally. | The next packaged artifact must be built by CI before distribution. |
+| 2026-09-21 | Upgraded the pinned `pymobiledevice3` runtime to 11.15.1 and reconciled source, bundle, citation, packaging, and third-party source metadata. | CLI version reports 11.15.1; 94 tests and all 49 catalog live-help routes passed locally. | The next packaged artifact must be built by CI before distribution. |
 | 2026-09-21 | Added a dual-architecture frozen-artifact smoke workflow, CI command-catalog verification, and a native Mach-O minimum-version gate. | A clean local build passed its full 77-test suite and produced a signed arm64 app; the host's Homebrew Python targets macOS 26, so the new 13.0 gate correctly stopped that incompatible local artifact before ZIP creation. | GitHub Actions runs with `MACOSX_DEPLOYMENT_TARGET=13.0`; its first Apple Silicon and Intel runs remain required before distribution. |
 | 2026-09-21 | Added a reusable typed finite-process controller and migrated device discovery to it. | Real child-process tests cover terminal stdout/stderr, fast completion, launch failure, cancellation, timeout, and one-result semantics; the full suite now contains 81 tests. | Migrate other finite QProcess workflows incrementally; long-running streams retain their separate lifecycle. |
 | 2026-09-21 | Made live-help drift checks accept successful help emitted on either standard output or standard error. | A clean GitHub runner exposed two false option mismatches while the same pinned CLI passed locally; the channel-specific regression test now preserves strict option matching without assuming a help stream. | Re-run CI on a clean runner and retain failure for genuinely absent routes or options. |
