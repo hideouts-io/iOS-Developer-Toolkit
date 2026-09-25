@@ -91,7 +91,7 @@ Release `v0.3.4` combines the complete 12-workspace interface with the latest co
 - Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
 - Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
 - app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one selected-device workflow;
-- native Apple Silicon and Intel release ZIPs are built separately and verified with 94 tests, embedded CLI checks, a 90-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 88 tests, embedded CLI checks, an 88-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
 The README contains 17 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
@@ -112,8 +112,6 @@ The README contains 17 sanitized screenshots. The six views below provide a quic
 | Action Safety | Classifies every guided and advanced command as read-only, host-write, device-change, or high-impact. | Device changes require a typed device-bound acknowledgement; high-impact actions additionally require backup acknowledgement and `IRREVERSIBLE`. |
 | Reconnect & Retry | Opens a bounded, guided 30-second device-detection window. | Does not restart SIP-protected Apple services. |
 | Real-Device Compatibility | Compares completed Capability Matrix observations across locally tested devices, builds, and connection types. | Stores a one-way device fingerprint, not raw UDIDs or names. |
-| Guided Cases | Records authorized purpose and scope before a bounded evidence collection. | Creates local intake metadata only; collection remains explicit. |
-| Investigative Live Logs | Adds references, annotated findings, reviewed findings, raw hashing, and evidence-bundle export to pop-out streams. | Keeps raw output distinct from analyst annotations and does not upload captures. |
 | Keyboard-first access | Adds named controls, standard navigation, and application-wide workspace shortcuts. | Shortcuts never bypass action confirmation. |
 | Sanitized Support Bundle | Creates a reviewable local ZIP with environment/readiness summaries and a SHA-256 manifest. | Excludes device identity, captures, backups, command output, credentials, and common host/network identifiers. |
 | Demo Mode | Shows a local simulated iPhone for an honest product walkthrough or screenshot. | The banner identifies the simulation and no device service, command, mount, capture, backup, or location operation can run. |
@@ -516,15 +514,11 @@ Each window provides:
 - follow-tail control;
 - literal or regular-expression filtering;
 - case-sensitive filtering;
-- optional local case or ticket reference stored with capture metadata;
-- selected-line **Mark Finding** annotations with an explicit assessment (**Observation**, **Lead to correlate**, or **Needs corroboration**), tags, analyst note, filter context, capture byte position, and timestamp;
-- a separate **Review Findings** register, so analyst annotations remain visibly distinct from raw device output;
 - copy-visible, save-filtered, and save-raw actions;
-- **Export Evidence Bundle** for the raw capture, metadata, findings, a readable `investigation-report.md`, and a SHA-256 inventory in one local folder;
 - an explicit Stop Capture action;
 - save, discard, or cancel when closing an unsaved stream.
 
-The complete raw byte stream is spooled below `~/Library/Caches/iOS Developer Toolkit/Live Logs`. A metadata sidecar records the exact command, target UDID, timestamps, byte and line counts, exit code, process error, raw SHA-256 once finalized, investigation reference, and the number of findings. Findings are append-only local annotations in `*.findings.jsonl`; they preserve an analyst-selected visible excerpt and context but are not device-generated facts or proof of causality. `investigation-report.md` makes the same boundary explicit in the export: capture facts first, then analyst annotations and selected snippets. The responsive working view retains the latest 50,000 decoded lines and renders at most 20,000 blocks; those display limits do not truncate the raw spool.
+The complete raw byte stream is spooled below `~/Library/Caches/iOS Developer Toolkit/Live Logs`. A metadata sidecar records the exact command, target UDID, timestamps, byte and line counts, exit code, process error, and raw SHA-256 once finalized; **Save Raw As…** writes the same sidecar beside the saved copy with that copy's SHA-256. The responsive working view retains the latest 50,000 decoded lines and renders at most 20,000 blocks; those display limits do not truncate the raw spool.
 
 For retained system log archives, use the applicable `syslog collect` command through Command Center/Advanced Mode and analyze the resulting `.logarchive` with Console.app or the macOS `log` tool.
 
@@ -649,9 +643,7 @@ Successful installation refreshes the Installed Apps inventory. Removal is a sep
 
 ![Evidence Capture workspace](docs/screenshots/evidence-collection.png)
 
-Evidence Capture starts with an optional guided case intake. Start with **Run Device Readiness Check** to launch the existing bounded, read-only Capability Matrix for the selected device, then enter a title and a local-purpose note, acknowledge that you own the device or are authorized to examine it, and create the case. The readiness shortcut does not mount images, change device settings, start a capture, or write device data; it opens the full matrix so every prerequisite and its remediation remain visible. The intake is stored locally as `case-intake.json`; it records the selected UDID, creation time, authorization acknowledgement, title, and purpose without transmitting anything.
-
-Start collection from an active guided case to attach the normal bounded snapshot, stream, manifest, and hash workflow to that folder. A guided case finalizes once; create another case for another collection. The standard **Start Evidence Collection** path remains available when an intake is not needed and creates a timestamped case immediately.
+**Start Evidence Collection** creates a timestamped case folder under the selected destination and runs the bounded snapshot, stream, manifest, and hash workflow once. To check prerequisites first, run the read-only **Capability Matrix**.
 
 Every run includes the core snapshot set and can add timed streams or larger artifacts.
 
@@ -773,7 +765,6 @@ A finalized case follows this shape:
 
 ```text
 ios-case-YYYYMMDDTHHMMSSZ-<udid-suffix>/
-├── case-intake.json             # optional guided title, scope, target, and acknowledgement
 ├── artifacts/
 │   ├── crashes/                 # optional
 │   ├── network.pcap             # optional
@@ -841,18 +832,6 @@ venv/bin/ios-developer-collect \
   --include-screenshot \
   --include-crash-pull
 ```
-
-To attach collection to a guided case created in the app, use that case folder instead of `--output-root`:
-
-```bash
-venv/bin/ios-developer-collect \
-  --udid 00008110-0000000000000000 \
-  --case-directory /absolute/path/to/ios-case-YYYYMMDDTHHMMSSZ-UDIDSUFFIX \
-  --duration 300 \
-  --include-syslog
-```
-
-`--output-root` and `--case-directory` are mutually exclusive. A supplied guided case must contain a valid `case-intake.json`, match the selected UDID, and not already contain `manifest.json`.
 
 Use only the optional flags needed for the task. PCAP, screenshots, app lists, crash reports, profiles, and logs can contain private information.
 
@@ -996,7 +975,6 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 │   ├── backup_worker.py        # MobileBackup2 worker and password-input protocol
 │   ├── capability_matrix.py    # typed readiness catalog, probes, and result validation
 │   ├── capability_matrix_worker.py # bounded NDJSON capability worker
-│   ├── case_workflow.py        # guided evidence-case intake and validation
 │   ├── catalog.py              # evidence snapshot catalog and mutation classification
 │   ├── collector.py            # case creation, streams, retries, manifest, hashes
 │   ├── command_catalog.py      # guided presets and live-help routes
@@ -1041,7 +1019,7 @@ Physical-device validation is opt-in and is not required for pull requests. Use 
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 94 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 90-button offscreen GUI smoke test, verifies live help from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 88 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 88-button offscreen GUI smoke test, verifies live help from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The builder requires `MACOSX_DEPLOYMENT_TARGET=13.0`. It rejects any bundled executable, library, extension, or framework slice that requires a newer macOS version or omits the native release architecture. A component may support an older minimum because the application still advertises macOS 13 as its supported floor. PySide6 is pinned to the newest validated line whose actual Shiboken load commands satisfy that floor; wheel filenames alone are not treated as compatibility evidence. Local release builds should use a Python toolchain capable of producing macOS 13-compatible binaries; GitHub release CI supplies the target explicitly.
 

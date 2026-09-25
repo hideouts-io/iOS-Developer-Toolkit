@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import plistlib
 import shutil
 import subprocess
@@ -26,7 +25,6 @@ from ios_developer_toolkit.command_drift import (
     expected_option_tokens,
     help_routes_for_presets,
 )
-from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case, validate_collection_case
 from ios_developer_toolkit.connection_diagnostics import (
     devices_connection_diagnostic,
     failed_connection_diagnostic,
@@ -35,7 +33,7 @@ from ios_developer_toolkit.connection_diagnostics import (
     process_error_connection_diagnostic,
     timed_out_connection_diagnostic,
 )
-from ios_developer_toolkit.collector import safe_udid_fragment
+from ios_developer_toolkit.collector import CollectionError, create_case_directory, safe_udid_fragment
 from ios_developer_toolkit.demo_mode import DEMO_DEVICE_IDENTIFIER, demo_connection_banner, demo_device
 from ios_developer_toolkit.installed_apps import InstalledAppsDataError, format_byte_count, parse_installed_apps_json
 from ios_developer_toolkit.ipa_inspector import (
@@ -63,14 +61,8 @@ from ios_developer_toolkit.location_lab import (
     validate_coordinates,
 )
 from ios_developer_toolkit.live_logs import (
-    LiveLogInvestigationReport,
     LiveLogError,
-    append_finding,
-    annotation_path_for,
     compile_line_filter,
-    create_finding,
-    parse_finding_tags,
-    render_investigation_report,
     create_spool_paths,
     line_matches,
     sha256_file,
@@ -261,38 +253,17 @@ class EvidenceNamingTests(unittest.TestCase):
     def test_udid_fragment_is_sanitized_and_bounded(self) -> None:
         self.assertEqual(safe_udid_fragment("00008110-001122334455001E"), "22334455001E")
 
-    def test_guided_case_records_authorized_intake_and_validates_target(self) -> None:
+    def test_case_directory_is_private_and_unique_per_second(self) -> None:
         temporary_directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, temporary_directory)
-        udid = "00008110-001122334455001E"
-        case_path, intake = create_guided_case(
-            temporary_directory,
-            udid,
-            "  Device   validation  ",
-            "Authorized release testing.",
-            True,
-        )
-        self.assertEqual(intake.title, "Device validation")
-        self.assertEqual(validate_collection_case(case_path, udid), case_path)
-        self.assertTrue((case_path / "case-intake.json").is_file())
-        self.assertTrue((case_path / "snapshots").is_dir())
-
-    def test_guided_case_requires_authorization_and_matching_target(self) -> None:
-        temporary_directory = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, temporary_directory)
-        with self.assertRaises(CaseWorkflowError):
-            create_guided_case(temporary_directory, "TARGET1", "Case", "", False)
-        case_path, _ = create_guided_case(temporary_directory, "TARGET1", "Case", "", True)
-        with self.assertRaises(CaseWorkflowError):
-            validate_collection_case(case_path, "TARGET2")
-
-    def test_guided_case_cannot_be_reused_after_finalization(self) -> None:
-        temporary_directory = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, temporary_directory)
-        case_path, _ = create_guided_case(temporary_directory, "TARGET1", "Case", "", True)
-        (case_path / "manifest.json").write_text("{}\n", encoding="utf-8")
-        with self.assertRaises(CaseWorkflowError):
-            validate_collection_case(case_path, "TARGET1")
+        created_at = datetime(2026, 9, 25, 12, 0, 0, tzinfo=timezone.utc)
+        case_path = create_case_directory(temporary_directory, "00008110-001122334455001E", created_at)
+        self.assertEqual(case_path.name, "ios-case-20260925T120000Z-22334455001E")
+        self.assertEqual(case_path.stat().st_mode & 0o777, 0o700)
+        for name in ("snapshots", "streams", "artifacts"):
+            self.assertTrue((case_path / name).is_dir())
+        with self.assertRaises(CollectionError):
+            create_case_directory(temporary_directory, "00008110-001122334455001E", created_at)
 
 
 class OutputValidationTests(unittest.TestCase):
@@ -544,73 +515,6 @@ class LiveLogTests(unittest.TestCase):
         self.assertEqual(raw.suffix, ".jsonl")
         self.assertNotIn("/../", str(raw))
         self.assertEqual(metadata.suffixes, [".meta", ".json"])
-
-    def test_finding_preserves_selected_text_and_context_separately_from_raw_log(self) -> None:
-        temporary_directory = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, temporary_directory)
-        raw_path = temporary_directory / "capture.jsonl"
-        findings_path = annotation_path_for(raw_path)
-        finding = create_finding(
-            "Investigate this authentication failure.",
-            "2026-09-14 authd: failed login",
-            "unified",
-            "DEVICE-1",
-            384,
-            "authd",
-            False,
-            False,
-            "lead",
-            ("authentication", "review"),
-        )
-        append_finding(findings_path, finding)
-        record = json.loads(findings_path.read_text(encoding="utf-8"))
-        self.assertEqual(record["note"], "Investigate this authentication failure.")
-        self.assertEqual(record["raw_bytes_observed"], 384)
-        self.assertEqual(record["assessment"], "lead")
-        self.assertEqual(record["tags"], ["authentication", "review"])
-
-    def test_finding_requires_a_note_and_selection(self) -> None:
-        with self.assertRaises(LiveLogError):
-            create_finding("", "line", "unified", "DEVICE-1", 0, "", False, False, "observation", ())
-        with self.assertRaises(LiveLogError):
-            create_finding("note", "", "unified", "DEVICE-1", 0, "", False, False, "observation", ())
-
-    def test_finding_tags_are_normalized_and_invalid_tags_are_rejected(self) -> None:
-        self.assertEqual(parse_finding_tags("Auth, network, auth"), ("auth", "network"))
-        with self.assertRaises(LiveLogError):
-            parse_finding_tags("contains spaces")
-
-    def test_investigation_report_separates_capture_facts_from_analyst_annotations(self) -> None:
-        finding = create_finding(
-            "Correlate with the application crash report.",
-            "2026-09-14 process[12]: failed request",
-            "unified",
-            "DEVICE-1",
-            512,
-            "failed",
-            False,
-            False,
-            "needs-corroboration",
-            ("network",),
-        )
-        report = LiveLogInvestigationReport(
-            stream="unified",
-            stream_title="Unified Logs",
-            device_name="Research iPhone",
-            device_identifier="DEVICE-1",
-            started_at="2026-09-14T00:00:00+00:00",
-            finished_at="2026-09-14T00:02:00+00:00",
-            raw_filename="capture.jsonl",
-            raw_sha256="a" * 64,
-            raw_bytes=1024,
-            decoded_lines=7,
-            investigation_reference="CASE-42",
-        )
-        rendered = render_investigation_report(report, (finding,))
-        self.assertIn("## Capture facts", rendered)
-        self.assertIn("## Analyst findings", rendered)
-        self.assertIn("not device-generated facts", rendered)
-        self.assertIn("CASE-42", rendered)
 
     def test_hashes_raw_log_bytes(self) -> None:
         temporary_directory = Path(tempfile.mkdtemp())

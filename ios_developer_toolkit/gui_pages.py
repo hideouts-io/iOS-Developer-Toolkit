@@ -145,11 +145,8 @@ def build_live_logs_page(
         "Pause affects only rendering: device output continues into the raw spool. Filters affect only the current "
         "view and filtered export. Save Raw copies the complete stream and a metadata sidecar containing the exact "
         "command, target UDID, timestamps, byte/line counts, exit code, and process error. The view retains the newest "
-        "50,000 decoded lines to stay responsive; the raw spool is not truncated by that limit. Mark Finding stores "
-        "a selected excerpt, classification, tags, and analyst note separately from the raw stream. Review Findings "
-        "keeps annotations distinct from raw output. Export Evidence Bundle creates a local folder with raw capture, "
-        "metadata, findings, investigation report, and SHA-256 inventory. Findings are annotations, not proof of "
-        "device activity or causality."
+        "50,000 decoded lines to stay responsive; the raw spool is not truncated by that limit. The saved metadata "
+        "records the SHA-256 of the saved raw copy."
     )
     integrity_text.setWordWrap(True)
     integrity_layout.addWidget(integrity_text)

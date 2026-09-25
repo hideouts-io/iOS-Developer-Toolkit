@@ -71,7 +71,6 @@ from ios_developer_toolkit.action_safety import (
     guided_action_safety,
 )
 from ios_developer_toolkit.backup_protocol import BackupEvent, BackupRequestError, parse_backup_event
-from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case
 from ios_developer_toolkit.capability_matrix import (
     CapabilityMatrixError,
     CapabilityResult,
@@ -585,7 +584,6 @@ class MainWindow(QMainWindow):
         self._command_drift_cancelled = False
         self._command_drift_probes: dict[tuple[str, ...], HelpRouteProbe] = {}
         self._last_case_path: Path | None = None
-        self._active_case_path: Path | None = None
         self._keyboard_shortcuts: list[QShortcut] = []
         self._build_ui()
         self._configure_accessibility()
@@ -841,7 +839,7 @@ class MainWindow(QMainWindow):
             "Installed Apps": self.app_filter_field,
             "Backup": self.backup_destination_field,
             "Sideload IPA": self.ipa_path_field,
-            "Evidence Capture": self.case_title_field,
+            "Evidence Capture": self.output_root,
             "Man Pages": self.manpage_search_field,
             "Scope & Safety": self.navigation_list,
         }
@@ -1534,39 +1532,6 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setSpacing(14)
-
-        intake_group = QGroupBox("1. Guided case intake")
-        intake_layout = QFormLayout(intake_group)
-        self.case_title_field = QLineEdit()
-        self.case_title_field.setObjectName("caseTitle")
-        self.case_title_field.setPlaceholderText("Example: Pre-release device validation")
-        intake_layout.addRow("Case title", self.case_title_field)
-        self.case_purpose_field = QPlainTextEdit()
-        self.case_purpose_field.setObjectName("casePurpose")
-        self.case_purpose_field.setPlaceholderText("Optional local note about the authorized purpose and scope.")
-        self.case_purpose_field.setMaximumHeight(72)
-        intake_layout.addRow("Purpose / scope", self.case_purpose_field)
-        self.case_authorization_checkbox = QCheckBox("I own this device or am authorized to examine it.")
-        self.case_authorization_checkbox.setObjectName("caseAuthorizationAcknowledgement")
-        intake_layout.addRow("Authorization", self.case_authorization_checkbox)
-        case_actions = QHBoxLayout()
-        self.case_readiness_button = QPushButton("Run Device Readiness Check")
-        self.case_readiness_button.setObjectName("guidedCaseReadinessButton")
-        self.case_readiness_button.clicked.connect(self.run_guided_case_readiness_check)
-        self.case_readiness_button.setToolTip(
-            "Run the bounded, read-only Capability Matrix for the selected device before creating or collecting a case."
-        )
-        case_actions.addWidget(self.case_readiness_button)
-        self.create_case_button = QPushButton("Create Guided Case")
-        self.create_case_button.setObjectName("createGuidedCaseButton")
-        self.create_case_button.clicked.connect(self.create_guided_case)
-        case_actions.addWidget(self.create_case_button)
-        self.case_status = QLabel("No active case. Create one before collection to retain intake and scope metadata.")
-        self.case_status.setObjectName("guidedCaseStatus")
-        self.case_status.setWordWrap(True)
-        case_actions.addWidget(self.case_status, 1)
-        intake_layout.addRow(case_actions)
-        layout.addWidget(intake_group)
 
         destination_group = QGroupBox("Evidence case")
         destination_layout = QFormLayout(destination_group)
@@ -2509,12 +2474,6 @@ class MainWindow(QMainWindow):
     def _update_device_fields(self, device: IOSDevice | None) -> None:
         identifier = device.identifier if device is not None else None
         if identifier != self._active_device_identifier:
-            if self._active_case_path is not None:
-                previous_case_path = self._active_case_path
-                self._active_case_path = None
-                self.case_status.setText(
-                    f"Selected device changed. Guided case remains at {previous_case_path}; create a case for the new device."
-                )
             if self._capability_process is not None:
                 self._discard_capability_process_for_device_change()
             self._active_device_identifier = identifier
@@ -2532,8 +2491,6 @@ class MainWindow(QMainWindow):
         self.mount_button.setEnabled(enabled)
         self.remove_button.setEnabled(enabled)
         self.start_collection_button.setEnabled(enabled and self._collection_process is None)
-        self.create_case_button.setEnabled(enabled and self._collection_process is None and self._active_case_path is None)
-        self.case_readiness_button.setEnabled(enabled and self._capability_process is None)
         self._update_live_log_controls()
         self._update_apps_controls()
         self._update_backup_controls()
@@ -2782,7 +2739,6 @@ class MainWindow(QMainWindow):
         process.finished.connect(self._capability_finished)
         process.errorOccurred.connect(self._capability_error)
         self._capability_process = process
-        self.case_readiness_button.setEnabled(False)
         self._update_capability_controls()
         process.start()
 
@@ -2854,16 +2810,6 @@ class MainWindow(QMainWindow):
             self.capability_status.setText(f"Capability refresh failed with exit code {exit_code}: {detail}")
         self._capability_process = None
         self._capability_cancel_reason = None
-        self.case_readiness_button.setEnabled(self.selected_device() is not None)
-        if self._active_case_path is not None:
-            ready = sum(result.state == "ready" for result in self._capability_results.values())
-            attention = sum(
-                result.state in ("attention", "unavailable", "blocked")
-                for result in self._capability_results.values()
-            )
-            self.case_status.setText(
-                f"Readiness check completed: {ready} ready, {attention} requiring attention. Review Capability Matrix before collection."
-            )
         self._populate_capability_matrix()
         self._update_capability_controls()
         self._update_selected_command_readiness()
@@ -2874,7 +2820,6 @@ class MainWindow(QMainWindow):
         self.capability_status.setText(f"Capability worker error: {self._capability_process.errorString()}")
         if process_error == QProcess.ProcessError.FailedToStart:
             self._capability_process = None
-            self.case_readiness_button.setEnabled(self.selected_device() is not None)
             self._update_capability_controls()
             self._update_selected_command_readiness()
 
@@ -3790,49 +3735,6 @@ class MainWindow(QMainWindow):
         if selected:
             self.output_root.setText(selected)
 
-    def create_guided_case(self) -> None:
-        device = self.selected_device()
-        if device is None:
-            self._show_no_device()
-            return
-        if self._collection_process is not None:
-            QMessageBox.warning(self, "Collection Running", "Wait for the active collection to finish before creating another case.")
-            return
-        if self._active_case_path is not None:
-            QMessageBox.warning(self, "Guided Case Active", "This case is ready for collection. Start it or create a new case after it is finalized.")
-            return
-        try:
-            case_path, _ = create_guided_case(
-                Path(self.output_root.text()),
-                device.identifier,
-                self.case_title_field.text(),
-                self.case_purpose_field.toPlainText(),
-                self.case_authorization_checkbox.isChecked(),
-            )
-        except CaseWorkflowError as error:
-            QMessageBox.warning(self, "Unable to Create Guided Case", str(error))
-            return
-        self._active_case_path = case_path
-        self._last_case_path = case_path
-        self.open_case_button.setEnabled(True)
-        self.create_case_button.setEnabled(False)
-        self.case_status.setText(f"Active case: {case_path}. Configure coverage, then start collection.")
-        self.collection_output.setPlainText(f"Guided case created:\n{case_path}\n\nCollection will attach to this case and finalize it once.")
-
-    def run_guided_case_readiness_check(self) -> None:
-        device = self.selected_device()
-        if device is None:
-            self._show_no_device()
-            return
-        if self._capability_process is not None:
-            QMessageBox.warning(self, "Readiness Check Running", "Cancel or wait for the current Device Capability Matrix check.")
-            return
-        self.case_status.setText(
-            f"Running a bounded, read-only readiness check for {device.display_name()}. Results are shown in Capability Matrix."
-        )
-        self.navigate_to_page("Capability Matrix")
-        self.refresh_capability_matrix()
-
     def start_collection(self) -> None:
         device = self.selected_device()
         if device is None:
@@ -3851,11 +3753,7 @@ class MainWindow(QMainWindow):
         )
         if not self._confirm("Start Evidence Collection", warning):
             return
-        arguments = ["--udid", device.identifier]
-        if self._active_case_path is None:
-            arguments.extend(("--output-root", self.output_root.text()))
-        else:
-            arguments.extend(("--case-directory", str(self._active_case_path)))
+        arguments = ["--udid", device.identifier, "--output-root", self.output_root.text()]
         arguments.extend(("--duration", str(self.capture_duration.value())))
         for enabled, flag in (
             (self.include_syslog.isChecked(), "--include-syslog"),
@@ -3900,13 +3798,7 @@ class MainWindow(QMainWindow):
         del exit_status
         self.collection_output.appendPlainText(f"\nCollection process finished with exit code {exit_code}.")
         self._collection_process = None
-        if self._active_case_path is not None:
-            self.case_status.setText(
-                f"Guided case finalized at {self._active_case_path}. Create a new case before another collection."
-            )
-            self._active_case_path = None
         self.start_collection_button.setEnabled(self.selected_device() is not None)
-        self.create_case_button.setEnabled(self.selected_device() is not None)
         self.stop_collection_button.setEnabled(False)
 
     def _collection_error(self, process_error: QProcess.ProcessError) -> None:

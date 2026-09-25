@@ -2,7 +2,7 @@
 
 ## Executive assessment
 
-iOS Developer Toolkit has a stronger foundation than its small version number suggests. It is a macOS PySide6 desktop application that turns a deliberately curated subset of `pymobiledevice3`, Xcode/CoreDevice, Developer Disk Image, RVI, backup, and evidence-preservation workflows into guided operations. Its differentiators are its explicit authorization boundaries, local-first evidence handling, typed acknowledgement for device-changing work, capability matrix, device compatibility observations, investigation-oriented live-log windows, and release artifacts with SBOMs and provenance.
+iOS Developer Toolkit has a stronger foundation than its small version number suggests. It is a macOS PySide6 desktop application that turns a deliberately curated subset of `pymobiledevice3`, Xcode/CoreDevice, Developer Disk Image, RVI, backup, and evidence-preservation workflows into guided operations. Its differentiators are its explicit authorization boundaries, local-first evidence handling, typed acknowledgement for device-changing work, capability matrix, device compatibility observations, raw-preserving live-log windows, and release artifacts with SBOMs and provenance.
 
 Its primary product risk was reliability at the first screen. At audit start, the application imported the MobileBackup2 transport implementation while constructing the desktop UI, so a slow or damaged third-party transport import could prevent the interface from becoming available even though backup was not being used. Separately, `DeviceScanner` only consumed `QProcess` output from readiness signals and did not consume bytes still available when the child exited. That created a confirmed race: a packaged build could successfully run `pymobiledevice3 usbmux list` but parse an empty discovery buffer. The P0 implementation delivered with this audit moves transport imports into the backup worker and drains completion output before parsing; it also adds a deterministic fast-exit regression test.
 
@@ -10,7 +10,7 @@ The correct next investment is therefore a **reliable startup and device-discove
 
 ## What exists today
 
-The product has twelve workspaces: Home, Device & DDI, Capability Matrix, Location Lab, Live Logs, Command Center, Installed Apps, Backup, Sideload IPA, Evidence Capture, Man Pages, and Scope & Safety. It currently provides 49 declarative guided command presets, a live-help/command-drift check, DDI mounting, RSD/CoreDevice/DVT checks, GPX location simulation with cleanup, separate Unified/syslog/oslog windows, installed app inventory, encrypted MobileBackup2 workflow, UFADE setup guidance, IPA inspection and installation, RVI/PCAP and artifact collection, guided case intake, support bundles, compatibility history, and keyboard-first navigation.
+The product has twelve workspaces: Home, Device & DDI, Capability Matrix, Location Lab, Live Logs, Command Center, Installed Apps, Backup, Sideload IPA, Evidence Capture, Man Pages, and Scope & Safety. It currently provides 49 declarative guided command presets, a live-help/command-drift check, DDI mounting, RSD/CoreDevice/DVT checks, GPX location simulation with cleanup, separate Unified/syslog/oslog windows, installed app inventory, encrypted MobileBackup2 workflow, UFADE setup guidance, IPA inspection and installation, RVI/PCAP and artifact collection, support bundles, compatibility history, and keyboard-first navigation.
 
 The repository is a Python 3.10+ PySide6 project with a bundled `pymobiledevice3` runtime model. `ios_developer_toolkit/app.py` is a 5,600+ line `MainWindow`, while domain modules cover capability probing, collectors, live logs, location testing, IPA inspection, support bundles, and device compatibility. CI runs unit tests, compile checks, CLI help checks, and a headless GUI smoke test on macOS. Tagged release CI produces Apple Silicon and Intel bundles, CycloneDX SBOMs, checksums, and GitHub attestations. The app is ad-hoc signed, not Developer ID signed or notarized.
 
@@ -56,7 +56,7 @@ The toolkit intentionally does not need to become an IDE, jailbreak suite, MDM, 
 1. A shared diagnostic/remediation engine that maps an operation to explicit prerequisites and reruns only the checks relevant to that operation.
 2. A centralized operation lifecycle service for QProcess/subprocess work, with start, final-drain, cancellation, timeout, structured result, and copyable support record semantics.
 3. A project-oriented developer workflow that can hand off to Xcode tools for test destinations, `.xcresult` inspection, and selected `devicectl` operations without pretending to replace Xcode.
-4. A scoped ecosystem handoff layer: MVT for consented backup analysis, `ipsw` for firmware research, and configurable external tool adapters rather than bundled forks.
+4. A scoped ecosystem handoff: MVT for consented backup analysis. Other tools (`ipsw`, `idb`, `go-ios`) stay documented companions with no adapter (see the 2026-09-25 scope decision).
 5. A device-lab/compatibility contribution path that can export redacted, opt-in capability observations and reproduce upstream `pymobiledevice3` bugs with a standard report.
 
 ## Architecture and maintainability audit
@@ -84,10 +84,10 @@ Distribution remains the largest trust hurdle. A Developer ID certificate and no
 | `pymobiledevice3` | Core cross-platform protocol library/CLI: discovery, tunnels, DDI/DVT, logs, PCAP, backups, apps, Web Inspector. | Primary dependency. Upgrade deliberately, keep live-help drift checks, and contribute minimal reproducible protocol or CLI fixes upstream. |
 | Xcode `devicectl`, `simctl`, `xctrace`, `rvictl` | Apple-supported macOS device, simulator, trace, and RVI tooling. | Prefer for macOS-native actions; show exact preconditions and hand off rather than reimplementing Xcode. |
 | `libimobiledevice` | Mature cross-platform device library/CLIs for backup, syslog, crash reports, screenshot, pairing, and image mounting. | Optional external adapter only. It overlaps with the current core and adds LGPL/GPL packaging complexity. |
-| `go-ios` | Cross-platform static CLI/library, JSON output, app/UI test and accessibility tooling, optional REST API. | Learn from its JSON and device-lab design. Evaluate a user-configured adapter after a stable operation framework; do not bundle a second protocol stack now. |
+| `go-ios` | Cross-platform static CLI/library, JSON output, app/UI test and accessibility tooling, optional REST API. | Learn from its JSON and device-lab design. No adapter is planned; do not bundle a second protocol stack. |
 | Facebook `idb` | Simulator/device automation via a macOS companion and remote client. | Do not embed. Offer documented interoperability for teams already using it; its private-framework and companion model is a separate product surface. |
 | MVT | Consented mobile-forensics analysis of iOS backups and IOC checking with its own forensic scope/license. | Add a guided handoff/export later, not an embedded scanner. Do not make “clean” claims or weaken its warning model. |
-| `blacktop/ipsw` | Firmware/OTA research, device database, kernel/dyld analysis. | Document as an external firmware-research companion. Do not turn this GUI into an IPSW reverse-engineering suite. |
+| `blacktop/ipsw` | Firmware/OTA research, device database, kernel/dyld analysis. | Out of scope. Mention as an external firmware-research companion only; no adapter or integration. |
 
 Upstream contribution candidates are concrete: report the fast-exit scanner packaging behavior as a Qt application lifecycle pattern if it reproduces outside this project; test the current `pymobiledevice3` upgrade against the toolkit command catalog; and offer redacted iOS/macOS compatibility findings to its issue tracker when a command/service regression is isolated.
 
@@ -99,7 +99,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | Raw protocol coverage | Strong through `pymobiledevice3` | `pymobiledevice3`, `go-ios`, `libimobiledevice` | Do not duplicate every CLI command; curate and expose evidence. |
 | Simulator/device automation at scale | Limited | `idb`, Xcode, Appium/WDA ecosystems | Add safe handoffs, not a competing farm. |
 | Backup forensics | Bounded acquisition/evidence support | MVT | Build consented MVT handoff with limitations, not a compromise verdict. |
-| Firmware research | Minimal | `ipsw` | Offer links/recipes and artifact provenance only. |
+| Firmware research | Out of scope | `ipsw` | Link only. |
 | Network capture | Strong macOS RVI workflow | `rvictl` + tcpdump/Wireshark | Continue to clarify encrypted-payload and whole-stack limits. |
 
 ## Prioritized roadmap
@@ -123,7 +123,6 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 
 * Add per-operation history, structured output manifests, and a universal command/action palette that only exposes eligible operations.
 * Implement a guided MVT backup-analysis handoff with explicit consent, no password persistence, output isolation, and no “clean device” conclusion.
-* Add optional user-configured adapters for `go-ios`, `idb`, and `ipsw`, each with executable provenance and version display.
 * Publish a small documentation site split into quick start, architecture, safety, troubleshooting, release verification, and contributor paths.
 
 ### P3 — ecosystem growth and scale
@@ -134,6 +133,9 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 * Optional device-lab integration through external services, never a mandatory cloud account.
 
 ### Do not build
+
+* Adapters for `ipsw`, `idb`, or `go-ios`. They serve firmware research and automation audiences outside this product's scope (2026-09-25 decision).
+* Forensic case-management features such as authorization intake forms or analyst-finding registers. The collector writes a hashed case folder; interpretation belongs in dedicated tools.
 
 * Jailbreak, passcode bypass, root filesystem acquisition, code-signing circumvention, or credential/profile theft features.
 * A permanent or stealth location-changing service. Location testing must remain explicit, visibly tracked, and clearable.
@@ -169,6 +171,7 @@ Upstream contribution candidates are concrete: report the fast-exit scanner pack
 | 2026-09-21 | Corrected the macOS compatibility gate and bounded native-build timing. | The first clean dual-architecture run proved arm64 produced a macOS 11-compatible executable, which is compatible with the advertised macOS 13 floor; Intel exceeded the original 45-minute job limit. | Re-run both native builders with reusable Nuitka caches and a 90-minute cap before merging. |
 | 2026-09-21 | Expanded compatibility validation from the launcher to every bundled Mach-O and pinned a genuinely compatible Qt line. | PySide6 6.11.2 wheel filenames advertise macOS 13, but direct `otool` inspection found Shiboken load commands requiring macOS 15; PySide6 6.9.3 Shiboken binaries declare macOS 12. | The dual-native CI build must pass the full-bundle architecture and deployment-floor scan before release. |
 | 2026-09-21 | Migrated sequential command-drift probes to the shared finite-operation controller. | A clean Python 3.13 environment passed the 94-test suite and the GUI smoke now runs the entire 49-route drift check through the real asynchronous UI path. | DDI, backup, app, and capture operations remain incremental controller migrations. |
+| 2026-09-25 | Cut scope: removed the guided case intake (`case_workflow.py`, `--case-directory`) and the Live Logs finding/investigation layer (Mark/Review Findings, investigation reference, evidence-bundle export); dropped the `ipsw`/`idb`/`go-ios` adapter roadmap item. UFADE is kept. | 88 tests and the 88-button headless GUI smoke passed on Linux (the two `codesign` tests are macOS-only and fail identically on the base branch). | README screenshots of Evidence Capture and the live-log window still show the removed controls and should be recaptured on macOS. |
 
 ## Research sources
 

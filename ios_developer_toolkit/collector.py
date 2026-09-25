@@ -16,12 +16,6 @@ from pathlib import Path
 from typing import IO, Mapping, Sequence
 
 from ios_developer_toolkit import APP_VERSION
-from ios_developer_toolkit.case_workflow import (
-    CaseWorkflowError,
-    create_case_directory,
-    safe_udid_fragment,
-    validate_collection_case,
-)
 from ios_developer_toolkit.catalog import snapshot_commands
 from ios_developer_toolkit.models import CommandResult, CommandSpec
 from ios_developer_toolkit.models import DeviceDataError, parse_devices_json
@@ -67,6 +61,27 @@ class StreamHandle:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def safe_udid_fragment(udid: str) -> str:
+    allowed = "".join(character for character in udid if character.isalnum())
+    if not allowed:
+        raise ValueError("UDID does not contain any usable alphanumeric characters")
+    return allowed[-12:]
+
+
+def create_case_directory(output_root: Path, udid: str, created_at: datetime) -> Path:
+    root = output_root.expanduser().resolve()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    timestamp = created_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    directory = root / f"ios-case-{timestamp}-{safe_udid_fragment(udid)}"
+    try:
+        directory.mkdir(mode=0o700, parents=False, exist_ok=False)
+    except FileExistsError as error:
+        raise CollectionError(f"A case already exists for this device and second: {directory}. Start the collection again.") from error
+    for name in ("snapshots", "streams", "artifacts"):
+        (directory / name).mkdir(mode=0o700)
+    return directory
 
 
 def emit(event: str, message: str, fields: Mapping[str, object]) -> None:
@@ -342,8 +357,7 @@ def write_manifest(
 
 def run_collection(
     udid: str,
-    output_root: Path | None,
-    existing_case_directory: Path | None,
+    output_root: Path,
     duration_seconds: int,
     include_syslog: bool,
     include_oslog: bool,
@@ -356,14 +370,8 @@ def run_collection(
         raise ValueError("Capture duration must be at least one second")
     executable = pymobiledevice3_command()
     environment = device_environment(udid)
-    if existing_case_directory is None:
-        if output_root is None:
-            raise ValueError("An output root is required when a guided case directory is not provided")
-        case_directory = create_case_directory(output_root, udid, datetime.now(timezone.utc))
-        emit("case-created", "Created evidence case directory", {"path": str(case_directory)})
-    else:
-        case_directory = validate_collection_case(existing_case_directory, udid)
-        emit("case-attached", "Attached to guided evidence case directory", {"path": str(case_directory)})
+    case_directory = create_case_directory(output_root, udid, datetime.now(timezone.utc))
+    emit("case-created", "Created evidence case directory", {"path": str(case_directory)})
     started_at = utc_now()
     results: list[CommandResult] = []
     required_error: RequiredCommandError | None = None
@@ -417,9 +425,7 @@ def run_collection(
 def parse_args(arguments: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect read-oriented iOS diagnostics through pymobiledevice3")
     parser.add_argument("--udid", required=True)
-    destination = parser.add_mutually_exclusive_group(required=True)
-    destination.add_argument("--output-root", type=Path)
-    destination.add_argument("--case-directory", type=Path)
+    parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--duration", required=True, type=int)
     parser.add_argument("--include-syslog", action="store_true")
     parser.add_argument("--include-oslog", action="store_true")
@@ -444,7 +450,6 @@ def main() -> int:
         run_collection(
             options.udid,
             options.output_root,
-            options.case_directory,
             options.duration,
             options.include_syslog,
             options.include_oslog,
