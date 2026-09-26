@@ -30,7 +30,7 @@ jobs:
           python -m pip install --disable-pip-version-check --upgrade pip
           python -m pip install --disable-pip-version-check --editable .
       - name: Run test suite
-        run: python -m unittest discover -s tests -v
+        run: python -m unittest discover -s python-tests -v
       - name: Validate Python modules
         run: python -m compileall -q ios_developer_toolkit tests
       - name: Validate command entry points

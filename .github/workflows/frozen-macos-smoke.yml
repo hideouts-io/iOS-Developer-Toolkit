@@ -14,7 +14,7 @@ on:
       - "scripts/verify_macos_bundle.py"
       - "scripts/verify_command_catalog.py"
       - "pyproject.toml"
-      - "tests/**"
+      - "python-tests/**"
   push:
     branches:
       - main
