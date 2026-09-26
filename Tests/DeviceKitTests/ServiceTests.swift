@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import DeviceKit
+import DeviceTestSupport
 import ToolkitCore
 
 private func runWithServer(_ configure: (FakeDeviceServer) -> Void, _ body: (FakeDeviceServer) async throws -> Void) async throws {

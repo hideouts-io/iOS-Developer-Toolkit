@@ -150,22 +150,22 @@ public enum USBMuxProtocol {
 }
 
 extension Data {
-    mutating func appendLittleEndian(_ value: UInt32) {
+    package mutating func appendLittleEndian(_ value: UInt32) {
         var little = value.littleEndian
         Swift.withUnsafeBytes(of: &little) { append(contentsOf: $0) }
     }
 
-    mutating func appendBigEndian(_ value: UInt32) {
+    package mutating func appendBigEndian(_ value: UInt32) {
         var big = value.bigEndian
         Swift.withUnsafeBytes(of: &big) { append(contentsOf: $0) }
     }
 
-    mutating func appendLittleEndian(_ value: UInt64) {
+    package mutating func appendLittleEndian(_ value: UInt64) {
         var little = value.littleEndian
         Swift.withUnsafeBytes(of: &little) { append(contentsOf: $0) }
     }
 
-    func readLittleEndianUInt32(at offset: Int) -> UInt32 {
+    package func readLittleEndianUInt32(at offset: Int) -> UInt32 {
         var value: UInt32 = 0
         for index in 0..<4 {
             value |= UInt32(self[startIndex + offset + index]) << (8 * UInt32(index))
@@ -173,7 +173,7 @@ extension Data {
         return value
     }
 
-    func readBigEndianUInt32(at offset: Int) -> UInt32 {
+    package func readBigEndianUInt32(at offset: Int) -> UInt32 {
         var value: UInt32 = 0
         for index in 0..<4 {
             value = (value << 8) | UInt32(self[startIndex + offset + index])
@@ -181,7 +181,7 @@ extension Data {
         return value
     }
 
-    func readLittleEndianUInt64(at offset: Int) -> UInt64 {
+    package func readLittleEndianUInt64(at offset: Int) -> UInt64 {
         var value: UInt64 = 0
         for index in 0..<8 {
             value |= UInt64(self[startIndex + offset + index]) << (8 * UInt64(index))

@@ -72,7 +72,7 @@ public actor AFCClient {
 
     // MARK: Packets
 
-    static func encode(operation: UInt64, packetNumber: UInt64, header: Data, payload: Data) -> Data {
+    package static func encode(operation: UInt64, packetNumber: UInt64, header: Data, payload: Data) -> Data {
         var data = Data(capacity: headerLength + header.count + payload.count)
         data.append(magic)
         data.appendLittleEndian(UInt64(headerLength + header.count + payload.count))

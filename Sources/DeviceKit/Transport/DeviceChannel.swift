@@ -24,11 +24,11 @@ public struct TLSCredentials: Sendable {
 /// A bidirectional byte stream to usbmuxd, a device port, or a test server, with
 /// `read(exactly:)` semantics and an in-place TLS upgrade.
 public final class DeviceChannel: Sendable {
-    let channel: Channel
-    let inbound: InboundBuffer
+    package let channel: Channel
+    package let inbound: InboundBuffer
     public let description: String
 
-    init(channel: Channel, inbound: InboundBuffer, description: String) {
+    package init(channel: Channel, inbound: InboundBuffer, description: String) {
         self.channel = channel
         self.inbound = inbound
         self.description = description
@@ -159,9 +159,10 @@ enum CertificatePinning {
 }
 
 /// Buffers inbound bytes and wakes a single waiting reader.
-final class InboundBuffer: ChannelInboundHandler, @unchecked Sendable {
-    typealias InboundIn = ByteBuffer
+package final class InboundBuffer: ChannelInboundHandler, @unchecked Sendable {
+    package typealias InboundIn = ByteBuffer
 
+    package init() {}
     private enum Waiter {
         case bytes(Int, CheckedContinuation<Void, Error>)
         case anyBytes(CheckedContinuation<Void, Error>)
@@ -177,7 +178,7 @@ final class InboundBuffer: ChannelInboundHandler, @unchecked Sendable {
     /// Hard ceiling on buffered, unread bytes to bound memory if a peer floods the stream.
     private let maximumBufferedBytes = 256 * 1024 * 1024
 
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+    package func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         var bytes = unwrapInboundIn(data)
         guard let array = bytes.readBytes(length: bytes.readableBytes) else { return }
         lock.lock()
@@ -192,7 +193,7 @@ final class InboundBuffer: ChannelInboundHandler, @unchecked Sendable {
         if overflow { context.close(promise: nil) }
     }
 
-    func channelInactive(context: ChannelHandlerContext) {
+    package func channelInactive(context: ChannelHandlerContext) {
         lock.lock()
         closed = true
         let resume = takeSatisfiedWaiter()
@@ -201,7 +202,7 @@ final class InboundBuffer: ChannelInboundHandler, @unchecked Sendable {
         context.fireChannelInactive()
     }
 
-    func errorCaught(context: ChannelHandlerContext, error: Error) {
+    package func errorCaught(context: ChannelHandlerContext, error: Error) {
         lock.lock()
         if failure == nil { failure = error }
         let resume = takeSatisfiedWaiter()
@@ -210,7 +211,7 @@ final class InboundBuffer: ChannelInboundHandler, @unchecked Sendable {
         context.close(promise: nil)
     }
 
-    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+    package func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if let tlsEvent = event as? TLSUserEvent, case .handshakeCompleted = tlsEvent {
             lock.lock()
             tlsCompleted = true
@@ -221,7 +222,7 @@ final class InboundBuffer: ChannelInboundHandler, @unchecked Sendable {
         context.fireUserInboundEventTriggered(event)
     }
 
-    func prepareForTLS() {
+    package func prepareForTLS() {
         lock.lock()
         tlsCompleted = false
         lock.unlock()
@@ -339,7 +340,7 @@ final class InboundBuffer: ChannelInboundHandler, @unchecked Sendable {
         }
     }
 
-    func waitForTLSHandshake(source: String) async throws {
+    package func waitForTLSHandshake(source: String) async throws {
         do {
             try await install { .tls($0) }
         } catch let error as ToolkitError {

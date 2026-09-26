@@ -1,16 +1,16 @@
 import Foundation
-@testable import DeviceKit
+import DeviceKit
 import ToolkitCore
 
 /// An in-memory AFC server for tests.
-actor FakeAFCFileSystem {
-    var files: [String: Data]
+public actor FakeAFCFileSystem {
+    public var files: [String: Data]
     var directories: Set<String>
     var handles: [UInt64: (path: String, offset: Int)] = [:]
     var nextHandle: UInt64 = 1
-    var lockOperations: [UInt64] = []
+    public var lockOperations: [UInt64] = []
 
-    init(files: [String: Data], directories: Set<String> = ["/"]) {
+    public init(files: [String: Data], directories: Set<String> = ["/"]) {
         self.files = files
         var all = directories
         for path in files.keys {
@@ -35,7 +35,7 @@ actor FakeAFCFileSystem {
         return Array(Set(names)).sorted()
     }
 
-    func serve(_ channel: DeviceChannel) async throws {
+    public func serve(_ channel: DeviceChannel) async throws {
         while try await channel.hasMoreData() {
             let header = try await channel.read(exactly: 40, timeout: 5)
             let entire = Int(header.readLittleEndianUInt64(at: 8))

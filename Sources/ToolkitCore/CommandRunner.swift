@@ -178,6 +178,30 @@ public struct ProcessCommandRunner: CommandRunning {
     }
 }
 
+extension ProcessCommandRunner {
+    /// Starts an independent application (for example a separately installed forensic GUI)
+    /// that should keep running after the toolkit's operation ends. Output is discarded and the
+    /// process is not terminated when the toolkit quits. Returns the process identifier.
+    public func launchDetached(_ request: CommandRequest) throws -> Int32 {
+        try ExecutableValidator.validate(request.executable)
+        let process = Process()
+        process.executableURL = request.executable
+        process.arguments = request.arguments
+        process.environment = request.environment
+        if let directory = request.workingDirectory { process.currentDirectoryURL = directory }
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            throw ToolkitError(.toolMissing, message: "\(request.displayName) could not be started.", technicalDetail: "\(request.commandLine)\n\(error.localizedDescription)")
+        }
+        ToolkitLog.commands.info("Launched detached \(request.displayName, privacy: .public) pid=\(process.processIdentifier, privacy: .public)")
+        return process.processIdentifier
+    }
+}
+
 /// Validates executables before they are launched.
 public enum ExecutableValidator {
     public static func validate(_ url: URL, requireSystemOwned: Bool = false) throws {

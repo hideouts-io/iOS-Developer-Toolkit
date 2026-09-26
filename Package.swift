@@ -52,10 +52,23 @@ let package = Package(
             dependencies: ["ToolkitCore"],
             path: "Tests/ToolkitCoreTests"
         ),
+        .target(
+            name: "DeviceTestSupport",
+            dependencies: [
+                "DeviceKit",
+                "ToolkitCore",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOSSL", package: "swift-nio-ssl"),
+            ],
+            path: "Tests/DeviceTestSupport",
+            resources: [.copy("Fixtures")]
+        ),
         .testTarget(
             name: "DeviceKitTests",
             dependencies: [
                 "DeviceKit",
+                "DeviceTestSupport",
                 "ToolkitCore",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
@@ -66,7 +79,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ToolkitFeaturesTests",
-            dependencies: ["ToolkitFeatures", "DeviceKit", "ToolkitCore"],
+            dependencies: ["ToolkitFeatures", "DeviceKit", "ToolkitCore", "DeviceTestSupport"],
             path: "Tests/ToolkitFeaturesTests",
             resources: [.copy("Fixtures")]
         ),

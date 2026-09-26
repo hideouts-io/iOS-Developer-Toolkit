@@ -2,20 +2,20 @@ import Foundation
 import NIOCore
 import NIOPosix
 import NIOSSL
-@testable import DeviceKit
+import DeviceKit
 import ToolkitCore
 
 /// Test-only pairing material (generated for this test suite; not real device keys).
-enum TestPairing {
-    static func fixture(_ name: String) -> Data {
+public enum TestPairing {
+    public static func fixture(_ name: String) -> Data {
         let url = Bundle.module.url(forResource: "Fixtures/pairing/\(name)", withExtension: nil)!
         return try! Data(contentsOf: url)
     }
 
-    static let hostID = "5F6C1AF2-0000-4000-8000-00000000C0DE"
-    static let systemBUID = "B0D5E3A1-0000-4000-8000-0000000B01D0"
+    public static let hostID = "5F6C1AF2-0000-4000-8000-00000000C0DE"
+    public static let systemBUID = "B0D5E3A1-0000-4000-8000-0000000B01D0"
 
-    static var pairRecord: PlistValue {
+    public static var pairRecord: PlistValue {
         [
             "HostID": .string(hostID),
             "SystemBUID": .string(systemBUID),
@@ -33,31 +33,31 @@ enum TestPairing {
 /// It speaks the same wire formats as the real services so the production client code
 /// (framing, pairing, TLS with client certificates and pinning, identity checks, services)
 /// is exercised end to end without hardware.
-final class FakeDeviceServer: @unchecked Sendable {
-    typealias ServiceHandler = @Sendable (DeviceChannel) async throws -> Void
+public final class FakeDeviceServer: @unchecked Sendable {
+    public typealias ServiceHandler = @Sendable (DeviceChannel) async throws -> Void
 
-    let socketPath: String
-    let directory: URL
-    let serial = "00008110001234560ABC801E"
-    var udid: String { USBMuxDevice.normalizedUDID(serial) }
-    let deviceID = 7
+    public let socketPath: String
+    public let directory: URL
+    public let serial = "00008110001234560ABC801E"
+    public var udid: String { USBMuxDevice.normalizedUDID(serial) }
+    public let deviceID = 7
 
-    var reportedUDID: String?
-    var pairRecordAvailable = true
-    var serverCertificate = "device"
-    var serviceTLS = false
-    var listenSendsDetach = true
-    var lockdownValues: [String: PlistValue] = [:]
-    var domainValues: [String: [String: PlistValue]] = [:]
-    var lockdownErrors: [String: String] = [:]
+    public var reportedUDID: String?
+    public var pairRecordAvailable = true
+    public var serverCertificate = "device"
+    public var serviceTLS = false
+    public var listenSendsDetach = true
+    public var lockdownValues: [String: PlistValue] = [:]
+    public var domainValues: [String: [String: PlistValue]] = [:]
+    public var lockdownErrors: [String: String] = [:]
     private var services: [String: ServiceHandler] = [:]
     private var servicePorts: [UInt16: String] = [:]
     private var nextPort: UInt16 = 49_152
     private let lock = NSLock()
     private var serverChannel: Channel?
-    private(set) var receivedServiceRequests: [PlistValue] = []
+    public private(set) var receivedServiceRequests: [PlistValue] = []
 
-    init() throws {
+    public init() throws {
         directory = try SecureFileIO.makeTemporaryDirectory(prefix: "fake-usbmuxd")
         socketPath = directory.appendingPathComponent("usbmuxd").path
         lockdownValues = [
@@ -71,17 +71,17 @@ final class FakeDeviceServer: @unchecked Sendable {
         ]
     }
 
-    var client: USBMuxClient { USBMuxClient(socketPath: socketPath) }
+    public var client: USBMuxClient { USBMuxClient(socketPath: socketPath) }
 
-    var target: DeviceTarget {
+    public var target: DeviceTarget {
         DeviceTarget(kind: .physical, udid: udid, name: "Test iPhone", osVersion: "18.2", usbmuxDeviceID: deviceID, coreDeviceIdentifier: nil, transport: .usb)
     }
 
-    func register(service name: String, handler: @escaping ServiceHandler) {
+    public func register(service name: String, handler: @escaping ServiceHandler) {
         lock.withLock { services[name] = handler }
     }
 
-    func start() async throws {
+    public func start() async throws {
         let bootstrap = ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
             .childChannelInitializer { [self] child in
                 child.eventLoop.makeCompletedFuture {
@@ -94,7 +94,7 @@ final class FakeDeviceServer: @unchecked Sendable {
         serverChannel = try await bootstrap.bind(unixDomainSocketPath: socketPath).get()
     }
 
-    func stop() async {
+    public func stop() async {
         try? await serverChannel?.close().get()
         try? FileManager.default.removeItem(at: directory)
     }

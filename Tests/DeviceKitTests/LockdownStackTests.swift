@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import DeviceKit
+import DeviceTestSupport
 import ToolkitCore
 
 @Suite("usbmuxd + lockdown stack (fake device)", .serialized)

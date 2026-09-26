@@ -184,7 +184,7 @@ public struct USBMuxClient: Sendable {
         return reply
     }
 
-    static func readMessage(from channel: DeviceChannel, timeout: TimeInterval?) async throws -> PlistValue {
+    package static func readMessage(from channel: DeviceChannel, timeout: TimeInterval?) async throws -> PlistValue {
         let header = try USBMuxProtocol.decodeHeader(try await channel.read(exactly: USBMuxProtocol.headerLength, timeout: timeout))
         let payload = try await channel.read(exactly: header.payloadLength, timeout: timeout ?? 30)
         return try PlistValue.decode(payload)
