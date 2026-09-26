@@ -1,0 +1,1 @@
+{ "error" : { "code" : 4, "domain" : "com.apple.dt.CoreDeviceError", "userInfo" : { "NSLocalizedDescription" : { "string" : "The device is passcode locked." } } }, "info" : { "outcome" : "failed" } }

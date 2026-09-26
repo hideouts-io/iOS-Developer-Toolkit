@@ -87,6 +87,12 @@ public final class DeviceChannel: Sendable {
         try await inbound.readSome(maximum: maximum, source: description)
     }
 
+    /// Waits until at least one byte is available (true) or the peer has closed cleanly (false).
+    /// Streaming services use this so a close at a record boundary ends the stream normally.
+    public func hasMoreData() async throws -> Bool {
+        try await inbound.hasMoreData(source: description)
+    }
+
     /// Upgrades the established stream to TLS using the pair record's host identity.
     public func startTLS(_ credentials: TLSCredentials, timeout: TimeInterval = 20) async throws {
         let context: NIOSSLContext
@@ -319,6 +325,17 @@ final class InboundBuffer: ChannelInboundHandler, @unchecked Sendable {
                 throw ToolkitError.deviceCommunication(technicalDetail: "\(source): \(failure)")
             }
             return nil
+        }
+    }
+
+    func hasMoreData(source: String) async throws -> Bool {
+        try await install { .anyBytes($0) }
+        return try lock.withLock {
+            if !buffer.isEmpty { return true }
+            if let failure {
+                throw ToolkitError.deviceCommunication(technicalDetail: "\(source): \(failure)")
+            }
+            return false
         }
     }
 

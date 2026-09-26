@@ -5,6 +5,8 @@ import Foundation
 public enum JSONValue: Sendable, Hashable {
     case null
     case bool(Bool)
+    /// Exact integers (identifiers such as ECIDs exceed Double's 53-bit precision).
+    case integer(Int64)
     case number(Double)
     case string(String)
     case array([JSONValue])
@@ -17,6 +19,8 @@ public enum JSONValue: Sendable, Hashable {
         case let value as NSNumber:
             if CFGetTypeID(value) == CFBooleanGetTypeID() {
                 self = .bool(value.boolValue)
+            } else if !CFNumberIsFloatType(value) {
+                self = .integer(value.int64Value)
             } else {
                 self = .number(value.doubleValue)
             }
@@ -62,6 +66,7 @@ public enum JSONValue: Sendable, Hashable {
     public var string: String? {
         switch self {
         case .string(let value): return value
+        case .integer(let value): return String(value)
         case .number(let value):
             if value.rounded() == value, abs(value) < 1e15 { return String(Int64(value)) }
             return String(value)
@@ -91,12 +96,14 @@ public enum JSONValue: Sendable, Hashable {
     public var double: Double? {
         switch self {
         case .number(let value): return value
+        case .integer(let value): return Double(value)
         case .string(let value): return Double(value)
         default: return nil
         }
     }
 
     public var int: Int? {
+        if case .integer(let value) = self { return Int(exactly: value) }
         guard let value = double, value.isFinite, value.rounded() == value, abs(value) < 9e15 else { return nil }
         return Int(value)
     }
@@ -115,6 +122,7 @@ public enum JSONValue: Sendable, Hashable {
         switch self {
         case .null: return NSNull()
         case .bool(let value): return NSNumber(value: value)
+        case .integer(let value): return NSNumber(value: value)
         case .number(let value): return NSNumber(value: value)
         case .string(let value): return value
         case .array(let value): return value.map(\.foundationObject)

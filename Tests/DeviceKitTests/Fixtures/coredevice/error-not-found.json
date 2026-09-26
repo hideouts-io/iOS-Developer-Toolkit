@@ -1,0 +1,10 @@
+{
+  "error" : {
+    "code" : 1000,
+    "domain" : "com.apple.dt.CoreDeviceError",
+    "userInfo" : {
+      "NSLocalizedDescription" : { "string" : "No devices matched the specified criteria." }
+    }
+  },
+  "info" : { "outcome" : "failed", "jsonVersion" : 5 }
+}
