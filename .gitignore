@@ -58,3 +58,6 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 /build-output/
+
+# Local build output
+build-output/

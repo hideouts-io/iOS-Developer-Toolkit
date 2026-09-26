@@ -116,9 +116,9 @@ public enum CollectionEvent: Sendable {
 
 /// Collects a bounded, hashed evidence case from one physical device.
 public actor EvidenceCollector {
-    public let device: Device
-    public let caseFolder: URL
-    public let options: CollectionOptions
+    public nonisolated let device: Device
+    public nonisolated let caseFolder: URL
+    public nonisolated let options: CollectionOptions
     private let runner: CommandRunning
     private let usbmux: USBMuxClient
     private let coreDevice: CoreDeviceClient

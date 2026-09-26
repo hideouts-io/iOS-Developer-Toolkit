@@ -30,8 +30,8 @@ public struct LockdownBasicInfo: Sendable, Hashable {
 /// device that answered is not the intended one, the session is closed and the operation fails,
 /// so an action can never reach a different device than the one the user confirmed.
 public actor DeviceSession {
-    public let target: DeviceTarget
-    public let usbmuxDevice: USBMuxDevice
+    public nonisolated let target: DeviceTarget
+    public nonisolated let usbmuxDevice: USBMuxDevice
     private let usbmux: USBMuxClient
     private let pairRecord: PairRecord
     private let lockdown: LockdownClient

@@ -161,3 +161,5 @@ Swift device discovery (usbmuxd + CoreDevice + simctl), so nothing is lost.
 ## 7. Migration log
 
 - 2026-09-26 — Audit complete; migration branch `swift-native-migration` created.
+- 2026-09-26 — Swift package (ToolkitCore, DeviceKit, ToolkitFeatures, idt CLI) complete with 170+ passing tests, including an end-to-end fake usbmuxd/lockdownd device, a real-Xcode toolchain check, and an opt-in real-simulator test. SwiftUI app builds with zero warnings; GUI verified by in-app window rendering (Demo Mode) at default and minimum sizes. XCUITests written but blocked locally by macOS Automation Mode authentication.
+- Remaining: README/docs rewrite, GitHub Actions for Swift/Xcode, release packaging, physical-device verification of the native lockdown services, removal of the Python implementation and go-ios/ipsw references, final verification pass.

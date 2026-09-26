@@ -160,11 +160,11 @@ public struct LogCaptureMetadata: Codable, Sendable, Hashable {
 /// Spools every byte of a live stream to disk (independently of what the view shows), keeps an
 /// incremental SHA-256, and manages findings and exports.
 public actor LogCapture {
-    public let kind: LogStreamKind
-    public let target: DeviceTarget
-    public let spoolURL: URL
-    public let metadataURL: URL
-    public let findingsURL: URL
+    public nonisolated let kind: LogStreamKind
+    public nonisolated let target: DeviceTarget
+    public nonisolated let spoolURL: URL
+    public nonisolated let metadataURL: URL
+    public nonisolated let findingsURL: URL
     private let output: FileHandle
     private var hasher = StreamingHasher()
     private var metadata: LogCaptureMetadata

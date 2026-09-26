@@ -58,7 +58,7 @@ public actor GPXPlayback {
         case failed(String)
     }
 
-    public let target: DeviceTarget
+    public nonisolated let target: DeviceTarget
     private let controller: LocationController
     private let points: [GPXPoint]
     private let offsets: [TimeInterval]
