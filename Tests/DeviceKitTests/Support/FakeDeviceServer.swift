@@ -46,6 +46,7 @@ final class FakeDeviceServer: @unchecked Sendable {
     var pairRecordAvailable = true
     var serverCertificate = "device"
     var serviceTLS = false
+    var listenSendsDetach = true
     var lockdownValues: [String: PlistValue] = [:]
     var domainValues: [String: [String: PlistValue]] = [:]
     var lockdownErrors: [String: String] = [:]
@@ -135,7 +136,9 @@ final class FakeDeviceServer: @unchecked Sendable {
             case "Listen":
                 try await send(["MessageType": "Result", "Number": 0], on: connection)
                 try await send(attachedMessage, on: connection)
-                try await send(["MessageType": "Detached", "DeviceID": .integer(Int64(deviceID))], on: connection)
+                if listenSendsDetach {
+                    try await send(["MessageType": "Detached", "DeviceID": .integer(Int64(deviceID))], on: connection)
+                }
                 _ = try? await connection.readSome()
             case "Connect":
                 let networkPort = UInt16(truncatingIfNeeded: message["PortNumber"]?.intValue ?? 0)
