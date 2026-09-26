@@ -88,8 +88,8 @@ def _support_entries(context: SupportBundleContext) -> tuple[tuple[str, str], ..
         "python_implementation": platform.python_implementation(),
         "python_version": platform.python_version(),
         "runtime": "frozen-app" if context.frozen_runtime else "source-python",
-        "pymobiledevice3_version": _installed_package_version("pymobiledevice3"),
-        "pyside6_version": _installed_package_version("PySide6"),
+        "pymobiledevice3_version": installed_package_version("pymobiledevice3"),
+        "pyside6_version": installed_package_version("PySide6"),
     }
     context_document: dict[str, JsonDocumentValue] = {
         "workspace": context.workspace,
@@ -145,7 +145,9 @@ def _json_document(value: dict[str, JsonDocumentValue]) -> str:
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
 
 
-def _installed_package_version(package: str) -> str:
+def installed_package_version(package: str) -> str:
+    if not package.strip():
+        raise SupportBundleError("Package name is required when reading installed version metadata")
     try:
         return version(package)
     except PackageNotFoundError:

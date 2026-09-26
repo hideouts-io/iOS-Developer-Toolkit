@@ -4,15 +4,12 @@ import argparse
 import asyncio
 import json
 import sys
-from typing import TYPE_CHECKING, Literal, TextIO
+from typing import TYPE_CHECKING, TextIO
 
-from ios_developer_toolkit.backup_protocol import BackupRequest, BackupRequestError, parse_backup_request
+from ios_developer_toolkit.backup_protocol import BackupAction, BackupRequest, BackupRequestError, parse_backup_request
 
 if TYPE_CHECKING:
     from pymobiledevice3.lockdown import LockdownClient
-
-
-BackupAction = Literal["status", "backup"]
 
 
 def emit_event(

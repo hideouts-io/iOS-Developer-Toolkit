@@ -2,6 +2,9 @@
 venv/
 build/
 dist/
+site/
+output/
+.playwright-cli/
 ios_developer_toolkit/deployment/
 packaging/deployment/
 *.egg-info/
@@ -18,6 +21,9 @@ reports/
 ios-case-*/
 ufade-acquisitions/
 UFADE Acquisitions/
+mvt-analyses/
+MVT Analyses/
+mvt-analysis-*/
 location-logs/
 Location Logs/
 iOS Developer Toolkit Location Logs/
@@ -33,6 +39,8 @@ nuitka-crash-report.xml
 *.pcapng
 *.ufd
 *.ufdr
+*.stix
+*.stix2
 
 # Packages, profiles, and developer-image payloads
 *.cer

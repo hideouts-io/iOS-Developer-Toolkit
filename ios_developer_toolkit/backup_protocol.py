@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+
+
+BackupAction = Literal["status", "backup"]
 
 
 class BackupRequestError(ValueError):
@@ -25,6 +29,32 @@ class BackupEvent:
     percent: int | None
     encrypted: bool | None
     path: Path | None
+
+
+def serialize_backup_request(request: BackupRequest) -> bytes:
+    if not isinstance(request.udid, str) or not request.udid.strip():
+        raise BackupRequestError("udid must be a non-empty string")
+    if not isinstance(request.destination, Path):
+        raise BackupRequestError("destination must be a Path")
+    if not request.destination.is_absolute():
+        raise BackupRequestError("destination must be an absolute path")
+    if not isinstance(request.require_encryption, bool):
+        raise BackupRequestError("require_encryption must be a boolean")
+    if not isinstance(request.new_password, str):
+        raise BackupRequestError("new_password must be a string")
+    if not isinstance(request.full, bool):
+        raise BackupRequestError("full must be a boolean")
+    return json.dumps(
+        {
+            "udid": request.udid,
+            "destination": str(request.destination),
+            "require_encryption": request.require_encryption,
+            "new_password": request.new_password,
+            "full": request.full,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
 
 
 def required_string(value: object, field_name: str) -> str:

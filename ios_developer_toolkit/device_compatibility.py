@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
+import platform
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from sys import version as python_runtime_version
 from typing import Mapping, Sequence
 
 from ios_developer_toolkit.capability_matrix import CapabilityMatrixError, CapabilityResult, parse_capability_result
 from ios_developer_toolkit.models import IOSDevice
+from ios_developer_toolkit.support_bundle import installed_package_version, sanitize_support_text
 
 
 class DeviceCompatibilityError(ValueError):
@@ -26,6 +30,28 @@ class DeviceCompatibilityObservation:
     build_version: str
     connection_type: str
     results: tuple[CapabilityResult, ...]
+
+
+@dataclass(frozen=True)
+class CompatibilityReportEnvironment:
+    """Host and toolchain metadata that explains one exported compatibility report."""
+
+    toolkit_version: str
+    macos_version: str
+    architecture: str
+    python_version: str
+    runtime: str
+    pymobiledevice3_version: str
+    pyside6_version: str
+
+
+@dataclass(frozen=True)
+class CompatibilityReport:
+    """A shareable report that deliberately omits stable device identity."""
+
+    generated_at: str
+    environment: CompatibilityReportEnvironment
+    observations: tuple[DeviceCompatibilityObservation, ...]
 
 
 def compatibility_history_path(home: Path) -> Path:
@@ -174,3 +200,174 @@ def latest_observations(
         if existing is None or observation.recorded_at > existing.recorded_at:
             latest_by_device[observation.device_fingerprint] = observation
     return tuple(sorted(latest_by_device.values(), key=lambda item: item.recorded_at))
+
+
+def current_report_environment(toolkit_version: str, frozen_runtime: bool) -> CompatibilityReportEnvironment:
+    if not toolkit_version.strip():
+        raise DeviceCompatibilityError("Toolkit version is required for a compatibility report")
+    return CompatibilityReportEnvironment(
+        toolkit_version=toolkit_version,
+        macos_version=platform.mac_ver()[0] or "unavailable",
+        architecture=platform.machine() or "unavailable",
+        python_version=platform.python_version() or python_runtime_version.split()[0],
+        runtime="frozen-app" if frozen_runtime else "source-python",
+        pymobiledevice3_version=installed_package_version("pymobiledevice3"),
+        pyside6_version=installed_package_version("PySide6"),
+    )
+
+
+def create_compatibility_report(
+    generated_at: str,
+    environment: CompatibilityReportEnvironment,
+    observations: Sequence[DeviceCompatibilityObservation],
+) -> CompatibilityReport:
+    if not generated_at.strip():
+        raise DeviceCompatibilityError("Compatibility report generation time is required")
+    environment_values = asdict(environment)
+    missing_environment_fields = tuple(
+        key for key, value in environment_values.items() if not isinstance(value, str) or not value.strip()
+    )
+    if missing_environment_fields:
+        raise DeviceCompatibilityError(
+            f"Compatibility report environment fields must be non-empty: {missing_environment_fields}"
+        )
+    latest = latest_observations(observations)
+    if not latest:
+        raise DeviceCompatibilityError("Cannot export a compatibility report without completed device observations")
+    return CompatibilityReport(generated_at, environment, latest)
+
+
+def compatibility_report_mapping(report: CompatibilityReport) -> dict[str, object]:
+    devices: list[dict[str, object]] = []
+    for index, observation in enumerate(report.observations, start=1):
+        devices.append(
+            {
+                "report_device": f"device-{index}",
+                "observed_at": observation.recorded_at,
+                "product_type": observation.product_type,
+                "product_version": observation.product_version,
+                "build_version": observation.build_version,
+                "connection_type": observation.connection_type,
+                "capabilities": [
+                    {
+                        "identifier": result.identifier,
+                        "layer": result.layer,
+                        "title": result.title,
+                        "state": result.state,
+                        "summary": sanitize_support_text(result.summary, ()),
+                        "evidence": sanitize_support_text(result.evidence, ()),
+                        "remediation": sanitize_support_text(result.remediation, ()),
+                    }
+                    for result in observation.results
+                ],
+            }
+        )
+    return {
+        "schema_version": 1,
+        "generated_at": report.generated_at,
+        "environment": asdict(report.environment),
+        "privacy": {
+            "raw_device_identifiers_included": False,
+            "device_names_included": False,
+            "device_fingerprints_included": False,
+            "local_paths_redacted": True,
+            "warning": (
+                "Device model, iOS version and build, connection type, host/toolchain versions, and sanitized "
+                "capability evidence remain in this report. Review it before sharing."
+            ),
+        },
+        "devices": devices,
+    }
+
+
+def render_compatibility_json(report: CompatibilityReport) -> str:
+    return json.dumps(compatibility_report_mapping(report), indent=2, sort_keys=True) + "\n"
+
+
+def _markdown_cell(value: str) -> str:
+    sanitized = sanitize_support_text(value, ())
+    return html.escape(sanitized, quote=False).replace("|", "\\|").replace("\n", "<br>")
+
+
+def render_compatibility_markdown(report: CompatibilityReport) -> str:
+    environment = report.environment
+    lines = [
+        "# iOS Developer Toolkit compatibility report",
+        "",
+        f"Generated: `{report.generated_at}`",
+        "",
+        "> This sanitized export omits device names, raw identifiers, and stored device fingerprints. It retains device "
+        "model, iOS version/build, connection type, host/toolchain versions, and sanitized capability evidence. Review "
+        "it before sharing.",
+        "",
+        "## Host and toolchain",
+        "",
+        "| Item | Value |",
+        "|---|---|",
+        f"| Toolkit | {_markdown_cell(environment.toolkit_version)} |",
+        f"| macOS | {_markdown_cell(environment.macos_version)} |",
+        f"| Architecture | {_markdown_cell(environment.architecture)} |",
+        f"| Runtime | {_markdown_cell(environment.runtime)} |",
+        f"| Python | {_markdown_cell(environment.python_version)} |",
+        f"| pymobiledevice3 | {_markdown_cell(environment.pymobiledevice3_version)} |",
+        f"| PySide6 | {_markdown_cell(environment.pyside6_version)} |",
+        "",
+    ]
+    for index, observation in enumerate(report.observations, start=1):
+        lines.extend(
+            (
+                f"## Observed device {index}",
+                "",
+                "| Item | Value |",
+                "|---|---|",
+                f"| Observed at | {_markdown_cell(observation.recorded_at)} |",
+                f"| Product type | {_markdown_cell(observation.product_type)} |",
+                f"| iOS | {_markdown_cell(observation.product_version)} |",
+                f"| Build | {_markdown_cell(observation.build_version)} |",
+                f"| Connection | {_markdown_cell(observation.connection_type)} |",
+                "",
+                "| State | Layer | Capability | Summary | Evidence | Next step |",
+                "|---|---|---|---|---|---|",
+            )
+        )
+        for result in observation.results:
+            lines.append(
+                f"| {_markdown_cell(result.state)} | {_markdown_cell(result.layer)} | "
+                f"{_markdown_cell(result.title)} | {_markdown_cell(result.summary)} | "
+                f"{_markdown_cell(result.evidence)} | {_markdown_cell(result.remediation)} |"
+            )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _write_private_report(destination: Path, expected_suffix: str, content: str) -> Path:
+    path = destination.expanduser().resolve()
+    if path.suffix.casefold() != expected_suffix:
+        raise DeviceCompatibilityError(
+            f"Compatibility report destination must end in {expected_suffix}: {path}"
+        )
+    if not path.parent.is_dir():
+        raise DeviceCompatibilityError(f"Compatibility report parent directory does not exist: {path.parent}")
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as error:
+        raise DeviceCompatibilityError(f"Refusing to overwrite existing compatibility report: {path}") from error
+    except OSError as error:
+        raise DeviceCompatibilityError(f"Could not create compatibility report at {path}: {error}") from error
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(content.encode("utf-8"))
+            output.flush()
+            os.fsync(output.fileno())
+    except OSError as error:
+        path.unlink(missing_ok=True)
+        raise DeviceCompatibilityError(f"Could not write compatibility report at {path}: {error}") from error
+    return path
+
+
+def write_compatibility_json_report(destination: Path, report: CompatibilityReport) -> Path:
+    return _write_private_report(destination, ".json", render_compatibility_json(report))
+
+
+def write_compatibility_markdown_report(destination: Path, report: CompatibilityReport) -> Path:
+    return _write_private_report(destination, ".md", render_compatibility_markdown(report))

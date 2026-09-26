@@ -20,7 +20,9 @@ Each architecture-specific release also contains:
 
 The generated package inventory is intentionally more detailed than this summary and includes transitive Python dependencies. A package whose wheel does not contain a license text is identified as such in the inventory and linked to its declared project source when available.
 
-UFADE is an optional, separately installed external provider. The toolkit does not bundle UFADE. Other projects named in the README as design references are not copied, imported, or linked unless the README explicitly says otherwise.
+UFADE, MVT, go-ios, idb, and ipsw are optional, separately installed external providers. The toolkit does not bundle those projects. MVT remains subject to the [MVT License](https://license.mvt.re/1.1/) and its consent and interpretation boundaries. [go-ios](https://github.com/danielpaulus/go-ios), [idb](https://github.com/facebook/idb), and [ipsw](https://github.com/blacktop/ipsw) each declare the MIT License in their upstream repositories. Their adapter only validates and launches a user-selected executable; their source and binary remain outside this project and its release SBOM. Other projects named in the README as design references are not copied, imported, or linked unless the README explicitly says otherwise.
+
+The documentation workflow uses pinned [Material for MkDocs](https://github.com/squidfunk/mkdocs-material) 9.7.7 under its MIT license. It is a site-build dependency only and is not bundled in the macOS application or application SBOM.
 
 See [SOURCE_AVAILABILITY.md](SOURCE_AVAILABILITY.md) for the project source location, matching tagged source, and upstream source locations for bundled third-party components.
 

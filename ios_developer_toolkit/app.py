@@ -5,10 +5,11 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Literal, Mapping
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRect, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import (
@@ -70,7 +71,14 @@ from ios_developer_toolkit.action_safety import (
     confirmation_phrase,
     guided_action_safety,
 )
-from ios_developer_toolkit.backup_protocol import BackupEvent, BackupRequestError, parse_backup_event
+from ios_developer_toolkit.action_palette import (
+    ActionPaletteDialog,
+    ActionPaletteEntry,
+    action_palette_entry,
+    validate_action_palette,
+)
+from ios_developer_toolkit.backup_process import BackupProcessController
+from ios_developer_toolkit.backup_protocol import BackupAction, BackupEvent, BackupRequest, BackupRequestError
 from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case
 from ios_developer_toolkit.capability_matrix import (
     CapabilityMatrixError,
@@ -95,16 +103,40 @@ from ios_developer_toolkit.connection_diagnostics import (
     process_error_connection_diagnostic,
     timed_out_connection_diagnostic,
 )
+from ios_developer_toolkit.collection_process import CollectionProcessController
+from ios_developer_toolkit.collection_protocol import CollectionEvent
 from ios_developer_toolkit.device_compatibility import (
+    CompatibilityReport,
     DeviceCompatibilityError,
     DeviceCompatibilityObservation,
     append_observation,
     compatibility_history_path,
+    create_compatibility_report,
     create_observation,
+    current_report_environment,
     latest_observations,
     load_observations,
+    render_compatibility_json,
+    render_compatibility_markdown,
+    write_compatibility_json_report,
+    write_compatibility_markdown_report,
 )
 from ios_developer_toolkit.demo_mode import demo_connection_banner, demo_device
+from ios_developer_toolkit.external_tools import (
+    ExternalToolExecutable,
+    ExternalToolIdentifier,
+    ExternalToolInstallation,
+    ExternalToolSpec,
+    ExternalToolValidationError,
+    discover_external_tool_executables,
+    external_tool_command,
+    external_tool_environment,
+    external_tool_spec,
+    external_tool_specs,
+    inspect_external_tool_executable,
+    parse_external_tool_version,
+    validate_external_tool_installation,
+)
 from ios_developer_toolkit.gui_pages import (
     build_home_page,
     build_live_logs_page,
@@ -134,6 +166,7 @@ from ios_developer_toolkit.installed_apps import (
     format_byte_count,
     parse_installed_apps_json,
 )
+from ios_developer_toolkit.interactive_process import InteractiveProcessController
 from ios_developer_toolkit.ipa_inspector import (
     IPAInspection,
     IPAInspectionError,
@@ -169,6 +202,33 @@ from ios_developer_toolkit.location_lab import (
 )
 from ios_developer_toolkit.live_logs import LiveLogError, LiveLogWindow, log_stream_specs, stream_spec
 from ios_developer_toolkit.models import DeviceDataError, IOSDevice, parse_devices_json
+from ios_developer_toolkit.mvt_connector import (
+    MVT_BACKUP_GUIDE_URL,
+    MVT_INSTALLATION_URL,
+    MVT_REPOSITORY_URL,
+    MVTAnalysisRequest,
+    MVTExecutable,
+    MVTInstallation,
+    MVTValidationError,
+    create_mvt_analysis_request,
+    discover_mvt_executables,
+    inspect_mvt_executable,
+    mvt_analysis_arguments,
+    mvt_command,
+    mvt_environment,
+    mvt_setup_commands,
+    mvt_version_arguments,
+    parse_mvt_version_output,
+)
+from ios_developer_toolkit.operation_history import (
+    OperationContext,
+    OperationHistoryDialog,
+    OperationRecord,
+    append_operation_record,
+    operation_context,
+    operation_record,
+    with_output_paths,
+)
 from ios_developer_toolkit.qt_process import (
     FiniteProcessController,
     OperationResult,
@@ -201,6 +261,26 @@ from ios_developer_toolkit.ufade_connector import (
     macos_setup_commands,
 )
 from ios_developer_toolkit.validation import output_indicates_failure
+from ios_developer_toolkit.workspace_profile import (
+    AppWorkflowPreferences,
+    BackupWorkflowPreferences,
+    EvidenceWorkflowPreferences,
+    LocationWorkflowPreferences,
+    WorkspaceProfile,
+    WorkspaceProfileError,
+    load_workspace_profile,
+    render_workspace_profile_json,
+    render_workspace_profile_preview,
+    validate_workspace_profile,
+    write_workspace_profile,
+)
+from ios_developer_toolkit.xcode_handoff import (
+    XcodeHandoffError,
+    coredevice_details_handoff,
+    rvi_list_handoff,
+    validated_xcode_artifact,
+    xcode_project_handoff,
+)
 
 
 XCODE_CANDIDATE_DDI = Path("/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg")
@@ -210,7 +290,20 @@ MANPAGE_HELP_KILL_DELAY_MS = 1_500
 COMMAND_DRIFT_HELP_TIMEOUT_MS = 5_000
 RECONNECT_TIMEOUT_MS = 30_000
 DEVICE_SCAN_TIMEOUT_MS = 10_000
+DDI_ACTION_TIMEOUT_MS = 15 * 60_000
+APPS_ACTION_TIMEOUT_MS = 10 * 60_000
+IPA_INSPECTION_TIMEOUT_MS = 5 * 60_000
+IPA_INSTALL_TIMEOUT_MS = 15 * 60_000
+COLLECTION_FINALIZATION_TIMEOUT_MS = 2 * 60_000
+XCODE_HANDOFF_TIMEOUT_MS = 60_000
 PROCESS_TERMINATE_GRACE_MS = 1_500
+EXTERNAL_TOOL_TIMEOUT_MS = 30_000
+MAX_SESSION_OPERATION_RECORDS = 250
+EXTERNAL_TOOL_OBJECT_SUFFIXES: Mapping[ExternalToolIdentifier, str] = {
+    "go-ios": "GoIos",
+    "idb": "Idb",
+    "ipsw": "Ipsw",
+}
 
 
 def application_icon_path() -> Path:
@@ -484,6 +577,60 @@ class UFADEGuideDialog(QDialog):
         layout.addWidget(buttons)
 
 
+class MVTGuideDialog(QDialog):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("Analyze a Backup with MVT")
+        self.resize(820, 690)
+        layout = QVBoxLayout(self)
+        heading = QLabel("Consent-based external MVT backup analysis")
+        heading.setObjectName("mvtGuideHeading")
+        heading.setFont(QFont(heading.font().family(), 18, QFont.Weight.DemiBold))
+        layout.addWidget(heading)
+        instructions = QTextBrowser()
+        instructions.setObjectName("mvtGuideContent")
+        instructions.setOpenExternalLinks(True)
+        instructions.setHtml(
+            f"""
+            <h3>1. Install MVT separately</h3>
+            <p>Use <b>Copy Setup Commands</b> in the MVT Analysis tab, run the commands in Terminal, then choose the
+            resulting <code>mvt-ios</code> executable. The toolkit does not bundle, import, update, or modify MVT.</p>
+
+            <h3>2. Prepare a consented backup copy</h3>
+            <p>Choose one iTunes-style backup folder containing <code>Manifest.db</code> and <code>Info.plist</code>.
+            MVT analyzes a decrypted backup. If the source is encrypted, decrypt a protected working copy outside this
+            toolkit using MVT's official instructions. Do not paste a password into this application: it has no backup
+            password field and removes inherited MVT password variables from the child process.</p>
+
+            <h3>3. Isolate the results</h3>
+            <p>Choose a new output path that does not exist and is outside the source backup. The toolkit refuses an
+            existing path so a new run cannot mix with earlier results. MVT creates JSON records and its own command log
+            in that folder. Optional input hashes can substantially increase runtime on a large backup.</p>
+
+            <h3>4. Decide whether to supply indicators or network access</h3>
+            <p>STIX2/JSON indicator files are opt-in. Network access is off by default, which prevents shortened-URL
+            resolution and other MVT network requests during the run. Enable it only after reviewing the selected
+            indicators and the privacy implications. Automatic version and indicator update checks remain disabled for
+            a reproducible handoff.</p>
+
+            <h3>5. Interpret the output carefully</h3>
+            <p>MVT extracts forensic records and can identify matches against supplied indicators. A completed run,
+            zero alerts, or no <code>*_detected.json</code> files does <b>not</b> establish that a device is clean, safe,
+            uncompromised, or never targeted. Public indicators can be incomplete or stale. Preserve the original backup,
+            record tool and indicator versions, and seek qualified forensic assistance for high-risk cases.</p>
+
+            <p><a href="{MVT_INSTALLATION_URL}">Official MVT installation</a> ·
+            <a href="{MVT_BACKUP_GUIDE_URL}">Official iOS backup-analysis guide</a> ·
+            <a href="{MVT_REPOSITORY_URL}">MVT source repository</a></p>
+            """
+        )
+        layout.addWidget(instructions, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.setObjectName("mvtGuideButtons")
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -505,9 +652,11 @@ class MainWindow(QMainWindow):
         self._reconnect_timeout_timer = QTimer(self)
         self._reconnect_timeout_timer.setSingleShot(True)
         self._reconnect_timeout_timer.timeout.connect(self._reconnect_timed_out)
-        self._action_process: QProcess | None = None
+        self._action_controller = FiniteProcessController(self)
+        self._action_controller.stdout_received.connect(self._append_action_output)
+        self._action_controller.stderr_received.connect(self._append_action_output)
+        self._action_controller.completed.connect(self._action_completed)
         self._action_context = ""
-        self._action_buffer = bytearray()
         self._capability_process: QProcess | None = None
         self._capability_stdout_buffer = bytearray()
         self._capability_stderr = bytearray()
@@ -524,27 +673,58 @@ class MainWindow(QMainWindow):
             self._compatibility_observations = load_observations(self._compatibility_history_path)
         except DeviceCompatibilityError as error:
             self._compatibility_history_error = str(error)
-        self._collection_process: QProcess | None = None
-        self._ipa_inspection_process: QProcess | None = None
-        self._ipa_inspection_stdout = bytearray()
-        self._ipa_inspection_stderr = bytearray()
+        self._collection_controller = CollectionProcessController(self)
+        self._collection_controller.stdout_received.connect(self._append_collection_output)
+        self._collection_controller.stderr_received.connect(self._append_collection_output)
+        self._collection_controller.event_received.connect(self._collection_event_received)
+        self._collection_controller.completed.connect(self._collection_completed)
+        self._collection_case_finished = False
+        self._close_after_collection = False
+        self._ipa_inspection_controller = FiniteProcessController(self)
+        self._ipa_inspection_controller.completed.connect(self._ipa_inspection_completed)
         self._ipa_inspection: IPAInspection | None = None
         self._selected_ipa: Path | None = None
-        self._sideload_process: QProcess | None = None
+        self._sideload_controller = FiniteProcessController(self)
+        self._sideload_controller.stdout_received.connect(self._append_sideload_output)
+        self._sideload_controller.stderr_received.connect(self._append_sideload_output)
+        self._sideload_controller.completed.connect(self._sideload_completed)
         self._sideload_context = ""
-        self._sideload_buffer = bytearray()
-        self._apps_process: QProcess | None = None
+        self._apps_controller = FiniteProcessController(self)
+        self._apps_controller.stderr_received.connect(self._append_apps_stderr)
+        self._apps_controller.completed.connect(self._apps_completed)
         self._apps_context = ""
-        self._apps_stdout = bytearray()
-        self._apps_stderr = bytearray()
         self._installed_apps: tuple[InstalledApp, ...] = ()
-        self._backup_process: QProcess | None = None
-        self._backup_action = ""
-        self._backup_stdout = bytearray()
-        self._backup_stderr = bytearray()
+        self._backup_controller = BackupProcessController(self)
+        self._backup_controller.event_received.connect(self._handle_backup_event)
+        self._backup_controller.stderr_received.connect(self._append_backup_stderr)
+        self._backup_controller.completed.connect(self._backup_completed)
+        self._backup_action: BackupAction | None = None
         self._backup_encryption_state: bool | None = None
         self._last_backup_path: Path | None = None
         self._ufade_installation: UFADEInstallation | None = None
+        self._mvt_controller = InteractiveProcessController(self)
+        self._mvt_controller.stdout_received.connect(self._append_mvt_output)
+        self._mvt_controller.stderr_received.connect(self._append_mvt_output)
+        self._mvt_controller.completed.connect(self._mvt_completed)
+        self._mvt_installation: MVTInstallation | None = None
+        self._mvt_pending_executable: MVTExecutable | None = None
+        self._mvt_operation = ""
+        self._mvt_request: MVTAnalysisRequest | None = None
+        self._mvt_ioc_paths: tuple[Path, ...] = ()
+        self._mvt_temporary_config: tempfile.TemporaryDirectory[str] | None = None
+        self._external_tool_controller = FiniteProcessController(self)
+        self._external_tool_controller.completed.connect(self._external_tool_completed)
+        self._external_tool_installations: dict[ExternalToolIdentifier, ExternalToolInstallation] = {}
+        self._external_tool_pending_executable: ExternalToolExecutable | None = None
+        self._external_tool_active_identifier: ExternalToolIdentifier | None = None
+        self._external_tool_operation: Literal["validate", "probe"] | None = None
+        self._external_tool_fields: dict[ExternalToolIdentifier, QLineEdit] = {}
+        self._external_tool_statuses: dict[ExternalToolIdentifier, QLabel] = {}
+        self._external_tool_outputs: dict[ExternalToolIdentifier, QPlainTextEdit] = {}
+        self._external_tool_validate_buttons: dict[ExternalToolIdentifier, QPushButton] = {}
+        self._external_tool_probe_buttons: dict[ExternalToolIdentifier, QPushButton] = {}
+        self._external_tool_stop_buttons: dict[ExternalToolIdentifier, QPushButton] = {}
+        self._external_tool_path_buttons: dict[ExternalToolIdentifier, tuple[QPushButton, QPushButton]] = {}
         self._location_process: QProcess | None = None
         self._location_operation = ""
         self._location_arguments: tuple[str, ...] = ()
@@ -567,7 +747,10 @@ class MainWindow(QMainWindow):
             self._saved_locations = load_saved_locations(self._saved_locations_path)
         except LocationLabError as error:
             self._saved_locations_error = str(error)
-        self._console_process: QProcess | None = None
+        self._console_controller = InteractiveProcessController(self)
+        self._console_controller.stdout_received.connect(self._append_console_output)
+        self._console_controller.stderr_received.connect(self._append_console_output)
+        self._console_controller.completed.connect(self._console_completed)
         self._presets = command_presets()
         self._current_preset: CommandPreset | None = None
         self._preset_parameter_fields: dict[str, QLineEdit] = {}
@@ -586,6 +769,8 @@ class MainWindow(QMainWindow):
         self._command_drift_probes: dict[tuple[str, ...], HelpRouteProbe] = {}
         self._last_case_path: Path | None = None
         self._active_case_path: Path | None = None
+        self._operation_records: tuple[OperationRecord, ...] = ()
+        self._pending_operation_contexts: dict[str, OperationContext] = {}
         self._keyboard_shortcuts: list[QShortcut] = []
         self._build_ui()
         self._configure_accessibility()
@@ -623,7 +808,7 @@ class MainWindow(QMainWindow):
         title = QLabel("iOS Developer Toolkit")
         title.setObjectName("appTitle")
         title.setFont(QFont(title.font().family(), 24, QFont.Weight.Bold))
-        subtitle = QLabel("pymobiledevice3 Swiss-army GUI • Developer images • diagnostics • evidence")
+        subtitle = QLabel("iOS developer workbench • pymobiledevice3 • diagnostics • evidence")
         subtitle.setObjectName("appSubtitle")
         title_block.addWidget(title)
         title_block.addWidget(subtitle)
@@ -682,6 +867,32 @@ class MainWindow(QMainWindow):
         self.navigation_list.setObjectName("workspaceNavigation")
         self.navigation_list.setSpacing(2)
         sidebar_layout.addWidget(self.navigation_list, 1)
+        self.action_palette_button = QPushButton("Action Palette (⌘K)")
+        self.action_palette_button.setObjectName("actionPaletteButton")
+        self.action_palette_button.setToolTip("Search workspaces, guided commands, and currently eligible actions")
+        self.action_palette_button.clicked.connect(self.show_action_palette)
+        sidebar_layout.addWidget(self.action_palette_button)
+        self.session_activity_button = QPushButton("Session Activity (0)")
+        self.session_activity_button.setObjectName("sessionActivityButton")
+        self.session_activity_button.setToolTip(
+            "Review completed typed operations from this session and explicitly export a structured manifest"
+        )
+        self.session_activity_button.clicked.connect(self.show_session_activity)
+        sidebar_layout.addWidget(self.session_activity_button)
+        self.export_workspace_profile_button = QPushButton("Export Workspace…")
+        self.export_workspace_profile_button.setObjectName("exportWorkspaceProfileButton")
+        self.export_workspace_profile_button.setToolTip(
+            "Export reviewed control defaults without device identity, paths, credentials, coordinates, or output"
+        )
+        self.export_workspace_profile_button.clicked.connect(self.export_workspace_profile)
+        sidebar_layout.addWidget(self.export_workspace_profile_button)
+        self.import_workspace_profile_button = QPushButton("Import Workspace…")
+        self.import_workspace_profile_button.setObjectName("importWorkspaceProfileButton")
+        self.import_workspace_profile_button.setToolTip(
+            "Preview and apply a local workspace profile without running any command"
+        )
+        self.import_workspace_profile_button.clicked.connect(self.import_workspace_profile)
+        sidebar_layout.addWidget(self.import_workspace_profile_button)
         version_note = QLabel(f"Toolkit {APP_VERSION}\npymobiledevice3 11.15.1")
         version_note.setObjectName("sidebarVersion")
         version_note.setWordWrap(True)
@@ -701,6 +912,7 @@ class MainWindow(QMainWindow):
             ("Backup", self._build_backup_tab()),
             ("Sideload IPA", self._build_sideload_tab()),
             ("Evidence Capture", self._build_collection_tab()),
+            ("Ecosystem Tools", self._build_external_tools_page()),
             ("Man Pages", self._build_manpages_page()),
             ("Scope & Safety", self._build_safety_tab()),
         )
@@ -737,6 +949,22 @@ class MainWindow(QMainWindow):
         self.support_bundle_button.setAccessibleName("Create sanitized support bundle")
         self.support_bundle_button.setAccessibleDescription(
             "Create a local ZIP that excludes device content and sensitive artifacts. The application never uploads it."
+        )
+        self.session_activity_button.setAccessibleName("Session activity")
+        self.session_activity_button.setAccessibleDescription(
+            "Review completed typed operations and explicitly export a selected structured manifest."
+        )
+        self.export_workspace_profile_button.setAccessibleName("Export workspace profile")
+        self.export_workspace_profile_button.setAccessibleDescription(
+            "Preview and save non-sensitive workflow control defaults without running a command."
+        )
+        self.import_workspace_profile_button.setAccessibleName("Import workspace profile")
+        self.import_workspace_profile_button.setAccessibleDescription(
+            "Preview and apply validated workflow control defaults without running a command."
+        )
+        self.action_palette_button.setAccessibleName("Action palette")
+        self.action_palette_button.setAccessibleDescription(
+            "Search workspaces, guided commands, and actions eligible in the current app state. Shortcut: Command K."
         )
         self.connection_banner.setAccessibleName("Device connection status")
         self.connection_banner.setAccessibleDescription(
@@ -780,15 +1008,27 @@ class MainWindow(QMainWindow):
             "Offline mouse coordinate picker. For keyboard-first location entry, use the coordinate importer, latitude, and longitude fields."
         )
         self.location_map.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        for spec in external_tool_specs():
+            self._external_tool_fields[spec.identifier].setAccessibleName(f"{spec.title} executable path")
+            self._external_tool_fields[spec.identifier].setAccessibleDescription(
+                f"Absolute path to the separately installed {spec.executable_name} executable."
+            )
+            self._external_tool_outputs[spec.identifier].setAccessibleName(f"{spec.title} adapter output")
+            self._external_tool_outputs[spec.identifier].setAccessibleDescription(
+                "Session-local raw version validation or read-only probe output from the external tool."
+            )
         QWidget.setTabOrder(self.device_combo, self.demo_mode_button)
         QWidget.setTabOrder(self.demo_mode_button, self.refresh_devices_button)
         QWidget.setTabOrder(self.refresh_devices_button, self.reconnect_device_button)
         QWidget.setTabOrder(self.reconnect_device_button, self.keyboard_shortcuts_button)
         QWidget.setTabOrder(self.keyboard_shortcuts_button, self.support_bundle_button)
         QWidget.setTabOrder(self.support_bundle_button, self.navigation_list)
+        QWidget.setTabOrder(self.navigation_list, self.action_palette_button)
+        QWidget.setTabOrder(self.action_palette_button, self.session_activity_button)
 
     def _configure_keyboard_shortcuts(self) -> None:
         self._add_application_shortcut("Meta+R", self._scanner_scan, "shortcutRetryDeviceScan")
+        self._add_application_shortcut("Meta+K", self.show_action_palette, "shortcutShowActionPalette")
         self._add_application_shortcut("Meta+L", self.focus_workspace_navigation, "shortcutFocusWorkspaceNavigation")
         self._add_application_shortcut("Meta+F", self.focus_workspace_search, "shortcutFocusWorkspaceSearch")
         self._add_application_shortcut("Meta+/", self.show_keyboard_shortcuts, "shortcutShowKeyboardReference")
@@ -805,6 +1045,7 @@ class MainWindow(QMainWindow):
             ("Meta+8", "Backup"),
             ("Meta+9", "Sideload IPA"),
             ("Meta+0", "Evidence Capture"),
+            ("Meta+Shift+E", "Ecosystem Tools"),
             ("Meta+Shift+M", "Man Pages"),
             ("Meta+Shift+S", "Scope & Safety"),
         )
@@ -842,6 +1083,7 @@ class MainWindow(QMainWindow):
             "Backup": self.backup_destination_field,
             "Sideload IPA": self.ipa_path_field,
             "Evidence Capture": self.case_title_field,
+            "Ecosystem Tools": self._external_tool_fields["go-ios"],
             "Man Pages": self.manpage_search_field,
             "Scope & Safety": self.navigation_list,
         }
@@ -903,10 +1145,12 @@ class MainWindow(QMainWindow):
             "<table>"
             "<tr><th align='left'>Shortcut</th><th align='left'>Action</th></tr>"
             "<tr><td>⌘ R</td><td>Retry device scan</td></tr>"
+            "<tr><td>⌘ K</td><td>Open the eligible Action Palette</td></tr>"
             "<tr><td>⌘ L</td><td>Focus workspace navigation</td></tr>"
             "<tr><td>⌘ F</td><td>Focus search in Command Center, Man Pages, Installed Apps, or Location Lab</td></tr>"
             "<tr><td>⌘ ⌥ ← / ⌘ ⌥ →</td><td>Previous / next workspace</td></tr>"
             "<tr><td>⌘ 1–0</td><td>Home through Evidence Capture</td></tr>"
+            "<tr><td>⌘ ⇧ E</td><td>Ecosystem Tools</td></tr>"
             "<tr><td>⌘ ⇧ M</td><td>Man Pages</td></tr>"
             "<tr><td>⌘ ⇧ S</td><td>Scope &amp; Safety</td></tr>"
             "<tr><td>⌘ /</td><td>Open this reference</td></tr>"
@@ -924,6 +1168,591 @@ class MainWindow(QMainWindow):
         buttons.accepted.connect(dialog.accept)
         layout.addWidget(buttons)
         dialog.exec()
+
+    def show_action_palette(self) -> None:
+        dialog = ActionPaletteDialog(self._eligible_action_palette_entries(), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._execute_action_palette_entry(dialog.selected_identifier())
+
+    def _eligible_action_palette_entries(self) -> tuple[ActionPaletteEntry, ...]:
+        workspace_summaries = {
+            "Home": "Open the guided workflow overview.",
+            "Device & DDI": "Review the selected device, Developer Mode, DDI, and Apple tool handoffs.",
+            "Capability Matrix": "Inspect bounded connection and developer-service readiness evidence.",
+            "Location Lab": "Prepare explicit, clearable location simulation for app testing.",
+            "Live Logs": "Open independent raw-spooling log windows.",
+            "Command Center": "Choose a validated guided command or explicit advanced arguments.",
+            "Installed Apps": "Inspect the service-visible app inventory.",
+            "Backup": "Prepare MobileBackup2, external UFADE acquisition, or consented MVT analysis.",
+            "Sideload IPA": "Inspect a local IPA before an eligible installation attempt.",
+            "Evidence Capture": "Prepare a scoped case and bounded evidence collection.",
+            "Ecosystem Tools": "Validate optional go-ios, idb, and ipsw adapters and run bounded read-only probes.",
+            "Man Pages": "Browse version-matched command routes and live help.",
+            "Scope & Safety": "Review authorization, privacy, and interpretation boundaries.",
+        }
+        entries: list[ActionPaletteEntry] = [
+            action_palette_entry(
+                f"navigate:{workspace}",
+                f"Open {workspace}",
+                "Workspace",
+                workspace_summaries[workspace],
+                ("navigate", "workspace", workspace),
+            )
+            for workspace in self._page_indices
+        ]
+        entries.extend(
+            (
+                action_palette_entry(
+                    "utility:session-activity",
+                    "Open Session Activity",
+                    "Utility",
+                    "Review completed typed operations and explicitly export a selected JSON manifest.",
+                    ("history", "journal", "manifest", "operations"),
+                ),
+                action_palette_entry(
+                    "utility:keyboard-shortcuts",
+                    "Open Keyboard Shortcuts",
+                    "Utility",
+                    "Review keyboard-first navigation without running a device action.",
+                    ("accessibility", "keyboard", "hotkeys"),
+                ),
+                action_palette_entry(
+                    "utility:export-workspace-profile",
+                    "Export Workspace Profile",
+                    "Utility",
+                    "Preview and save non-sensitive workflow control defaults for local or team reuse.",
+                    ("team", "workspace", "profile", "configuration", "export"),
+                ),
+                action_palette_entry(
+                    "utility:import-workspace-profile",
+                    "Import Workspace Profile",
+                    "Utility",
+                    "Preview and apply validated workflow control defaults without running a command.",
+                    ("team", "workspace", "profile", "configuration", "import"),
+                ),
+            )
+        )
+        if self.refresh_devices_button.isEnabled() and not self._demo_mode:
+            entries.append(
+                action_palette_entry(
+                    "action:retry-device-scan",
+                    "Retry Device Scan",
+                    "Eligible read action",
+                    "Run one usbmux discovery refresh without restarting macOS services.",
+                    ("connect", "detect", "usbmux", "iphone", "ipad"),
+                )
+            )
+        eligible_actions = (
+            (
+                "action:developer-mode-status",
+                "Check Developer Mode",
+                "Query the selected device's current Developer Mode status.",
+                ("developer", "amfi", "ddi"),
+                self.selected_device() is not None and not self._action_controller.is_running(),
+            ),
+            (
+                "action:list-developer-images",
+                "List Developer Images",
+                "List mounted or installed developer support for the selected device.",
+                ("ddi", "mounter", "cryptex"),
+                self.selected_device() is not None and not self._action_controller.is_running(),
+            ),
+            (
+                "action:coredevice-details",
+                "Show CoreDevice Details",
+                "Run bounded Apple devicectl details for the selected device.",
+                ("xcode", "devicectl", "coredevice"),
+                self.coredevice_details_button.isEnabled(),
+            ),
+            (
+                "action:rvi-status",
+                "List RVI Interfaces",
+                "List current Apple Remote Virtual Interfaces without changing them.",
+                ("network", "pcap", "rvictl"),
+                self.rvi_status_button.isEnabled(),
+            ),
+            (
+                "action:capability-matrix",
+                "Run Device Readiness Check",
+                "Run the bounded read-only Capability Matrix for the selected device.",
+                ("readiness", "trust", "ddi", "rsd", "dvt"),
+                self.refresh_capabilities_button.isEnabled(),
+            ),
+            (
+                "action:refresh-installed-apps",
+                "Refresh Installed Apps",
+                "Load the service-visible application inventory for the selected device.",
+                ("apps", "inventory", "bundle"),
+                self.refresh_apps_button.isEnabled(),
+            ),
+            (
+                "action:backup-encryption-status",
+                "Check Backup Encryption",
+                "Read the selected device's MobileBackup2 encryption state.",
+                ("backup", "mobilebackup2", "encrypted"),
+                self.check_encryption_button.isEnabled(),
+            ),
+            (
+                "action:command-drift",
+                "Check Guided Command Drift",
+                "Verify every guided route against the installed CLI help without contacting a device.",
+                ("help", "syntax", "pymobiledevice3", "presets"),
+                self.command_drift_check_button.isEnabled(),
+            ),
+            (
+                "action:refresh-live-help",
+                "Refresh Selected Live Help",
+                "Load live help for the currently selected Man Pages route.",
+                ("manpage", "documentation", "syntax"),
+                self.refresh_manpage_button.isEnabled(),
+            ),
+            (
+                "action:export-compatibility-json",
+                "Export Sanitized Compatibility JSON",
+                "Export the latest locally observed real-device capability evidence without stable device identity.",
+                ("compatibility", "matrix", "json", "report", "sanitized"),
+                self._compatibility_export_is_available(),
+            ),
+            (
+                "action:export-compatibility-markdown",
+                "Export Sanitized Compatibility Markdown",
+                "Export a readable real-device capability report without stable device identity.",
+                ("compatibility", "matrix", "markdown", "report", "sanitized"),
+                self._compatibility_export_is_available(),
+            ),
+        )
+        entries.extend(
+            action_palette_entry(identifier, title, "Eligible read action", summary, keywords)
+            for identifier, title, summary, keywords, eligible in eligible_actions
+            if eligible
+        )
+        entries.extend(
+            action_palette_entry(
+                f"action:external-tool:{spec.identifier}",
+                spec.probe_title,
+                "Eligible external read action",
+                f"Run the validated {spec.title} adapter probe after reviewing its independent target boundary.",
+                ("external", "adapter", spec.identifier, "inventory", "provenance"),
+            )
+            for spec in external_tool_specs()
+            if self._external_tool_probe_buttons[spec.identifier].isEnabled()
+        )
+        if not self._console_controller.is_running():
+            device_available = self.selected_device() is not None
+            entries.extend(
+                action_palette_entry(
+                    f"preset:{preset.identifier}",
+                    f"Choose {preset.title}",
+                    "Guided command",
+                    f"Open this reviewed preset in Command Center without running it. {preset.summary}",
+                    (preset.category, *preset.argument_template, "preset", preset.risk),
+                )
+                for preset in self._presets
+                if not preset.requires_device or device_available
+            )
+        return validate_action_palette(tuple(entries))
+
+    def _execute_action_palette_entry(self, identifier: str) -> None:
+        if identifier.startswith("navigate:"):
+            self.navigate_to_page_and_focus(identifier.removeprefix("navigate:"))
+            return
+        if identifier.startswith("preset:"):
+            self._select_palette_preset(identifier.removeprefix("preset:"))
+            return
+        if identifier.startswith("action:external-tool:"):
+            current_identifiers = {entry.identifier for entry in self._eligible_action_palette_entries()}
+            if identifier not in current_identifiers:
+                QMessageBox.information(
+                    self,
+                    "Action No Longer Eligible",
+                    "The validated external tool or process state changed while the palette was open.",
+                )
+                return
+            tool_identifier = identifier.removeprefix("action:external-tool:")
+            matching = tuple(spec.identifier for spec in external_tool_specs() if spec.identifier == tool_identifier)
+            if len(matching) != 1:
+                raise KeyError(f"Unknown external-tool action palette entry: {identifier}")
+            self.run_external_tool_probe(matching[0])
+            return
+        actions: Mapping[str, Callable[[], None]] = {
+            "utility:session-activity": self.show_session_activity,
+            "utility:keyboard-shortcuts": self.show_keyboard_shortcuts,
+            "utility:export-workspace-profile": self.export_workspace_profile,
+            "utility:import-workspace-profile": self.import_workspace_profile,
+            "action:retry-device-scan": self._scanner_scan,
+            "action:developer-mode-status": self.check_developer_mode,
+            "action:list-developer-images": self.list_mounted_images,
+            "action:coredevice-details": self.show_coredevice_details,
+            "action:rvi-status": self.list_rvi_interfaces,
+            "action:capability-matrix": self.refresh_capability_matrix,
+            "action:refresh-installed-apps": self.refresh_app_inventory,
+            "action:backup-encryption-status": self.check_backup_encryption,
+            "action:command-drift": self.start_command_drift_check,
+            "action:refresh-live-help": self.refresh_selected_manpage,
+            "action:export-compatibility-json": self.export_compatibility_json,
+            "action:export-compatibility-markdown": self.export_compatibility_markdown,
+        }
+        action = actions.get(identifier)
+        if action is None:
+            raise KeyError(f"Unknown action palette entry: {identifier}")
+        current_identifiers = {entry.identifier for entry in self._eligible_action_palette_entries()}
+        if identifier not in current_identifiers:
+            QMessageBox.information(
+                self,
+                "Action No Longer Eligible",
+                "The device or operation state changed while the palette was open. Reopen the palette to refresh it.",
+            )
+            return
+        action()
+
+    def _select_palette_preset(self, identifier: str) -> None:
+        matching = tuple(preset for preset in self._presets if preset.identifier == identifier)
+        if len(matching) != 1:
+            raise CommandCatalogError(f"Expected one action-palette preset for {identifier!r}, found {len(matching)}")
+        preset = matching[0]
+        if self._console_controller.is_running() or (preset.requires_device and self.selected_device() is None):
+            QMessageBox.information(
+                self,
+                "Preset No Longer Eligible",
+                "The selected preset is no longer eligible in the current device or operation state.",
+            )
+            return
+        self.navigate_to_page("Command Center")
+        self.command_category_combo.setCurrentText("All categories")
+        self.command_search_field.clear()
+        for row in range(self.command_preset_list.count()):
+            item = self.command_preset_list.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == preset.identifier:
+                self.command_preset_list.setCurrentRow(row)
+                self.preset_run_button.setFocus(Qt.FocusReason.ShortcutFocusReason)
+                return
+        raise CommandCatalogError(f"Eligible action-palette preset is missing from Command Center: {identifier}")
+
+    def show_session_activity(self) -> None:
+        dialog = OperationHistoryDialog(self._operation_records, self)
+        dialog.exec()
+
+    def _request_workspace_profile_metadata(self) -> tuple[str, str] | None:
+        dialog = QDialog(self)
+        dialog.setObjectName("workspaceProfileMetadataDialog")
+        dialog.setWindowTitle("Describe Workspace Profile")
+        layout = QVBoxLayout(dialog)
+        explanation = QLabel(
+            "The profile contains reviewed control defaults only. Device identity, paths, credentials, coordinates, "
+            "case text, command parameters, and output are excluded by schema."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        form = QFormLayout()
+        name_field = QLineEdit("Team workflow")
+        name_field.setObjectName("workspaceProfileName")
+        form.addRow("Name", name_field)
+        description_field = QLineEdit()
+        description_field.setObjectName("workspaceProfileDescription")
+        description_field.setPlaceholderText("Purpose or expected use; do not enter sensitive data")
+        form.addRow("Description", description_field)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.setObjectName("workspaceProfileMetadataButtons")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        name_field.selectAll()
+        name_field.setFocus(Qt.FocusReason.OtherFocusReason)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return name_field.text(), description_field.text()
+
+    def _workspace_profile_from_controls(self, name: str, description: str) -> WorkspaceProfile:
+        current_item = self.navigation_list.currentItem()
+        if current_item is None:
+            raise WorkspaceProfileError("Cannot export a profile without a selected workspace")
+        preset = self._current_preset
+        if preset is None:
+            raise WorkspaceProfileError("Cannot export a profile without a selected guided command preset")
+        speed_preset = self.location_route_speed_preset.currentData()
+        if not isinstance(speed_preset, int):
+            raise WorkspaceProfileError("Cannot export a profile without a valid location speed preset")
+        return validate_workspace_profile(
+            WorkspaceProfile(
+                created_with_version=APP_VERSION,
+                name=name,
+                description=description,
+                default_workspace=current_item.text(),
+                ddi_source="local-xcode" if self.local_radio.isChecked() else "personalized",
+                command_category=self.command_category_combo.currentText(),
+                command_preset=preset.identifier,
+                app_workflow=AppWorkflowPreferences(
+                    self.calculate_app_sizes_checkbox.isChecked(),
+                    self.developer_package_checkbox.isChecked(),
+                ),
+                backup_workflow=BackupWorkflowPreferences(
+                    self.full_backup_checkbox.isChecked(),
+                    self.require_encryption_checkbox.isChecked(),
+                ),
+                evidence_workflow=EvidenceWorkflowPreferences(
+                    self.capture_duration.value(),
+                    self.include_syslog.isChecked(),
+                    self.include_oslog.isChecked(),
+                    self.include_pcap.isChecked(),
+                    self.include_screenshot.isChecked(),
+                    self.include_crash_pull.isChecked(),
+                ),
+                location_workflow=LocationWorkflowPreferences(
+                    self.location_timing_randomness.value(),
+                    self.location_disable_sleep.isChecked(),
+                    speed_preset,
+                    self.location_route_speed.value(),
+                    self.location_route_interval.value(),
+                    self.location_route_traversals.value(),
+                ),
+            )
+        )
+
+    def _review_workspace_profile(
+        self,
+        title: str,
+        explanation_text: str,
+        content: str,
+        accept_label: str,
+    ) -> bool:
+        dialog = QDialog(self)
+        dialog.setObjectName("workspaceProfilePreviewDialog")
+        dialog.setWindowTitle(title)
+        dialog.resize(820, 650)
+        layout = QVBoxLayout(dialog)
+        explanation = QLabel(explanation_text)
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        preview = QPlainTextEdit()
+        preview.setObjectName("workspaceProfilePreview")
+        preview.setReadOnly(True)
+        preview.setPlainText(content)
+        layout.addWidget(preview, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        buttons.setObjectName("workspaceProfilePreviewButtons")
+        buttons.addButton(accept_label, QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def export_workspace_profile(self) -> None:
+        metadata = self._request_workspace_profile_metadata()
+        if metadata is None:
+            return
+        try:
+            profile = self._workspace_profile_from_controls(*metadata)
+        except WorkspaceProfileError as error:
+            QMessageBox.critical(self, "Could Not Prepare Workspace Profile", str(error))
+            return
+        if not self._review_workspace_profile(
+            "Review Workspace Profile Export",
+            "Review the exact JSON before saving. The application never uploads the file.",
+            render_workspace_profile_json(profile),
+            "Save Profile",
+        ):
+            return
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+        suggested = Path.home() / f"iOSDeveloperToolkit-workspace-{timestamp}.json"
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Workspace Profile",
+            str(suggested),
+            "JSON (*.json)",
+        )
+        if not selected:
+            return
+        destination = Path(selected)
+        if destination.suffix.casefold() != ".json":
+            destination = destination.with_suffix(".json")
+        try:
+            path = write_workspace_profile(destination, profile)
+        except WorkspaceProfileError as error:
+            QMessageBox.critical(self, "Could Not Export Workspace Profile", str(error))
+            return
+        QMessageBox.information(
+            self,
+            "Workspace Profile Created",
+            f"Created owner-only local profile:\n{path}\n\nReview it before sharing.",
+        )
+
+    def _workspace_profile_import_is_available(self) -> bool:
+        finite_controllers = (
+            self._action_controller,
+            self._ipa_inspection_controller,
+            self._sideload_controller,
+            self._apps_controller,
+            self._external_tool_controller,
+            self._manpage_controller,
+            self._command_drift_controller,
+        )
+        stream_controllers = (
+            self._collection_controller,
+            self._backup_controller,
+            self._mvt_controller,
+            self._console_controller,
+        )
+        return (
+            self._capability_process is None
+            and self._location_process is None
+            and all(not controller.is_running() for controller in finite_controllers)
+            and all(not controller.is_running() for controller in stream_controllers)
+        )
+
+    def import_workspace_profile(self) -> None:
+        if not self._workspace_profile_import_is_available():
+            QMessageBox.information(
+                self,
+                "Workspace Profile Import Unavailable",
+                "Stop or wait for active operations before changing workflow controls.",
+            )
+            return
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Workspace Profile",
+            str(Path.home()),
+            "JSON (*.json)",
+        )
+        if not selected:
+            return
+        try:
+            profile = load_workspace_profile(Path(selected))
+        except WorkspaceProfileError as error:
+            QMessageBox.critical(self, "Invalid Workspace Profile", str(error))
+            return
+        if not self._review_workspace_profile(
+            "Review Workspace Profile Import",
+            "Review every control change. Applying this profile never runs a command or starts a device operation.",
+            render_workspace_profile_preview(profile),
+            "Apply Profile",
+        ):
+            return
+        try:
+            self._apply_workspace_profile(profile)
+        except WorkspaceProfileError as error:
+            QMessageBox.critical(self, "Could Not Apply Workspace Profile", str(error))
+            return
+        QMessageBox.information(
+            self,
+            "Workspace Profile Applied",
+            f"Applied {profile.name!r}. No command or device operation was started.",
+        )
+
+    def _apply_workspace_profile(self, profile: WorkspaceProfile) -> None:
+        validated = validate_workspace_profile(profile)
+        if not self._workspace_profile_import_is_available():
+            raise WorkspaceProfileError("An operation started while the workspace profile was being reviewed")
+        self.personalized_radio.setChecked(validated.ddi_source == "personalized")
+        self.local_radio.setChecked(validated.ddi_source == "local-xcode")
+        self.command_category_combo.setCurrentText(validated.command_category)
+        self.command_search_field.clear()
+        matching_rows = tuple(
+            row
+            for row in range(self.command_preset_list.count())
+            if self.command_preset_list.item(row).data(Qt.ItemDataRole.UserRole) == validated.command_preset
+        )
+        if len(matching_rows) != 1:
+            raise WorkspaceProfileError(
+                f"Validated preset is not visible in its configured category: {validated.command_preset!r}"
+            )
+        self.command_preset_list.setCurrentRow(matching_rows[0])
+        self.calculate_app_sizes_checkbox.setChecked(validated.app_workflow.calculate_app_sizes)
+        self.developer_package_checkbox.setChecked(validated.app_workflow.install_as_developer_package)
+        self.full_backup_checkbox.setChecked(validated.backup_workflow.force_full_backup)
+        self.require_encryption_checkbox.setChecked(validated.backup_workflow.require_encryption)
+        evidence = validated.evidence_workflow
+        self.capture_duration.setValue(evidence.capture_duration_seconds)
+        self.include_syslog.setChecked(evidence.include_syslog)
+        self.include_oslog.setChecked(evidence.include_oslog)
+        self.include_pcap.setChecked(evidence.include_pcap)
+        self.include_screenshot.setChecked(evidence.include_screenshot)
+        self.include_crash_pull.setChecked(evidence.include_crash_pull)
+        location = validated.location_workflow
+        self.location_timing_randomness.setValue(location.timing_randomness_ms)
+        self.location_disable_sleep.setChecked(location.ignore_timing_delays)
+        speed_index = self.location_route_speed_preset.findData(location.route_speed_preset_kmh)
+        if speed_index < 0:
+            raise WorkspaceProfileError(
+                f"Validated location speed preset is unavailable: {location.route_speed_preset_kmh}"
+            )
+        self.location_route_speed_preset.setCurrentIndex(speed_index)
+        self.location_route_speed.setValue(location.route_speed_kmh)
+        self.location_route_interval.setValue(location.route_interval_seconds)
+        self.location_route_traversals.setValue(location.route_traversals)
+        self.navigate_to_page(validated.default_workspace)
+
+    def _host_operation_context(
+        self,
+        title: str,
+        workspace: str,
+        transport: str,
+        output_paths: tuple[str, ...],
+    ) -> OperationContext:
+        return operation_context(
+            title,
+            workspace,
+            "Local Mac",
+            transport,
+            ("device:not-required",),
+            output_paths,
+        )
+
+    def _device_operation_context(
+        self,
+        title: str,
+        workspace: str,
+        transport: str,
+        device: IOSDevice,
+        output_paths: tuple[str, ...],
+    ) -> OperationContext:
+        identifier = "".join(character for character in device.identifier.upper() if character.isalnum())
+        suffix = identifier[-6:] if len(identifier) >= 6 else "unknown"
+        target = (
+            f"{device.product_type} • iOS {device.product_version} • {device.connection_type} • "
+            f"identifier ending {suffix}"
+        )
+        observed_capabilities = tuple(
+            f"{capability_identifier}:{result.state}"
+            for capability_identifier, result in sorted(self._capability_results.items())
+            if result.state != "not-tested"
+        )
+        capability_snapshot = observed_capabilities or ("capabilities:not-tested",)
+        return operation_context(
+            title,
+            workspace,
+            target,
+            transport,
+            ("device:selected", *capability_snapshot),
+            output_paths,
+        )
+
+    def _begin_operation(self, slot: str, context: OperationContext) -> None:
+        normalized_slot = slot.strip()
+        if not normalized_slot:
+            raise ValueError("Operation slot cannot be empty")
+        if normalized_slot in self._pending_operation_contexts:
+            raise RuntimeError(f"Operation slot is already active: {normalized_slot}")
+        self._pending_operation_contexts[normalized_slot] = context
+
+    def _update_operation_output_paths(self, slot: str, output_paths: tuple[str, ...]) -> None:
+        context = self._pending_operation_contexts.get(slot)
+        if context is None:
+            raise RuntimeError(f"Cannot update output paths for inactive operation slot: {slot}")
+        self._pending_operation_contexts[slot] = with_output_paths(context, output_paths)
+
+    def _complete_operation(self, slot: str, result: OperationResult) -> None:
+        context = self._pending_operation_contexts.pop(slot, None)
+        if context is None:
+            raise RuntimeError(f"Cannot complete inactive operation slot: {slot}")
+        record = operation_record(context, result)
+        self._operation_records = append_operation_record(
+            self._operation_records,
+            record,
+            MAX_SESSION_OPERATION_RECORDS,
+        )
+        self.session_activity_button.setText(f"Session Activity ({len(self._operation_records)})")
 
     def create_support_bundle(self) -> None:
         message = (
@@ -971,6 +1800,13 @@ class MainWindow(QMainWindow):
             SupportStatus("developer_mode", self.developer_mode_status.text()),
             SupportStatus("capability_matrix", self.capability_status.text()),
             SupportStatus("command_drift", self.command_drift_status.text()),
+            *(
+                SupportStatus(
+                    f"external_tool_{spec.identifier.replace('-', '_')}",
+                    self._external_tool_statuses[spec.identifier].text(),
+                )
+                for spec in external_tool_specs()
+            ),
         )
         redactions = tuple(
             value
@@ -1121,11 +1957,41 @@ class MainWindow(QMainWindow):
         ddi_layout.addLayout(button_layout)
         layout.addWidget(ddi_group)
 
+        xcode_group = QGroupBox("3. Apple developer-tool handoff")
+        xcode_layout = QVBoxLayout(xcode_group)
+        xcode_explanation = QLabel(
+            "Use Apple's installed tools for CoreDevice visibility, RVI status, projects, test results, and "
+            "Instruments traces. The toolkit shows exact command output but does not reinterpret proprietary "
+            "Xcode formats."
+        )
+        xcode_explanation.setWordWrap(True)
+        xcode_layout.addWidget(xcode_explanation)
+        xcode_buttons = QHBoxLayout()
+        self.coredevice_details_button = QPushButton("CoreDevice Details")
+        self.coredevice_details_button.setObjectName("coreDeviceDetailsButton")
+        self.coredevice_details_button.clicked.connect(self.show_coredevice_details)
+        xcode_buttons.addWidget(self.coredevice_details_button)
+        self.rvi_status_button = QPushButton("List RVI Interfaces")
+        self.rvi_status_button.setObjectName("listRVIInterfacesButton")
+        self.rvi_status_button.clicked.connect(self.list_rvi_interfaces)
+        xcode_buttons.addWidget(self.rvi_status_button)
+        self.open_xcode_project_button = QPushButton("Open Xcode Project…")
+        self.open_xcode_project_button.setObjectName("openXcodeProjectButton")
+        self.open_xcode_project_button.clicked.connect(self.open_xcode_project)
+        xcode_buttons.addWidget(self.open_xcode_project_button)
+        open_artifact_button = QPushButton("Open Result / Trace…")
+        open_artifact_button.setObjectName("openXcodeArtifactButton")
+        open_artifact_button.clicked.connect(self.open_xcode_artifact)
+        xcode_buttons.addWidget(open_artifact_button)
+        xcode_buttons.addStretch()
+        xcode_layout.addLayout(xcode_buttons)
+        layout.addWidget(xcode_group)
+
         self.action_output = QPlainTextEdit()
         self.action_output.setObjectName("ddiActionOutput")
         self.action_output.setReadOnly(True)
         self.action_output.setMaximumBlockCount(3000)
-        self.action_output.setPlaceholderText("DDI and Developer Mode command output appears here.")
+        self.action_output.setPlaceholderText("DDI, Developer Mode, CoreDevice, and RVI command output appears here.")
         layout.addWidget(self.action_output, 1)
         self._ddi_source_changed()
         return tab
@@ -1229,6 +2095,14 @@ class MainWindow(QMainWindow):
         copy_history_button.setObjectName("copyCompatibilityMatrixButton")
         copy_history_button.clicked.connect(self.copy_compatibility_matrix)
         compatibility_controls.addWidget(copy_history_button)
+        export_json_button = QPushButton("Export Sanitized JSON…")
+        export_json_button.setObjectName("exportCompatibilityJsonButton")
+        export_json_button.clicked.connect(self.export_compatibility_json)
+        compatibility_controls.addWidget(export_json_button)
+        export_markdown_button = QPushButton("Export Sanitized Markdown…")
+        export_markdown_button.setObjectName("exportCompatibilityMarkdownButton")
+        export_markdown_button.clicked.connect(self.export_compatibility_markdown)
+        compatibility_controls.addWidget(export_markdown_button)
         compatibility_controls.addStretch()
         compatibility_layout.addLayout(compatibility_controls)
         self.compatibility_history_status = QLabel()
@@ -1810,8 +2684,9 @@ class MainWindow(QMainWindow):
         heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
         layout.addWidget(heading)
         explanation = QLabel(
-            "Choose the built-in MobileBackup2 workflow or launch a separately installed UFADE forensic acquisition. "
-            "The providers use isolated runtimes and do not share passwords or dependencies."
+            "Create a MobileBackup2 backup, launch a separately installed UFADE acquisition, or hand a decrypted "
+            "backup to an independently installed MVT analysis. The providers use isolated runtimes and do not share "
+            "passwords or dependencies."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -1820,8 +2695,10 @@ class MainWindow(QMainWindow):
         provider_tabs.setObjectName("backupProviderTabs")
         provider_tabs.addTab(self._build_mobilebackup_page(), "MobileBackup2")
         provider_tabs.addTab(self._build_ufade_backup_page(), "UFADE External")
+        provider_tabs.addTab(self._build_mvt_analysis_page(), "MVT Analysis")
         provider_tabs.setTabToolTip(0, "Toolkit-managed full or incremental iTunes-style backup")
         provider_tabs.setTabToolTip(1, "Launch an independently installed UFADE acquisition environment")
+        provider_tabs.setTabToolTip(2, "Analyze a consented decrypted backup with an independently installed MVT CLI")
         layout.addWidget(provider_tabs, 1)
         return page
 
@@ -2059,6 +2936,192 @@ class MainWindow(QMainWindow):
         scroll.setWidget(page)
         return scroll
 
+    def _build_mvt_analysis_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+
+        overview = QLabel(
+            "MVT (Mobile Verification Toolkit) is an independent forensic research tool with its own license and "
+            "warning model. This guided handoff validates and runs a user-installed mvt-ios executable against a "
+            "decrypted backup; it does not bundle MVT, accept backup passwords, or declare a device clean."
+        )
+        overview.setObjectName("mvtProviderExplanation")
+        overview.setWordWrap(True)
+        layout.addWidget(overview)
+
+        guide_group = QGroupBox("Install, prepare, and interpret")
+        guide_layout = QVBoxLayout(guide_group)
+        guide_text = QLabel(
+            "1. Install MVT separately.  2. Validate its executable and version.  3. Select one authorized, decrypted "
+            "iTunes-style backup.  4. Choose a new isolated output path and optional STIX2 files.  5. Review consent, "
+            "network, and interpretation boundaries before starting."
+        )
+        guide_text.setObjectName("mvtQuickStart")
+        guide_text.setWordWrap(True)
+        guide_layout.addWidget(guide_text)
+        guide_controls = QHBoxLayout()
+        guide_button = QPushButton("Open Full Walkthrough")
+        guide_button.setObjectName("openMVTGuideButton")
+        guide_button.clicked.connect(self.show_mvt_guide)
+        guide_controls.addWidget(guide_button)
+        setup_button = QPushButton("Copy Setup Commands")
+        setup_button.setObjectName("copyMVTSetupButton")
+        setup_button.clicked.connect(self.copy_mvt_setup_commands)
+        guide_controls.addWidget(setup_button)
+        official_button = QPushButton("Open Official Guide")
+        official_button.setObjectName("openMVTOfficialGuideButton")
+        official_button.clicked.connect(self.open_mvt_official_guide)
+        guide_controls.addWidget(official_button)
+        repository_button = QPushButton("Open MVT Repository")
+        repository_button.setObjectName("openMVTRepositoryButton")
+        repository_button.clicked.connect(self.open_mvt_repository)
+        guide_controls.addWidget(repository_button)
+        guide_controls.addStretch()
+        guide_layout.addLayout(guide_controls)
+        layout.addWidget(guide_group)
+
+        setup_group = QGroupBox("External MVT executable")
+        setup_layout = QFormLayout(setup_group)
+        executable_row = QHBoxLayout()
+        discovered = discover_mvt_executables(Path.home(), os.environ.get("PATH", ""))
+        self.mvt_executable_field = QLineEdit(str(discovered[0]) if discovered else "")
+        self.mvt_executable_field.setObjectName("mvtExecutable")
+        self.mvt_executable_field.setPlaceholderText("Absolute path to an independently installed mvt-ios executable")
+        self.mvt_executable_field.textChanged.connect(self._invalidate_mvt_validation)
+        executable_row.addWidget(self.mvt_executable_field, 1)
+        self.choose_mvt_executable_button = QPushButton("Choose…")
+        self.choose_mvt_executable_button.setObjectName("chooseMVTExecutableButton")
+        self.choose_mvt_executable_button.clicked.connect(self.choose_mvt_executable)
+        executable_row.addWidget(self.choose_mvt_executable_button)
+        self.find_mvt_executable_button = QPushButton("Find Installed")
+        self.find_mvt_executable_button.setObjectName("findMVTExecutableButton")
+        self.find_mvt_executable_button.clicked.connect(self.find_mvt_executable)
+        executable_row.addWidget(self.find_mvt_executable_button)
+        setup_layout.addRow("mvt-ios", executable_row)
+        self.mvt_validation_status = QLabel("MVT installation has not been validated")
+        self.mvt_validation_status.setObjectName("mvtValidationStatus")
+        self.mvt_validation_status.setWordWrap(True)
+        setup_layout.addRow("Status", self.mvt_validation_status)
+        self.validate_mvt_button = QPushButton("Validate Installation")
+        self.validate_mvt_button.setObjectName("validateMVTButton")
+        self.validate_mvt_button.clicked.connect(self.validate_mvt_from_ui)
+        setup_layout.addRow(self.validate_mvt_button)
+        layout.addWidget(setup_group)
+
+        paths_group = QGroupBox("Analysis input and isolated output")
+        paths_layout = QFormLayout(paths_group)
+        backup_row = QHBoxLayout()
+        self.mvt_backup_field = QLineEdit()
+        self.mvt_backup_field.setObjectName("mvtBackupPath")
+        self.mvt_backup_field.setPlaceholderText("Decrypted backup folder containing Manifest.db and Info.plist")
+        self.mvt_backup_field.textChanged.connect(self._update_mvt_controls)
+        backup_row.addWidget(self.mvt_backup_field, 1)
+        self.choose_mvt_backup_button = QPushButton("Choose…")
+        self.choose_mvt_backup_button.setObjectName("chooseMVTBackupButton")
+        self.choose_mvt_backup_button.clicked.connect(self.choose_mvt_backup)
+        backup_row.addWidget(self.choose_mvt_backup_button)
+        paths_layout.addRow("Decrypted backup", backup_row)
+        output_row = QHBoxLayout()
+        default_output = (
+            Path.home()
+            / "Documents"
+            / "MVT Analyses"
+            / datetime.now(timezone.utc).strftime("mvt-analysis-%Y%m%d-%H%M%S")
+        )
+        self.mvt_output_field = QLineEdit(str(default_output))
+        self.mvt_output_field.setObjectName("mvtOutputPath")
+        self.mvt_output_field.setPlaceholderText("A new path that does not already exist")
+        self.mvt_output_field.textChanged.connect(self._update_mvt_controls)
+        output_row.addWidget(self.mvt_output_field, 1)
+        self.choose_mvt_output_button = QPushButton("Choose Parent…")
+        self.choose_mvt_output_button.setObjectName("chooseMVTOutputButton")
+        self.choose_mvt_output_button.clicked.connect(self.choose_mvt_output_parent)
+        output_row.addWidget(self.choose_mvt_output_button)
+        self.open_mvt_output_button = QPushButton("Open Results")
+        self.open_mvt_output_button.setObjectName("openMVTOutputButton")
+        self.open_mvt_output_button.clicked.connect(self.open_mvt_output_directory)
+        output_row.addWidget(self.open_mvt_output_button)
+        paths_layout.addRow("New result path", output_row)
+        layout.addWidget(paths_group)
+
+        indicator_group = QGroupBox("Optional indicators and processing")
+        indicator_layout = QFormLayout(indicator_group)
+        indicator_row = QHBoxLayout()
+        self.mvt_ioc_status = QLabel("No STIX2/JSON indicator files selected")
+        self.mvt_ioc_status.setObjectName("mvtIOCStatus")
+        self.mvt_ioc_status.setWordWrap(True)
+        indicator_row.addWidget(self.mvt_ioc_status, 1)
+        self.choose_mvt_iocs_button = QPushButton("Choose IOC Files…")
+        self.choose_mvt_iocs_button.setObjectName("chooseMVTIOCFilesButton")
+        self.choose_mvt_iocs_button.clicked.connect(self.choose_mvt_ioc_files)
+        indicator_row.addWidget(self.choose_mvt_iocs_button)
+        self.clear_mvt_iocs_button = QPushButton("Clear")
+        self.clear_mvt_iocs_button.setObjectName("clearMVTIOCFilesButton")
+        self.clear_mvt_iocs_button.clicked.connect(self.clear_mvt_ioc_files)
+        indicator_row.addWidget(self.clear_mvt_iocs_button)
+        indicator_layout.addRow("Indicators", indicator_row)
+        self.mvt_fast_checkbox = QCheckBox("Fast mode: skip time- or resource-intensive features")
+        self.mvt_fast_checkbox.setObjectName("mvtFastMode")
+        indicator_layout.addRow(self.mvt_fast_checkbox)
+        self.mvt_hashes_checkbox = QCheckBox("Ask MVT to hash processed input and result files (may be slow)")
+        self.mvt_hashes_checkbox.setObjectName("mvtHashFiles")
+        indicator_layout.addRow(self.mvt_hashes_checkbox)
+        self.mvt_network_checkbox = QCheckBox(
+            "Allow MVT network requests, including shortened-URL resolution during IOC checks"
+        )
+        self.mvt_network_checkbox.setObjectName("mvtAllowNetwork")
+        self.mvt_network_checkbox.setChecked(False)
+        indicator_layout.addRow(self.mvt_network_checkbox)
+        layout.addWidget(indicator_group)
+
+        consent_group = QGroupBox("Required consent and interpretation boundary")
+        consent_layout = QVBoxLayout(consent_group)
+        self.mvt_authorization_checkbox = QCheckBox(
+            "I own this backup or have explicit authorization and consent to analyze it with MVT."
+        )
+        self.mvt_authorization_checkbox.setObjectName("mvtAuthorizationAcknowledgement")
+        self.mvt_authorization_checkbox.toggled.connect(self._update_mvt_controls)
+        consent_layout.addWidget(self.mvt_authorization_checkbox)
+        self.mvt_interpretation_checkbox = QCheckBox(
+            "I understand that a successful run or no findings does not prove the device is clean, safe, or uncompromised."
+        )
+        self.mvt_interpretation_checkbox.setObjectName("mvtInterpretationAcknowledgement")
+        self.mvt_interpretation_checkbox.toggled.connect(self._update_mvt_controls)
+        consent_layout.addWidget(self.mvt_interpretation_checkbox)
+        layout.addWidget(consent_group)
+
+        controls = QHBoxLayout()
+        self.run_mvt_button = QPushButton("Run MVT Backup Analysis…")
+        self.run_mvt_button.setObjectName("runMVTAnalysisButton")
+        self.run_mvt_button.clicked.connect(self.run_mvt_analysis)
+        controls.addWidget(self.run_mvt_button)
+        self.stop_mvt_button = QPushButton("Stop")
+        self.stop_mvt_button.setObjectName("stopMVTAnalysisButton")
+        self.stop_mvt_button.clicked.connect(self.stop_mvt_analysis)
+        controls.addWidget(self.stop_mvt_button)
+        controls.addStretch()
+        layout.addLayout(controls)
+        self.mvt_status = QLabel(
+            "Validate MVT, select a decrypted backup and new output path, then acknowledge both boundaries."
+        )
+        self.mvt_status.setObjectName("mvtAnalysisStatus")
+        self.mvt_status.setWordWrap(True)
+        layout.addWidget(self.mvt_status)
+        self.mvt_output = QPlainTextEdit()
+        self.mvt_output.setObjectName("mvtAnalysisOutput")
+        self.mvt_output.setReadOnly(True)
+        self.mvt_output.setMaximumBlockCount(7000)
+        self.mvt_output.setMinimumHeight(180)
+        layout.addWidget(self.mvt_output, 1)
+        self._update_mvt_controls()
+        scroll = QScrollArea()
+        scroll.setObjectName("mvtAnalysisScrollArea")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(page)
+        return scroll
+
     def _build_command_center_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -2234,6 +3297,386 @@ class MainWindow(QMainWindow):
         self._update_command_controls()
         self._update_command_drift_controls()
         return page
+
+    def _build_external_tools_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+
+        heading = QLabel("Ecosystem Tools")
+        heading.setObjectName("pageTitle")
+        heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
+        layout.addWidget(heading)
+        explanation = QLabel(
+            "Connect optional third-party tools without bundling or silently trusting them. Each adapter records the "
+            "resolved executable, SHA-256, and version or build identity before enabling one bounded read-only probe."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        boundary = QLabel(
+            "These tools use their own discovery, pairing, tunnel, simulator, device, network, and support models. "
+            "Their output is not merged into toolkit capability claims. Choosing an executable authorizes third-party "
+            "code to run locally only after the displayed path and hash are confirmed."
+        )
+        boundary.setObjectName("externalToolsBoundary")
+        boundary.setWordWrap(True)
+        layout.addWidget(boundary)
+
+        self.external_tool_tabs = QTabWidget()
+        self.external_tool_tabs.setObjectName("externalToolTabs")
+        for spec in external_tool_specs():
+            self.external_tool_tabs.addTab(self._build_external_tool_tab(spec), spec.title)
+        layout.addWidget(self.external_tool_tabs, 1)
+        self._update_external_tool_controls()
+        return page
+
+    def _build_external_tool_tab(self, spec: ExternalToolSpec) -> QWidget:
+        suffix = EXTERNAL_TOOL_OBJECT_SUFFIXES[spec.identifier]
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(10)
+
+        scope = QLabel(
+            f"<b>{spec.title}</b> · {spec.license_name} · separately installed<br>{spec.scope}"
+        )
+        scope.setWordWrap(True)
+        layout.addWidget(scope)
+
+        path_layout = QHBoxLayout()
+        path_field = QLineEdit()
+        path_field.setObjectName(f"external{suffix}ExecutablePath")
+        path_field.setPlaceholderText(f"Absolute path to {spec.executable_name}")
+        path_field.textChanged.connect(self._external_tool_text_handler(spec.identifier))
+        path_layout.addWidget(path_field, 1)
+        choose_button = QPushButton("Choose…")
+        choose_button.setObjectName(f"external{suffix}ChooseButton")
+        choose_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.choose_external_tool))
+        path_layout.addWidget(choose_button)
+        find_button = QPushButton("Find Installed")
+        find_button.setObjectName(f"external{suffix}FindButton")
+        find_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.find_external_tool))
+        path_layout.addWidget(find_button)
+        layout.addLayout(path_layout)
+
+        status = QLabel("Not validated. The toolkit has not executed this optional tool.")
+        status.setObjectName(f"external{suffix}Status")
+        status.setWordWrap(True)
+        layout.addWidget(status)
+
+        actions = QHBoxLayout()
+        validate_button = QPushButton("Validate Version && SHA-256")
+        validate_button.setObjectName(f"external{suffix}ValidateButton")
+        validate_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.validate_external_tool))
+        actions.addWidget(validate_button)
+        probe_button = QPushButton(spec.probe_title)
+        probe_button.setObjectName(f"external{suffix}ProbeButton")
+        probe_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.run_external_tool_probe))
+        actions.addWidget(probe_button)
+        stop_button = QPushButton("Stop")
+        stop_button.setObjectName(f"external{suffix}StopButton")
+        stop_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.stop_external_tool))
+        actions.addWidget(stop_button)
+        actions.addStretch()
+        layout.addLayout(actions)
+
+        resources = QHBoxLayout()
+        setup_button = QPushButton("Copy Setup Command")
+        setup_button.setObjectName(f"external{suffix}SetupButton")
+        setup_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.copy_external_tool_setup))
+        resources.addWidget(setup_button)
+        documentation_button = QPushButton("Official Documentation")
+        documentation_button.setObjectName(f"external{suffix}DocumentationButton")
+        documentation_button.clicked.connect(
+            self._external_tool_button_handler(spec.identifier, self.open_external_tool_documentation)
+        )
+        resources.addWidget(documentation_button)
+        repository_button = QPushButton("Source Repository")
+        repository_button.setObjectName(f"external{suffix}RepositoryButton")
+        repository_button.clicked.connect(
+            self._external_tool_button_handler(spec.identifier, self.open_external_tool_repository)
+        )
+        resources.addWidget(repository_button)
+        resources.addStretch()
+        layout.addLayout(resources)
+
+        output = QPlainTextEdit()
+        output.setObjectName(f"external{suffix}Output")
+        output.setReadOnly(True)
+        output.setMaximumBlockCount(12000)
+        output.setPlaceholderText(
+            "Version validation and probe output appears here. It remains session-local unless you explicitly preserve it."
+        )
+        layout.addWidget(output, 1)
+
+        self._external_tool_fields[spec.identifier] = path_field
+        self._external_tool_statuses[spec.identifier] = status
+        self._external_tool_outputs[spec.identifier] = output
+        self._external_tool_validate_buttons[spec.identifier] = validate_button
+        self._external_tool_probe_buttons[spec.identifier] = probe_button
+        self._external_tool_stop_buttons[spec.identifier] = stop_button
+        self._external_tool_path_buttons[spec.identifier] = (choose_button, find_button)
+        return tab
+
+    def _external_tool_button_handler(
+        self,
+        identifier: ExternalToolIdentifier,
+        action: Callable[[ExternalToolIdentifier], None],
+    ) -> Callable[[bool], None]:
+        def handle(checked: bool) -> None:
+            del checked
+            action(identifier)
+
+        return handle
+
+    def _external_tool_text_handler(
+        self,
+        identifier: ExternalToolIdentifier,
+    ) -> Callable[[str], None]:
+        def handle(value: str) -> None:
+            self._invalidate_external_tool(identifier, value)
+
+        return handle
+
+    def _invalidate_external_tool(self, identifier: ExternalToolIdentifier, value: str) -> None:
+        del value
+        self._external_tool_installations.pop(identifier, None)
+        self._external_tool_statuses[identifier].setText(
+            "Not validated. The toolkit has not executed this optional tool."
+        )
+        self._update_external_tool_controls()
+
+    def external_tool_path(self, identifier: ExternalToolIdentifier) -> Path:
+        value = self._external_tool_fields[identifier].text().strip()
+        if not value:
+            spec = external_tool_spec(identifier)
+            raise ExternalToolValidationError(f"Choose an absolute path to {spec.executable_name}")
+        return Path(value)
+
+    def choose_external_tool(self, identifier: ExternalToolIdentifier) -> None:
+        spec = external_tool_spec(identifier)
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Choose separately installed {spec.executable_name}",
+            self._external_tool_fields[identifier].text() or str(Path.home()),
+        )
+        if selected:
+            self._external_tool_fields[identifier].setText(selected)
+
+    def find_external_tool(self, identifier: ExternalToolIdentifier) -> None:
+        spec = external_tool_spec(identifier)
+        candidates = discover_external_tool_executables(spec, Path.home(), os.environ.get("PATH", ""))
+        if not candidates:
+            QMessageBox.information(
+                self,
+                f"{spec.title} Not Found",
+                f"No executable named {spec.executable_name!r} was found in PATH, ~/.local/bin, "
+                "/opt/homebrew/bin, or /usr/local/bin. Use the official setup command or choose a reviewed path.",
+            )
+            return
+        self._external_tool_fields[identifier].setText(str(candidates[0]))
+        self._external_tool_statuses[identifier].setText(
+            f"Found {len(candidates)} candidate(s). Validate the selected executable before probing."
+        )
+
+    def copy_external_tool_setup(self, identifier: ExternalToolIdentifier) -> None:
+        spec = external_tool_spec(identifier)
+        QApplication.clipboard().setText("\n".join(spec.setup_commands))
+        self._external_tool_outputs[identifier].appendPlainText(
+            "Copied official setup command for manual review and execution in Terminal:\n"
+            + "\n".join(spec.setup_commands)
+        )
+
+    def open_external_tool_documentation(self, identifier: ExternalToolIdentifier) -> None:
+        spec = external_tool_spec(identifier)
+        if not QDesktopServices.openUrl(QUrl(spec.documentation_url)):
+            QMessageBox.critical(
+                self,
+                "Could Not Open Documentation",
+                f"macOS could not open the official {spec.title} documentation:\n{spec.documentation_url}",
+            )
+
+    def open_external_tool_repository(self, identifier: ExternalToolIdentifier) -> None:
+        spec = external_tool_spec(identifier)
+        if not QDesktopServices.openUrl(QUrl(spec.repository_url)):
+            QMessageBox.critical(
+                self,
+                "Could Not Open Repository",
+                f"macOS could not open the official {spec.title} repository:\n{spec.repository_url}",
+            )
+
+    def validate_external_tool(self, identifier: ExternalToolIdentifier) -> None:
+        if self._external_tool_controller.is_running():
+            QMessageBox.warning(self, "External Tool Running", "Stop or wait for the active external tool first.")
+            return
+        spec = external_tool_spec(identifier)
+        try:
+            executable = inspect_external_tool_executable(spec, self.external_tool_path(identifier))
+        except (ExternalToolValidationError, OSError) as error:
+            QMessageBox.critical(self, f"Invalid {spec.title} Executable", str(error))
+            self._external_tool_statuses[identifier].setText(f"Validation rejected: {error}")
+            return
+        warning = (
+            f"Run this separately installed {spec.title} executable to read its version or build identity?\n\n"
+            f"Path: {executable.path}\n"
+            f"SHA-256: {executable.sha256}\n"
+            f"Arguments: {shlex.join(spec.version_arguments)}\n\n"
+            "This executes third-party code on the Mac. The toolkit does not install, update, sandbox, endorse, or "
+            "redistribute it. Confirm only if you recognize and trust the exact path and hash."
+        )
+        if not self._confirm(f"Validate {spec.title}", warning):
+            return
+        try:
+            self._start_external_tool_process(identifier, "validate", executable, spec.version_arguments)
+        except (ExternalToolValidationError, OSError) as error:
+            QMessageBox.critical(self, f"Could Not Start {spec.title}", str(error))
+            self._external_tool_statuses[identifier].setText(f"Validation did not start: {error}")
+
+    def run_external_tool_probe(self, identifier: ExternalToolIdentifier) -> None:
+        if self._external_tool_controller.is_running():
+            QMessageBox.warning(self, "External Tool Running", "Stop or wait for the active external tool first.")
+            return
+        spec = external_tool_spec(identifier)
+        installation = self._external_tool_installations.get(identifier)
+        if installation is None:
+            QMessageBox.critical(self, f"{spec.title} Not Validated", "Validate the selected executable first.")
+            return
+        try:
+            validated = validate_external_tool_installation(spec, installation)
+        except (ExternalToolValidationError, OSError) as error:
+            self._external_tool_installations.pop(identifier, None)
+            self._external_tool_statuses[identifier].setText(f"Probe rejected: {error}")
+            self._update_external_tool_controls()
+            QMessageBox.critical(self, f"Could Not Run {spec.title}", str(error))
+            return
+        warning = (
+            f"Run the bounded read-only {spec.title} probe?\n\n"
+            f"Identity: {validated.version_or_build}\n"
+            f"Path: {validated.executable.path}\n"
+            f"SHA-256: {validated.executable.sha256}\n"
+            f"Arguments: {shlex.join(spec.probe_arguments)}\n\n"
+            f"{spec.scope}\n\n"
+            "The external tool chooses its own visible targets and does not use the toolkit's selected-device state. "
+            "Its output may contain device or simulator identifiers and remains session-local unless you preserve it."
+        )
+        if not self._confirm(f"Run {spec.probe_title}", warning):
+            return
+        try:
+            self._start_external_tool_process(identifier, "probe", validated.executable, spec.probe_arguments)
+        except (ExternalToolValidationError, OSError) as error:
+            QMessageBox.critical(self, f"Could Not Start {spec.title}", str(error))
+            self._external_tool_statuses[identifier].setText(f"Probe did not start: {error}")
+
+    def _start_external_tool_process(
+        self,
+        identifier: ExternalToolIdentifier,
+        operation: Literal["validate", "probe"],
+        executable: ExternalToolExecutable,
+        arguments: tuple[str, ...],
+    ) -> None:
+        if self._external_tool_controller.is_running():
+            raise RuntimeError("Cannot start an external tool while another adapter process is running")
+        spec = external_tool_spec(identifier)
+        current = inspect_external_tool_executable(spec, executable.path)
+        if current.sha256 != executable.sha256:
+            raise ExternalToolValidationError(
+                f"{spec.title} executable changed after review; inspect and validate it again"
+            )
+        self._external_tool_active_identifier = identifier
+        self._external_tool_operation = operation
+        self._external_tool_pending_executable = executable if operation == "validate" else None
+        output = self._external_tool_outputs[identifier]
+        output.clear()
+        output.appendPlainText(
+            f"$ {executable.path} {shlex.join(arguments)}\n"
+            f"Executable SHA-256: {executable.sha256}\n"
+            "Inherited tool-routing and secret environment variables are removed for this adapter.\n"
+        )
+        title = f"Validate {spec.title}" if operation == "validate" else spec.probe_title
+        self._begin_operation(
+            "external-tool",
+            self._host_operation_context(title, "Ecosystem Tools", f"external {spec.title} CLI", ()),
+        )
+        self._external_tool_statuses[identifier].setText(f"{title} is running with a 30-second deadline…")
+        request = finite_process_request(
+            external_tool_command(spec, executable),
+            arguments,
+            external_tool_environment(base_environment(), spec),
+            EXTERNAL_TOOL_TIMEOUT_MS,
+            PROCESS_TERMINATE_GRACE_MS,
+        )
+        self._external_tool_controller.start(request)
+        self._update_external_tool_controls()
+
+    def _external_tool_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Unexpected external-tool result type: {type(result_object).__name__}")
+        identifier = self._external_tool_active_identifier
+        operation = self._external_tool_operation
+        if identifier is None or operation is None:
+            raise RuntimeError("External tool completed without active adapter state")
+        spec = external_tool_spec(identifier)
+        output = self._external_tool_outputs[identifier]
+        combined = (result_object.stdout + result_object.stderr).decode("utf-8", errors="replace")
+        if combined:
+            output.appendPlainText(combined.rstrip())
+        if result_object.error_message:
+            output.appendPlainText(f"Process error: {result_object.error_message}")
+        output.appendPlainText(
+            f"Outcome: {result_object.outcome}; exit: "
+            f"{'unavailable' if result_object.exit_code is None else result_object.exit_code}"
+        )
+        self._complete_operation("external-tool", result_object)
+        if result_object.outcome == "succeeded" and operation == "validate":
+            pending = self._external_tool_pending_executable
+            if pending is None:
+                raise RuntimeError("External tool validation completed without a pending executable")
+            try:
+                identity = parse_external_tool_version(spec, combined)
+            except ExternalToolValidationError as error:
+                self._external_tool_installations.pop(identifier, None)
+                self._external_tool_statuses[identifier].setText(f"Version validation failed: {error}")
+            else:
+                self._external_tool_installations[identifier] = ExternalToolInstallation(pending, identity)
+                self._external_tool_statuses[identifier].setText(
+                    f"Validated {spec.title} {identity}; SHA-256 {pending.sha256}. Read-only probe is enabled."
+                )
+        elif result_object.outcome == "succeeded" and operation == "probe":
+            self._external_tool_statuses[identifier].setText(
+                f"{spec.probe_title} completed. Review the raw third-party output; it is not a toolkit capability verdict."
+            )
+        else:
+            self._external_tool_statuses[identifier].setText(
+                f"{spec.title} {operation} {result_object.outcome}; review the complete output."
+            )
+            if operation == "validate":
+                self._external_tool_installations.pop(identifier, None)
+        self._external_tool_active_identifier = None
+        self._external_tool_operation = None
+        self._external_tool_pending_executable = None
+        self._update_external_tool_controls()
+
+    def stop_external_tool(self, identifier: ExternalToolIdentifier) -> None:
+        if self._external_tool_active_identifier != identifier or not self._external_tool_controller.is_running():
+            return
+        spec = external_tool_spec(identifier)
+        self._external_tool_statuses[identifier].setText(f"Stopping {spec.title}…")
+        self._external_tool_controller.cancel()
+
+    def _update_external_tool_controls(self) -> None:
+        running = self._external_tool_controller.is_running()
+        active = self._external_tool_active_identifier
+        for spec in external_tool_specs():
+            identifier = spec.identifier
+            has_path = bool(self._external_tool_fields[identifier].text().strip())
+            self._external_tool_fields[identifier].setEnabled(not running)
+            choose_button, find_button = self._external_tool_path_buttons[identifier]
+            choose_button.setEnabled(not running)
+            find_button.setEnabled(not running)
+            self._external_tool_validate_buttons[identifier].setEnabled(not running and has_path)
+            self._external_tool_probe_buttons[identifier].setEnabled(
+                not running and identifier in self._external_tool_installations
+            )
+            self._external_tool_stop_buttons[identifier].setEnabled(running and active == identifier)
 
     def _build_manpages_page(self) -> QWidget:
         page = QWidget()
@@ -2509,7 +3952,7 @@ class MainWindow(QMainWindow):
     def _update_device_fields(self, device: IOSDevice | None) -> None:
         identifier = device.identifier if device is not None else None
         if identifier != self._active_device_identifier:
-            if self._active_case_path is not None:
+            if self._active_case_path is not None and not self._collection_controller.is_running():
                 previous_case_path = self._active_case_path
                 self._active_case_path = None
                 self.case_status.setText(
@@ -2529,10 +3972,18 @@ class MainWindow(QMainWindow):
                 else "Connect a trusted device, then refresh the inventory."
             )
         enabled = device is not None and not self._demo_mode
-        self.mount_button.setEnabled(enabled)
-        self.remove_button.setEnabled(enabled)
-        self.start_collection_button.setEnabled(enabled and self._collection_process is None)
-        self.create_case_button.setEnabled(enabled and self._collection_process is None and self._active_case_path is None)
+        action_available = enabled and not self._action_controller.is_running()
+        self.mount_button.setEnabled(action_available)
+        self.remove_button.setEnabled(action_available)
+        self.coredevice_details_button.setEnabled(action_available)
+        self.rvi_status_button.setEnabled(not self._demo_mode and not self._action_controller.is_running())
+        self.open_xcode_project_button.setEnabled(
+            not self._demo_mode and not self._action_controller.is_running()
+        )
+        self.start_collection_button.setEnabled(enabled and not self._collection_controller.is_running())
+        self.create_case_button.setEnabled(
+            enabled and not self._collection_controller.is_running() and self._active_case_path is None
+        )
         self.case_readiness_button.setEnabled(enabled and self._capability_process is None)
         self._update_live_log_controls()
         self._update_apps_controls()
@@ -2720,6 +4171,119 @@ class MainWindow(QMainWindow):
             lines.append("")
         QApplication.clipboard().setText("\n".join(lines).rstrip() + "\n")
         self.compatibility_history_status.setText("Copied local real-device compatibility observations to the clipboard.")
+
+    def _compatibility_export_is_available(self) -> bool:
+        return self._compatibility_history_error is None and bool(
+            latest_observations(self._compatibility_observations)
+        )
+
+    def _compatibility_report(self) -> CompatibilityReport:
+        return create_compatibility_report(
+            datetime.now(timezone.utc).isoformat(),
+            current_report_environment(APP_VERSION, is_frozen_runtime()),
+            self._compatibility_observations,
+        )
+
+    def _review_compatibility_export(self, title: str, content: str) -> bool:
+        dialog = QDialog(self)
+        dialog.setObjectName("compatibilityExportPreviewDialog")
+        dialog.setWindowTitle(title)
+        dialog.resize(900, 650)
+        layout = QVBoxLayout(dialog)
+        explanation = QLabel(
+            "Review the exact sanitized content before saving. Device names, raw identifiers, stored fingerprints, "
+            "and local paths are excluded or redacted. Device model, iOS version/build, connection type, "
+            "host/toolchain versions, and sanitized capability evidence remain. The app never uploads this report."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        preview = QPlainTextEdit()
+        preview.setObjectName("compatibilityExportPreview")
+        preview.setReadOnly(True)
+        preview.setPlainText(content)
+        layout.addWidget(preview, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.setObjectName("compatibilityExportPreviewButtons")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def export_compatibility_json(self) -> None:
+        if not self._compatibility_export_is_available():
+            QMessageBox.information(
+                self,
+                "No Real-Device Observations",
+                "Complete a Capability Matrix run against a connected device before exporting compatibility evidence.",
+            )
+            return
+        try:
+            report = self._compatibility_report()
+        except DeviceCompatibilityError as error:
+            QMessageBox.critical(self, "Could Not Prepare Compatibility Report", str(error))
+            return
+        if not self._review_compatibility_export(
+            "Review Sanitized Compatibility JSON",
+            render_compatibility_json(report),
+        ):
+            return
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+        suggested = Path.home() / f"iOSDeveloperToolkit-compatibility-{timestamp}.json"
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Sanitized Compatibility JSON",
+            str(suggested),
+            "JSON (*.json)",
+        )
+        if not selected:
+            return
+        destination = Path(selected)
+        if destination.suffix.casefold() != ".json":
+            destination = destination.with_suffix(".json")
+        try:
+            path = write_compatibility_json_report(destination, report)
+        except DeviceCompatibilityError as error:
+            QMessageBox.critical(self, "Could Not Export Compatibility Report", str(error))
+            return
+        self.compatibility_history_status.setText(f"Created sanitized compatibility JSON: {path}")
+
+    def export_compatibility_markdown(self) -> None:
+        if not self._compatibility_export_is_available():
+            QMessageBox.information(
+                self,
+                "No Real-Device Observations",
+                "Complete a Capability Matrix run against a connected device before exporting compatibility evidence.",
+            )
+            return
+        try:
+            report = self._compatibility_report()
+        except DeviceCompatibilityError as error:
+            QMessageBox.critical(self, "Could Not Prepare Compatibility Report", str(error))
+            return
+        if not self._review_compatibility_export(
+            "Review Sanitized Compatibility Markdown",
+            render_compatibility_markdown(report),
+        ):
+            return
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+        suggested = Path.home() / f"iOSDeveloperToolkit-compatibility-{timestamp}.md"
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Sanitized Compatibility Markdown",
+            str(suggested),
+            "Markdown (*.md)",
+        )
+        if not selected:
+            return
+        destination = Path(selected)
+        if destination.suffix.casefold() != ".md":
+            destination = destination.with_suffix(".md")
+        try:
+            path = write_compatibility_markdown_report(destination, report)
+        except DeviceCompatibilityError as error:
+            QMessageBox.critical(self, "Could Not Export Compatibility Report", str(error))
+            return
+        self.compatibility_history_status.setText(f"Created sanitized compatibility Markdown: {path}")
 
     def _capability_selection_changed(self) -> None:
         selected_rows = self.capability_table.selectionModel().selectedRows()
@@ -3026,6 +4590,14 @@ class MainWindow(QMainWindow):
             ("--candidate", str(XCODE_CANDIDATE_DDI), "--udid", device.identifier),
             base_environment(),
             "mount-local-cryptex",
+            DDI_ACTION_TIMEOUT_MS,
+            self._device_operation_context(
+                "Install Local Xcode DDI",
+                "Device & DDI",
+                "local DDI worker, Apple TSS, and CoreDevice Cryptex service",
+                device,
+                (),
+            ),
         )
 
     def remove_selected_ddi(self) -> None:
@@ -3057,12 +4629,115 @@ class MainWindow(QMainWindow):
         arguments = ("mounter", "list") if self.personalized_radio.isChecked() else ("cryptex", "list")
         self._run_pmd3_action(arguments, "list-images")
 
+    def show_coredevice_details(self) -> None:
+        device = self.selected_device()
+        if device is None:
+            self._show_no_device()
+            return
+        try:
+            command, arguments = coredevice_details_handoff(device.identifier)
+        except XcodeHandoffError as error:
+            QMessageBox.critical(self, "CoreDevice Tool Unavailable", str(error))
+            return
+        self._start_action(
+            command,
+            arguments,
+            base_environment(),
+            "coredevice-details",
+            XCODE_HANDOFF_TIMEOUT_MS,
+            self._device_operation_context(
+                "CoreDevice Details",
+                "Device & DDI",
+                "Apple devicectl",
+                device,
+                (),
+            ),
+        )
+
+    def list_rvi_interfaces(self) -> None:
+        try:
+            command, arguments = rvi_list_handoff()
+        except XcodeHandoffError as error:
+            QMessageBox.critical(self, "RVI Tool Unavailable", str(error))
+            return
+        self._start_action(
+            command,
+            arguments,
+            base_environment(),
+            "rvi-status",
+            XCODE_HANDOFF_TIMEOUT_MS,
+            self._host_operation_context("List RVI Interfaces", "Device & DDI", "Apple rvictl", ()),
+        )
+
+    def open_xcode_project(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Xcode project, workspace, or Swift package",
+            str(Path.home()),
+            "Xcode projects (*.xcodeproj *.xcworkspace);;Swift package (Package.swift)",
+        )
+        if not selected:
+            return
+        try:
+            command, arguments = xcode_project_handoff(Path(selected))
+        except XcodeHandoffError as error:
+            QMessageBox.critical(self, "Invalid Xcode Project", str(error))
+            return
+        self._start_action(
+            command,
+            arguments,
+            base_environment(),
+            "open-xcode-project",
+            XCODE_HANDOFF_TIMEOUT_MS,
+            self._host_operation_context("Open Xcode Project", "Device & DDI", "Apple xed", ()),
+        )
+
+    def open_xcode_artifact(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Xcode result or Instruments trace",
+            str(Path.home()),
+            "Xcode and Instruments artifacts (*.xcresult *.trace)",
+        )
+        if not selected:
+            return
+        try:
+            target = validated_xcode_artifact(Path(selected))
+        except XcodeHandoffError as error:
+            QMessageBox.critical(self, "Invalid Xcode Artifact", str(error))
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
+            QMessageBox.critical(self, "Could Not Open Artifact", f"macOS could not open the selected target:\n{target}")
+
     def _run_pmd3_action(self, arguments: tuple[str, ...], context: str) -> None:
         device = self.selected_device()
         if device is None:
             self._show_no_device()
             return
-        self._start_action(self._pmd3, arguments, device_environment(device.identifier), context)
+        titles = {
+            "developer-mode-status": "Check Developer Mode",
+            "mount-personalized": "Mount Personalized DDI",
+            "unmount-personalized": "Unmount Personalized DDI",
+            "uninstall-local-cryptex": "Uninstall Local DDI Cryptex",
+            "list-images": "List Developer Images",
+        }
+        title = titles.get(context)
+        if title is None:
+            raise KeyError(f"Unknown Device & DDI operation context: {context}")
+        self._start_action(
+            self._pmd3,
+            arguments,
+            device_environment(device.identifier),
+            context,
+            DDI_ACTION_TIMEOUT_MS,
+            self._device_operation_context(
+                title,
+                "Device & DDI",
+                "pymobiledevice3 selected-device transport",
+                device,
+                (),
+            ),
+        )
 
     def _start_action(
         self,
@@ -3070,55 +4745,63 @@ class MainWindow(QMainWindow):
         arguments: tuple[str, ...],
         environment: Mapping[str, str],
         context: str,
+        timeout_milliseconds: int,
+        history_context: OperationContext,
     ) -> None:
-        if self._action_process is not None and self._action_process.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.warning(self, "Action Running", "Wait for the current DDI action to finish.")
+        if self._action_controller.is_running():
+            QMessageBox.warning(self, "Action Running", "Wait for the current Device & DDI action to finish.")
             return
         self.action_output.appendPlainText(f"$ {command_text(program, arguments)}")
-        self._action_buffer.clear()
-        process = QProcess(self)
-        process.setProgram(str(program.program))
-        process.setArguments(list(command_arguments(program, arguments)))
-        process.setProcessEnvironment(qprocess_environment(environment))
-        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        process.readyReadStandardOutput.connect(self._read_action_output)
-        process.finished.connect(self._action_finished)
-        process.errorOccurred.connect(self._action_error)
-        self._action_process = process
         self._action_context = context
+        self._begin_operation("device-and-ddi", history_context)
         self.mount_button.setEnabled(False)
         self.remove_button.setEnabled(False)
-        process.start()
+        self.coredevice_details_button.setEnabled(False)
+        self.rvi_status_button.setEnabled(False)
+        self.open_xcode_project_button.setEnabled(False)
+        self._action_controller.start(
+            finite_process_request(
+                program,
+                arguments,
+                environment,
+                timeout_milliseconds,
+                PROCESS_TERMINATE_GRACE_MS,
+            )
+        )
 
-    def _read_action_output(self) -> None:
-        if self._action_process is not None:
-            text = bytes(self._action_process.readAllStandardOutput()).decode("utf-8", errors="replace")
-            self._action_buffer.extend(text.encode("utf-8"))
-            self.action_output.moveCursor(QTextCursor.MoveOperation.End)
-            self.action_output.insertPlainText(text)
+    def _append_action_output(self, output: bytes) -> None:
+        self.action_output.moveCursor(QTextCursor.MoveOperation.End)
+        self.action_output.insertPlainText(output.decode("utf-8", errors="replace"))
 
-    def _action_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
+    def _action_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("device-and-ddi", result_object)
         context = self._action_context
-        self.action_output.appendPlainText(f"\n[finished: exit {exit_code}]\n")
-        semantic_failure = output_indicates_failure(bytes(self._action_buffer))
+        combined_output = result_object.stdout + result_object.stderr
+        semantic_failure = output_indicates_failure(combined_output)
+        succeeded = result_object.outcome == "succeeded" and not semantic_failure
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        self.action_output.appendPlainText(
+            f"\n[finished: {result_object.outcome}; exit {exit_label}]\n"
+        )
+        if result_object.error_message:
+            self.action_output.appendPlainText(f"Process error: {result_object.error_message}")
+        if result_object.outcome == "timed-out":
+            self.action_output.appendPlainText(
+                "The action exceeded its safety limit and was stopped."
+            )
         if context == "developer-mode-status":
-            recent_text = self.action_output.toPlainText().lower()
-            if exit_code == 0 and not semantic_failure and "true" in recent_text.split("$ ")[-1]:
+            if succeeded and b"true" in combined_output.lower():
                 self.developer_mode_status.setText("Developer Mode is enabled")
-            elif exit_code == 0 and not semantic_failure:
+            elif succeeded:
                 self.developer_mode_status.setText("Developer Mode appears disabled — follow the on-device steps")
             else:
                 self.developer_mode_status.setText("Could not query Developer Mode; see command output")
-        elif exit_code == 0 and not semantic_failure and context.startswith("mount"):
+        elif succeeded and context.startswith("mount"):
             self.developer_mode_status.setText("Developer image operation completed successfully")
-        self._action_process = None
+        self._action_context = ""
         self._update_device_fields(self.selected_device())
-
-    def _action_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._action_process is not None:
-            self.action_output.appendPlainText(f"\nProcess error: {self._action_process.errorString()}")
 
     def _apply_location_coordinates(self, coordinates: Coordinates) -> None:
         self.location_latitude_field.setText(format(coordinates.latitude, ".12g"))
@@ -3795,7 +5478,7 @@ class MainWindow(QMainWindow):
         if device is None:
             self._show_no_device()
             return
-        if self._collection_process is not None:
+        if self._collection_controller.is_running():
             QMessageBox.warning(self, "Collection Running", "Wait for the active collection to finish before creating another case.")
             return
         if self._active_case_path is not None:
@@ -3838,7 +5521,7 @@ class MainWindow(QMainWindow):
         if device is None:
             self._show_no_device()
             return
-        if self._collection_process is not None:
+        if self._collection_controller.is_running():
             QMessageBox.warning(self, "Collection Running", "A collection is already running.")
             return
         selected_streams = self.include_syslog.isChecked() or self.include_oslog.isChecked() or self.include_pcap.isChecked()
@@ -3849,7 +5532,12 @@ class MainWindow(QMainWindow):
             "The case will contain identifiers and potentially sensitive device data. "
             "PCAP does not decrypt TLS, but unencrypted payloads may be recorded."
         )
-        if not self._confirm("Start Evidence Collection", warning):
+        if not self._confirm_action(
+            "Start Evidence Collection",
+            warning,
+            guided_action_safety("host-write"),
+            device.identifier,
+        ):
             return
         arguments = ["--udid", device.identifier]
         if self._active_case_path is None:
@@ -3867,57 +5555,88 @@ class MainWindow(QMainWindow):
             if enabled:
                 arguments.append(flag)
         worker = worker_command("collector")
-        process = QProcess(self)
-        process.setProgram(str(worker.program))
-        process.setArguments(list(command_arguments(worker, arguments)))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        process.readyReadStandardOutput.connect(self._read_collection_output)
-        process.finished.connect(self._collection_finished)
-        process.errorOccurred.connect(self._collection_error)
-        self._collection_process = process
         self.collection_output.clear()
+        self._record_action_approval(
+            self.collection_output,
+            "Start Evidence Collection",
+            guided_action_safety("host-write"),
+        )
+        self._collection_case_finished = False
         self.start_collection_button.setEnabled(False)
         self.stop_collection_button.setEnabled(True)
-        process.start()
+        initial_output_paths = () if self._active_case_path is None else (str(self._active_case_path),)
+        self._begin_operation(
+            "evidence-collection",
+            self._device_operation_context(
+                "Collect and Finalize Evidence",
+                "Evidence Capture",
+                "typed evidence collector worker",
+                device,
+                initial_output_paths,
+            ),
+        )
+        self._collection_controller.start(
+            worker,
+            arguments,
+            base_environment(),
+            COLLECTION_FINALIZATION_TIMEOUT_MS,
+        )
 
-    def _read_collection_output(self) -> None:
-        if self._collection_process is None:
-            return
-        text = bytes(self._collection_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+    def _append_collection_output(self, output: bytes) -> None:
         self.collection_output.moveCursor(QTextCursor.MoveOperation.End)
-        self.collection_output.insertPlainText(text)
-        for line in text.splitlines():
-            try:
-                record: object = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(record, dict) and record.get("event") == "case-created" and isinstance(record.get("path"), str):
-                self._last_case_path = Path(record["path"])
+        self.collection_output.insertPlainText(output.decode("utf-8", errors="replace"))
+
+    def _collection_event_received(self, event_object: object) -> None:
+        if not isinstance(event_object, CollectionEvent):
+            raise TypeError(f"Expected CollectionEvent, received {type(event_object).__name__}")
+        event = event_object
+        if event.event in ("case-created", "case-attached") and event.path is not None:
+            self._last_case_path = event.path
+            self.open_case_button.setEnabled(True)
+            self._update_operation_output_paths("evidence-collection", (str(event.path),))
+        if event.event == "case-finished":
+            self._collection_case_finished = True
+            if event.path is not None:
+                self._last_case_path = event.path
                 self.open_case_button.setEnabled(True)
+                self._update_operation_output_paths("evidence-collection", (str(event.path),))
 
-    def _collection_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self.collection_output.appendPlainText(f"\nCollection process finished with exit code {exit_code}.")
-        self._collection_process = None
+    def _collection_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("evidence-collection", result_object)
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        self.collection_output.appendPlainText(
+            f"\nCollection process finished: {result_object.outcome}; exit {exit_label}."
+        )
+        if result_object.error_message:
+            self.collection_output.appendPlainText(f"Process error: {result_object.error_message}")
         if self._active_case_path is not None:
-            self.case_status.setText(
-                f"Guided case finalized at {self._active_case_path}. Create a new case before another collection."
-            )
-            self._active_case_path = None
+            if self._collection_case_finished:
+                self.case_status.setText(
+                    f"Guided case finalized at {self._active_case_path}. Create a new case before another collection."
+                )
+                self._active_case_path = None
+            else:
+                self.case_status.setText(
+                    f"Finalization was not confirmed for {self._active_case_path}. Review the directory; the guided case remains active for retry."
+                )
         self.start_collection_button.setEnabled(self.selected_device() is not None)
-        self.create_case_button.setEnabled(self.selected_device() is not None)
+        self.create_case_button.setEnabled(
+            self.selected_device() is not None and self._active_case_path is None
+        )
         self.stop_collection_button.setEnabled(False)
-
-    def _collection_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._collection_process is not None:
-            self.collection_output.appendPlainText(f"\nProcess error: {self._collection_process.errorString()}")
+        if self._close_after_collection:
+            QTimer.singleShot(0, self.close)
 
     def stop_collection(self) -> None:
-        if self._collection_process is not None:
+        if self._collection_controller.is_running():
             self.collection_output.appendPlainText("\nRequesting a clean stop and evidence finalization…")
-            self._collection_process.terminate()
+            self.stop_collection_button.setEnabled(False)
+            self.case_status.setText(
+                "Stop requested. Waiting for the collector to finalize its manifest and hashes."
+            )
+            self._collection_controller.cancel()
 
     def open_last_case(self) -> None:
         if self._last_case_path is None or not self._last_case_path.is_dir():
@@ -3942,48 +5661,50 @@ class MainWindow(QMainWindow):
         selected_ipa = self._selected_ipa
         if selected_ipa is None:
             raise IPAInspectionError("No IPA path was selected for inspection")
-        if self._ipa_inspection_process is not None:
+        if self._ipa_inspection_controller.is_running():
             QMessageBox.warning(self, "Inspection Running", "Wait for the current IPA inspection to finish.")
             return
         self._ipa_inspection = None
-        self._ipa_inspection_stdout.clear()
-        self._ipa_inspection_stderr.clear()
         self.ipa_inspection_summary.clear()
         self.ipa_inspection_summary.setPlainText("Inspecting archive, provisioning profile, and code signature…")
         self.ipa_inspection_progress.setVisible(True)
         worker = worker_command("ipa-inspector")
-        process = QProcess(self)
-        process.setProgram(str(worker.program))
-        process.setArguments(list(command_arguments(worker, (str(selected_ipa),))))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.readyReadStandardOutput.connect(self._read_ipa_inspection_stdout)
-        process.readyReadStandardError.connect(self._read_ipa_inspection_stderr)
-        process.finished.connect(self._ipa_inspection_finished)
-        process.errorOccurred.connect(self._ipa_inspection_error)
-        self._ipa_inspection_process = process
+        self._begin_operation(
+            "ipa-inspection",
+            self._host_operation_context(
+                "Inspect IPA",
+                "Sideload IPA",
+                "local IPA inspection worker and macOS codesign",
+                (),
+            ),
+        )
+        self._ipa_inspection_controller.start(
+            finite_process_request(
+                worker,
+                (str(selected_ipa),),
+                base_environment(),
+                IPA_INSPECTION_TIMEOUT_MS,
+                PROCESS_TERMINATE_GRACE_MS,
+            )
+        )
         self._update_sideload_controls()
-        process.start()
 
-    def _read_ipa_inspection_stdout(self) -> None:
-        if self._ipa_inspection_process is not None:
-            self._ipa_inspection_stdout.extend(bytes(self._ipa_inspection_process.readAllStandardOutput()))
-
-    def _read_ipa_inspection_stderr(self) -> None:
-        if self._ipa_inspection_process is not None:
-            self._ipa_inspection_stderr.extend(bytes(self._ipa_inspection_process.readAllStandardError()))
-
-    def _ipa_inspection_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self._read_ipa_inspection_stdout()
-        self._read_ipa_inspection_stderr()
-        stderr_text = self._ipa_inspection_stderr.decode("utf-8", errors="replace").strip()
-        if exit_code != 0:
-            message = stderr_text or f"IPA inspector exited with status {exit_code}"
+    def _ipa_inspection_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("ipa-inspection", result_object)
+        stderr_text = result_object.stderr.decode("utf-8", errors="replace").strip()
+        if result_object.outcome != "succeeded":
+            exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+            message = stderr_text or result_object.error_message or f"IPA inspector exited with status {exit_label}"
             self.ipa_inspection_summary.setPlainText(message)
-            self.sideload_status.setText("IPA inspection failed. Correct the package error before installation.")
+            if result_object.outcome == "timed-out":
+                self.sideload_status.setText("IPA inspection exceeded the five-minute safety limit and was stopped.")
+            else:
+                self.sideload_status.setText("IPA inspection failed. Correct the package error before installation.")
         else:
             try:
-                inspection = parse_inspection_json(self._ipa_inspection_stdout.decode("utf-8"))
+                inspection = parse_inspection_json(result_object.stdout.decode("utf-8"))
             except (IPAInspectionError, UnicodeDecodeError) as error:
                 self.ipa_inspection_summary.setPlainText(f"IPA inspection output validation failed: {error}")
                 self.sideload_status.setText("IPA inspection failed. The inspector returned malformed data.")
@@ -3998,21 +5719,13 @@ class MainWindow(QMainWindow):
                     self.sideload_status.setText(
                         f"Installation is disabled because the extracted bundle signature is {inspection.signature.status}."
                     )
-        self._ipa_inspection_process = None
         self.ipa_inspection_progress.setVisible(False)
         self._update_sideload_controls()
 
-    def _ipa_inspection_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._ipa_inspection_process is not None:
-            self.ipa_inspection_summary.setPlainText(
-                f"Could not start IPA inspection: {self._ipa_inspection_process.errorString()}"
-            )
-
     def _update_sideload_controls(self) -> None:
         device_available = self.selected_device() is not None
-        action_running = self._sideload_process is not None
-        inspection_running = self._ipa_inspection_process is not None
+        action_running = self._sideload_controller.is_running()
+        inspection_running = self._ipa_inspection_controller.is_running()
         signature_valid = self._ipa_inspection is not None and self._ipa_inspection.signature.status == "valid"
         self.choose_ipa_button.setEnabled(not inspection_running and not action_running)
         self.install_ipa_button.setEnabled(device_available and signature_valid and not action_running and not inspection_running)
@@ -4064,63 +5777,69 @@ class MainWindow(QMainWindow):
         if device is None:
             self._show_no_device()
             return
-        if self._sideload_process is not None:
+        if self._sideload_controller.is_running():
             QMessageBox.warning(self, "App Operation Running", "Stop or wait for the active app operation first.")
             return
-        self._sideload_buffer.clear()
         self._sideload_context = context
         self.sideload_output.appendPlainText(f"\n$ pymobiledevice3 {shlex.join(arguments)}\n")
-        process = QProcess(self)
-        process.setProgram(str(self._pmd3.program))
-        process.setArguments(list(command_arguments(self._pmd3, arguments)))
-        process.setWorkingDirectory(str(Path.home()))
-        process.setProcessEnvironment(qprocess_environment(device_environment(device.identifier)))
-        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        process.readyReadStandardOutput.connect(self._read_sideload_output)
-        process.finished.connect(self._sideload_finished)
-        process.errorOccurred.connect(self._sideload_error)
-        self._sideload_process = process
         self.sideload_status.setText(f"Running {context} operation on {device.display_name()}…")
         self.sideload_activity_progress.setVisible(True)
+        self._begin_operation(
+            "sideload-ipa",
+            self._device_operation_context(
+                "Install IPA" if context == "install" else context.replace("-", " ").title(),
+                "Sideload IPA",
+                "pymobiledevice3 selected-device transport",
+                device,
+                (),
+            ),
+        )
+        self._sideload_controller.start(
+            finite_process_request(
+                self._pmd3,
+                arguments,
+                device_environment(device.identifier),
+                IPA_INSTALL_TIMEOUT_MS,
+                PROCESS_TERMINATE_GRACE_MS,
+            )
+        )
         self._update_sideload_controls()
-        process.start()
 
-    def _read_sideload_output(self) -> None:
-        if self._sideload_process is None:
-            return
-        output = bytes(self._sideload_process.readAllStandardOutput())
-        self._sideload_buffer.extend(output)
+    def _append_sideload_output(self, output: bytes) -> None:
         self.sideload_output.moveCursor(QTextCursor.MoveOperation.End)
         self.sideload_output.insertPlainText(output.decode("utf-8", errors="replace"))
 
-    def _sideload_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self._read_sideload_output()
+    def _sideload_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("sideload-ipa", result_object)
         context = self._sideload_context
-        semantic_failure = output_indicates_failure(bytes(self._sideload_buffer))
-        succeeded = exit_code == 0 and not semantic_failure
-        self.sideload_output.appendPlainText(f"\n[finished: exit {exit_code}]\n")
-        self.sideload_status.setText(
-            f"{context.capitalize()} completed successfully."
-            if succeeded
-            else f"{context.capitalize()} failed; review the complete command output above."
+        semantic_failure = output_indicates_failure(result_object.stdout + result_object.stderr)
+        succeeded = result_object.outcome == "succeeded" and not semantic_failure
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        self.sideload_output.appendPlainText(
+            f"\n[finished: {result_object.outcome}; exit {exit_label}]\n"
         )
-        self._sideload_process = None
+        if result_object.error_message:
+            self.sideload_output.appendPlainText(f"Process error: {result_object.error_message}")
+        if succeeded:
+            self.sideload_status.setText(f"{context.capitalize()} completed successfully.")
+        elif result_object.outcome == "timed-out":
+            self.sideload_status.setText("IPA installation exceeded the 15-minute safety limit and was stopped.")
+        elif result_object.outcome == "cancelled":
+            self.sideload_status.setText("IPA installation was cancelled; verify device state before retrying.")
+        else:
+            self.sideload_status.setText(f"{context.capitalize()} failed; review the complete command output above.")
         self._sideload_context = ""
         self.sideload_activity_progress.setVisible(False)
         self._update_sideload_controls()
-        if succeeded and context == "install" and self._apps_process is None:
+        if succeeded and context == "install" and not self._apps_controller.is_running():
             QTimer.singleShot(0, self.refresh_app_inventory)
 
-    def _sideload_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._sideload_process is not None:
-            self.sideload_output.appendPlainText(f"\nProcess error: {self._sideload_process.errorString()}")
-
     def stop_sideload_action(self) -> None:
-        if self._sideload_process is not None:
+        if self._sideload_controller.is_running():
             self.sideload_output.appendPlainText("\nRequesting app operation stop…")
-            self._sideload_process.terminate()
+            self._sideload_controller.cancel()
 
     def refresh_app_inventory(self) -> None:
         device = self.selected_device()
@@ -4137,49 +5856,51 @@ class MainWindow(QMainWindow):
         if device is None:
             self._show_no_device()
             return
-        if self._apps_process is not None:
+        if self._apps_controller.is_running():
             QMessageBox.warning(self, "App Operation Running", "Stop or wait for the active app operation first.")
             return
         self._apps_context = context
-        self._apps_stdout.clear()
-        self._apps_stderr.clear()
         self.apps_output.appendPlainText(f"\n$ pymobiledevice3 {shlex.join(arguments)}\n")
-        process = QProcess(self)
-        process.setProgram(str(self._pmd3.program))
-        process.setArguments(list(command_arguments(self._pmd3, arguments)))
-        process.setWorkingDirectory(str(Path.home()))
-        process.setProcessEnvironment(qprocess_environment(device_environment(device.identifier)))
-        process.readyReadStandardOutput.connect(self._read_apps_stdout)
-        process.readyReadStandardError.connect(self._read_apps_stderr)
-        process.finished.connect(self._apps_finished)
-        process.errorOccurred.connect(self._apps_error)
-        self._apps_process = process
         self.apps_status.setText(f"Running {context} operation on {device.display_name()}…")
+        titles = {"inventory": "Refresh Installed Apps", "uninstall": "Uninstall Application"}
+        title = titles.get(context)
+        if title is None:
+            raise KeyError(f"Unknown Installed Apps operation context: {context}")
+        self._begin_operation(
+            "installed-apps",
+            self._device_operation_context(
+                title,
+                "Installed Apps",
+                "pymobiledevice3 selected-device transport",
+                device,
+                (),
+            ),
+        )
+        self._apps_controller.start(
+            finite_process_request(
+                self._pmd3,
+                arguments,
+                device_environment(device.identifier),
+                APPS_ACTION_TIMEOUT_MS,
+                PROCESS_TERMINATE_GRACE_MS,
+            )
+        )
         self._update_apps_controls()
-        process.start()
 
-    def _read_apps_stdout(self) -> None:
-        if self._apps_process is not None:
-            self._apps_stdout.extend(bytes(self._apps_process.readAllStandardOutput()))
-
-    def _read_apps_stderr(self) -> None:
-        if self._apps_process is None:
-            return
-        output = bytes(self._apps_process.readAllStandardError())
-        self._apps_stderr.extend(output)
+    def _append_apps_stderr(self, output: bytes) -> None:
         self.apps_output.moveCursor(QTextCursor.MoveOperation.End)
         self.apps_output.insertPlainText(output.decode("utf-8", errors="replace"))
 
-    def _apps_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self._read_apps_stdout()
-        self._read_apps_stderr()
+    def _apps_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("installed-apps", result_object)
         context = self._apps_context
-        combined_output = bytes(self._apps_stdout + self._apps_stderr)
-        succeeded = exit_code == 0 and not output_indicates_failure(combined_output)
+        combined_output = result_object.stdout + result_object.stderr
+        succeeded = result_object.outcome == "succeeded" and not output_indicates_failure(combined_output)
         if succeeded and context == "inventory":
             try:
-                apps = parse_installed_apps_json(self._apps_stdout.decode("utf-8"))
+                apps = parse_installed_apps_json(result_object.stdout.decode("utf-8"))
             except (InstalledAppsDataError, json.JSONDecodeError, UnicodeDecodeError) as error:
                 succeeded = False
                 self.apps_output.appendPlainText(f"Inventory validation failed: {error}")
@@ -4190,21 +5911,23 @@ class MainWindow(QMainWindow):
         elif succeeded and context == "uninstall":
             self.apps_status.setText("Application uninstalled successfully. Refreshing inventory…")
         if not succeeded:
-            stdout_text = self._apps_stdout.decode("utf-8", errors="replace").strip()
+            stdout_text = result_object.stdout.decode("utf-8", errors="replace").strip()
             if stdout_text:
                 self.apps_output.appendPlainText(stdout_text)
-            self.apps_status.setText(f"{context.capitalize()} failed; review the output below.")
-        self.apps_output.appendPlainText(f"[finished: exit {exit_code}]\n")
-        self._apps_process = None
+            if result_object.outcome == "timed-out":
+                self.apps_status.setText("App operation exceeded the 10-minute safety limit and was stopped.")
+            elif result_object.outcome == "cancelled":
+                self.apps_status.setText("App operation was cancelled.")
+            else:
+                self.apps_status.setText(f"{context.capitalize()} failed; review the output below.")
+        if result_object.error_message:
+            self.apps_output.appendPlainText(f"Process error: {result_object.error_message}")
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        self.apps_output.appendPlainText(f"[finished: {result_object.outcome}; exit {exit_label}]\n")
         self._apps_context = ""
         self._update_apps_controls()
         if succeeded and context == "uninstall":
             QTimer.singleShot(0, self.refresh_app_inventory)
-
-    def _apps_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._apps_process is not None:
-            self.apps_output.appendPlainText(f"Process error: {self._apps_process.errorString()}")
 
     def _populate_installed_apps(self, apps: tuple[InstalledApp, ...]) -> None:
         self.installed_apps_table.setSortingEnabled(False)
@@ -4248,7 +5971,7 @@ class MainWindow(QMainWindow):
         self._update_apps_controls()
 
     def _update_apps_controls(self) -> None:
-        running = self._apps_process is not None
+        running = self._apps_controller.is_running()
         device_available = self.selected_device() is not None
         selected = self.selected_installed_bundle_identifier() is not None
         self.refresh_apps_button.setEnabled(device_available and not running)
@@ -4293,9 +6016,9 @@ class MainWindow(QMainWindow):
             self._start_apps_action(("apps", "uninstall", bundle_identifier), "uninstall")
 
     def stop_apps_action(self) -> None:
-        if self._apps_process is not None:
+        if self._apps_controller.is_running():
             self.apps_output.appendPlainText("Requesting app operation stop…")
-            self._apps_process.terminate()
+            self._apps_controller.cancel()
 
     def choose_backup_destination(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -4322,19 +6045,15 @@ class MainWindow(QMainWindow):
         except BackupRequestError as error:
             QMessageBox.critical(self, "Invalid Backup Destination", str(error))
             return
-        request: dict[str, str | bool] = {
-            "udid": device.identifier,
-            "destination": str(destination),
-            "require_encryption": False,
-            "new_password": "",
-            "full": False,
-        }
+        request = BackupRequest(device.identifier, destination, False, "", False)
         self._start_backup_worker("status", request)
 
     def _backup_encryption_choice_changed(self, checked: bool) -> None:
         needs_new_password = checked and self._backup_encryption_state is not True
         controls_enabled = (
-            needs_new_password and self._backup_process is None and self.selected_device() is not None
+            needs_new_password
+            and not self._backup_controller.is_running()
+            and self.selected_device() is not None
         )
         self.backup_password_field.setEnabled(controls_enabled)
         self.backup_password_confirmation_field.setEnabled(controls_enabled)
@@ -4390,84 +6109,55 @@ class MainWindow(QMainWindow):
         if not self._confirm_action("Start Device Backup", warning, profile, device.identifier):
             return
         self._record_action_approval(self.backup_output, "Start Device Backup", profile)
-        request: dict[str, str | bool] = {
-            "udid": device.identifier,
-            "destination": str(destination),
-            "require_encryption": require_encryption,
-            "new_password": password,
-            "full": self.full_backup_checkbox.isChecked(),
-        }
+        request = BackupRequest(
+            device.identifier,
+            destination,
+            require_encryption,
+            password,
+            self.full_backup_checkbox.isChecked(),
+        )
         self._start_backup_worker("backup", request)
         self.backup_password_field.clear()
         self.backup_password_confirmation_field.clear()
 
-    def _start_backup_worker(self, action: str, request: dict[str, str | bool]) -> None:
-        if self._backup_process is not None:
+    def _start_backup_worker(self, action: BackupAction, request: BackupRequest) -> None:
+        if self._backup_controller.is_running():
             QMessageBox.warning(self, "Backup Operation Running", "Stop or wait for the active backup operation first.")
             return
         self._backup_action = action
-        self._backup_stdout.clear()
-        self._backup_stderr.clear()
         worker = worker_command("backup")
-        process = QProcess(self)
-        process.setProgram(str(worker.program))
-        process.setArguments(list(command_arguments(worker, (action,))))
-        process.setProcessEnvironment(qprocess_environment(base_environment()))
-        process.readyReadStandardOutput.connect(self._read_backup_stdout)
-        process.readyReadStandardError.connect(self._read_backup_stderr)
-        process.finished.connect(self._backup_finished)
-        process.errorOccurred.connect(self._backup_error)
-        self._backup_process = process
         self.backup_output.appendPlainText(
             "Checking backup encryption…" if action == "status" else "Starting device backup…"
         )
         if action == "backup":
             self.backup_progress.setValue(0)
+        device = self.selected_device()
+        if device is None or device.identifier != request.udid:
+            raise RuntimeError("Backup operation target does not match the selected device")
+        output_paths = (str(request.destination / request.udid),) if action == "backup" else ()
+        self._begin_operation(
+            "backup",
+            self._device_operation_context(
+                "Check Backup Encryption" if action == "status" else "Create Device Backup",
+                "Backup",
+                "pymobiledevice3 MobileBackup2 worker",
+                device,
+                output_paths,
+            ),
+        )
+        self._backup_controller.start(
+            worker,
+            action,
+            request,
+            base_environment(),
+            PROCESS_TERMINATE_GRACE_MS,
+        )
         self._update_backup_controls()
-        process.start()
-        if not process.waitForStarted(3000):
-            self.backup_output.appendPlainText(f"Could not start backup helper: {process.errorString()}")
-            self._backup_process = None
-            self._backup_action = ""
-            self._update_backup_controls()
-            return
-        request_payload = json.dumps(request).encode("utf-8")
-        accepted_bytes = process.write(request_payload)
-        if accepted_bytes != len(request_payload):
-            process.kill()
-            process.waitForFinished(3000)
-            self._backup_process = None
-            self._backup_action = ""
-            self._update_backup_controls()
-            message = f"Backup helper accepted {accepted_bytes} of {len(request_payload)} request bytes."
-            self.backup_output.appendPlainText(message)
-            QMessageBox.critical(
-                self,
-                "Backup Request Failed",
-                f"{message}\nNo backup operation was started.",
-            )
-            return
-        process.closeWriteChannel()
 
-    def _read_backup_stdout(self) -> None:
-        if self._backup_process is None:
-            return
-        self._backup_stdout.extend(bytes(self._backup_process.readAllStandardOutput()))
-        while b"\n" in self._backup_stdout:
-            line, _, remainder = self._backup_stdout.partition(b"\n")
-            self._backup_stdout = bytearray(remainder)
-            if line.strip():
-                self._handle_backup_event_line(line)
-
-    def _handle_backup_event_line(self, line: bytes) -> None:
-        try:
-            event = parse_backup_event(line.decode("utf-8"))
-        except (BackupRequestError, json.JSONDecodeError, UnicodeDecodeError) as error:
-            self.backup_output.appendPlainText(f"Invalid backup helper event: {error}")
-            return
-        self._handle_backup_event(event)
-
-    def _handle_backup_event(self, event: BackupEvent) -> None:
+    def _handle_backup_event(self, event_object: object) -> None:
+        if not isinstance(event_object, BackupEvent):
+            raise TypeError(f"Expected BackupEvent, received {type(event_object).__name__}")
+        event = event_object
         self.backup_output.appendPlainText(event.message)
         if event.percent is not None:
             self.backup_progress.setValue(max(0, min(100, event.percent)))
@@ -4478,41 +6168,41 @@ class MainWindow(QMainWindow):
             self._backup_encryption_choice_changed(self.require_encryption_checkbox.isChecked())
         if event.path is not None:
             self._last_backup_path = event.path
+            self._update_operation_output_paths("backup", (str(event.path),))
 
-    def _read_backup_stderr(self) -> None:
-        if self._backup_process is None:
-            return
-        output = bytes(self._backup_process.readAllStandardError())
-        self._backup_stderr.extend(output)
+    def _append_backup_stderr(self, output: bytes) -> None:
         self.backup_output.moveCursor(QTextCursor.MoveOperation.End)
         self.backup_output.insertPlainText(output.decode("utf-8", errors="replace"))
 
-    def _backup_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self._read_backup_stdout()
-        self._read_backup_stderr()
-        if self._backup_stdout.strip():
-            self._handle_backup_event_line(bytes(self._backup_stdout))
-            self._backup_stdout.clear()
+    def _backup_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("backup", result_object)
         action = self._backup_action
-        if exit_code == 0:
+        if result_object.outcome == "succeeded":
             self.backup_output.appendPlainText(
                 "Encryption status check completed." if action == "status" else "Backup operation completed successfully."
             )
+        elif result_object.outcome == "cancelled":
+            self.backup_output.appendPlainText(
+                "Encryption status check stopped."
+                if action == "status"
+                else "Backup operation stopped. Any partial destination remains incomplete and must be reviewed before reuse."
+            )
         else:
-            self.backup_output.appendPlainText(f"{action.capitalize()} failed with exit code {exit_code}.")
-        self._backup_process = None
-        self._backup_action = ""
+            action_label = "Backup" if action is None else action.capitalize()
+            exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+            self.backup_output.appendPlainText(
+                f"{action_label} failed ({result_object.outcome}; exit {exit_label})."
+            )
+            if result_object.error_message:
+                self.backup_output.appendPlainText(f"Process error: {result_object.error_message}")
+        self._backup_action = None
         self._update_backup_controls()
         self._backup_encryption_choice_changed(self.require_encryption_checkbox.isChecked())
 
-    def _backup_error(self, process_error: QProcess.ProcessError) -> None:
-        del process_error
-        if self._backup_process is not None:
-            self.backup_output.appendPlainText(f"Process error: {self._backup_process.errorString()}")
-
     def _update_backup_controls(self) -> None:
-        running = self._backup_process is not None
+        running = self._backup_controller.is_running()
         device_available = self.selected_device() is not None
         self.start_backup_button.setEnabled(device_available and not running)
         self.check_encryption_button.setEnabled(device_available and not running)
@@ -4523,14 +6213,18 @@ class MainWindow(QMainWindow):
         self.open_backup_button.setEnabled(not running)
         if hasattr(self, "launch_ufade_button"):
             self.launch_ufade_button.setEnabled(device_available and not running)
+        self._update_mvt_controls()
         self._backup_encryption_choice_changed(self.require_encryption_checkbox.isChecked())
 
     def stop_backup(self) -> None:
-        if self._backup_process is not None:
-            self.backup_output.appendPlainText(
-                "Stopping the backup. The partial destination may be incomplete and will not be treated as valid incremental state."
-            )
-            self._backup_process.terminate()
+        if self._backup_controller.is_running():
+            if self._backup_action == "status":
+                self.backup_output.appendPlainText("Stopping the encryption status check…")
+            else:
+                self.backup_output.appendPlainText(
+                    "Stopping the backup. The partial destination may be incomplete and will not be treated as valid incremental state."
+                )
+            self._backup_controller.cancel()
 
     def open_backup_folder(self) -> None:
         try:
@@ -4764,6 +6458,393 @@ class MainWindow(QMainWindow):
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
 
+    def _invalidate_mvt_validation(self, value: str) -> None:
+        del value
+        self._mvt_installation = None
+        self._mvt_pending_executable = None
+        self.mvt_validation_status.setText("MVT installation has not been validated")
+        self._update_mvt_controls()
+
+    def mvt_executable_path(self) -> Path:
+        value = self.mvt_executable_field.text().strip()
+        if not value:
+            raise MVTValidationError("Choose an independently installed mvt-ios executable")
+        return Path(value).expanduser()
+
+    def mvt_backup_path(self) -> Path:
+        value = self.mvt_backup_field.text().strip()
+        if not value:
+            raise MVTValidationError("Choose a decrypted iTunes-style backup folder")
+        return Path(value).expanduser()
+
+    def mvt_output_path(self) -> Path:
+        value = self.mvt_output_field.text().strip()
+        if not value:
+            raise MVTValidationError("Choose a new, non-empty MVT result path")
+        return Path(value).expanduser()
+
+    def choose_mvt_executable(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose external mvt-ios executable",
+            self.mvt_executable_field.text(),
+            "Executable (*)",
+        )
+        if selected:
+            self.mvt_executable_field.setText(selected)
+
+    def find_mvt_executable(self) -> None:
+        candidates = discover_mvt_executables(Path.home(), os.environ.get("PATH", ""))
+        if not candidates:
+            QMessageBox.information(
+                self,
+                "MVT Not Found",
+                "No executable mvt-ios was found in PATH, ~/.local/bin, /opt/homebrew/bin, or /usr/local/bin. "
+                "Use Copy Setup Commands or choose the executable manually.",
+            )
+            return
+        self.mvt_executable_field.setText(str(candidates[0]))
+        self.mvt_status.setText(f"Found {len(candidates)} MVT executable candidate(s); validate the selected path.")
+
+    def choose_mvt_backup(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose decrypted iTunes-style backup",
+            self.mvt_backup_field.text() or str(Path.home()),
+        )
+        if selected:
+            self.mvt_backup_field.setText(selected)
+
+    def choose_mvt_output_parent(self) -> None:
+        current_value = self.mvt_output_field.text().strip()
+        current = Path(current_value).expanduser() if current_value else Path.home() / "Documents" / "MVT Analyses"
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose parent folder for a new MVT analysis",
+            str(current.parent),
+        )
+        if not selected:
+            return
+        destination = Path(selected) / datetime.now(timezone.utc).strftime("mvt-analysis-%Y%m%d-%H%M%S")
+        self.mvt_output_field.setText(str(destination))
+
+    def choose_mvt_ioc_files(self) -> None:
+        selected, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Choose MVT STIX2 indicator files",
+            str(Path.home()),
+            "MVT indicators (*.stix *.stix2 *.json)",
+        )
+        if not selected:
+            return
+        self._mvt_ioc_paths = tuple(Path(path) for path in selected)
+        self._refresh_mvt_ioc_status()
+
+    def clear_mvt_ioc_files(self) -> None:
+        self._mvt_ioc_paths = ()
+        self._refresh_mvt_ioc_status()
+
+    def _refresh_mvt_ioc_status(self) -> None:
+        if not self._mvt_ioc_paths:
+            self.mvt_ioc_status.setText("No STIX2/JSON indicator files selected")
+        else:
+            names = ", ".join(path.name for path in self._mvt_ioc_paths)
+            self.mvt_ioc_status.setText(f"{len(self._mvt_ioc_paths)} selected: {names}")
+
+    def copy_mvt_setup_commands(self) -> None:
+        QApplication.clipboard().setText("\n".join(mvt_setup_commands()))
+        self.mvt_output.appendPlainText(
+            "Copied official-style macOS pipx setup commands. Run them in Terminal, reopen the app if PATH changed, "
+            "then click Find Installed and Validate Installation."
+        )
+
+    def show_mvt_guide(self) -> None:
+        MVTGuideDialog().exec()
+
+    def open_mvt_official_guide(self) -> None:
+        if not QDesktopServices.openUrl(QUrl(MVT_BACKUP_GUIDE_URL)):
+            QMessageBox.critical(
+                self,
+                "Could Not Open MVT Guide",
+                f"macOS could not open the official MVT backup-analysis guide:\n{MVT_BACKUP_GUIDE_URL}",
+            )
+
+    def open_mvt_repository(self) -> None:
+        if not QDesktopServices.openUrl(QUrl(MVT_REPOSITORY_URL)):
+            QMessageBox.critical(
+                self,
+                "Could Not Open MVT Repository",
+                f"macOS could not open the MVT repository:\n{MVT_REPOSITORY_URL}",
+            )
+
+    def _prepare_mvt_environment(self, allow_network: bool) -> Mapping[str, str]:
+        if self._mvt_temporary_config is not None:
+            raise RuntimeError("MVT temporary configuration already exists for an active operation")
+        temporary_config = tempfile.TemporaryDirectory(prefix="ios-developer-toolkit-mvt-")
+        self._mvt_temporary_config = temporary_config
+        return mvt_environment(base_environment(), Path(temporary_config.name), allow_network)
+
+    def _clear_mvt_temporary_config(self) -> None:
+        temporary_config = self._mvt_temporary_config
+        self._mvt_temporary_config = None
+        if temporary_config is not None:
+            temporary_config.cleanup()
+
+    def validate_mvt_from_ui(self) -> None:
+        if self._mvt_controller.is_running():
+            QMessageBox.warning(self, "MVT Operation Running", "Stop or wait for the active MVT operation first.")
+            return
+        try:
+            executable = inspect_mvt_executable(self.mvt_executable_path())
+            environment = self._prepare_mvt_environment(False)
+        except (MVTValidationError, OSError) as error:
+            self._clear_mvt_temporary_config()
+            self.mvt_validation_status.setText(f"Validation failed: {error}")
+            self.mvt_output.appendPlainText(f"MVT validation failed: {error}")
+            return
+        self._mvt_operation = "validate"
+        self._mvt_request = None
+        self._mvt_pending_executable = executable
+        arguments = mvt_version_arguments()
+        self.mvt_output.appendPlainText(
+            f"\n$ {executable.path} {shlex.join(arguments)}\n"
+            f"Executable SHA-256: {executable.sha256}"
+        )
+        self.mvt_validation_status.setText("Validating the external MVT version without update or network checks…")
+        self._begin_operation(
+            "mvt",
+            self._host_operation_context(
+                "Validate MVT Installation",
+                "Backup",
+                "external MVT CLI with isolated temporary configuration",
+                (),
+            ),
+        )
+        self._mvt_controller.start(
+            mvt_command(executable),
+            arguments,
+            environment,
+            Path.home(),
+            PROCESS_TERMINATE_GRACE_MS,
+        )
+        self._update_mvt_controls()
+
+    def run_mvt_analysis(self) -> None:
+        if self._mvt_controller.is_running():
+            QMessageBox.warning(self, "MVT Operation Running", "Stop or wait for the active MVT operation first.")
+            return
+        installation = self._mvt_installation
+        if installation is None:
+            QMessageBox.critical(self, "MVT Not Validated", "Validate the selected MVT installation first.")
+            return
+        if not self.mvt_authorization_checkbox.isChecked() or not self.mvt_interpretation_checkbox.isChecked():
+            QMessageBox.critical(
+                self,
+                "Acknowledgements Required",
+                "Confirm both the authorization/consent and interpretation boundaries before running MVT.",
+            )
+            return
+        try:
+            request = create_mvt_analysis_request(
+                installation,
+                self.mvt_backup_path(),
+                self.mvt_output_path(),
+                self._mvt_ioc_paths,
+                self.mvt_fast_checkbox.isChecked(),
+                self.mvt_hashes_checkbox.isChecked(),
+                self.mvt_network_checkbox.isChecked(),
+            )
+        except (MVTValidationError, OSError) as error:
+            QMessageBox.critical(self, "Invalid MVT Analysis Request", str(error))
+            self.mvt_status.setText(f"MVT analysis request was rejected: {error}")
+            return
+        indicator_summary = (
+            "none" if not request.ioc_files else ", ".join(path.name for path in request.ioc_files)
+        )
+        warning = (
+            f"Run external MVT {request.installation.version} backup analysis?\n\n"
+            f"Executable: {request.installation.executable.path}\n"
+            f"Executable SHA-256: {request.installation.executable.sha256}\n"
+            f"Backup: {request.backup.path}\n"
+            f"New output: {request.output}\n"
+            f"Indicators: {indicator_summary}\n"
+            f"Network access: {'allowed' if request.allow_network else 'blocked'}\n"
+            f"Fast mode: {'on' if request.fast else 'off'}\n"
+            f"Hash files: {'on' if request.hashes else 'off'}\n\n"
+            "The output can contain sensitive device, account, communication, browsing, and application records. "
+            "No findings does not prove the device is clean, safe, or uncompromised."
+        )
+        profile = guided_action_safety("host-write")
+        if not self._confirm_action("Run External MVT Analysis", warning, profile, None):
+            return
+        self._start_mvt_analysis_request(request)
+
+    def _start_mvt_analysis_request(self, request: MVTAnalysisRequest) -> None:
+        if self._mvt_controller.is_running():
+            raise RuntimeError("Cannot start MVT analysis while another MVT process is running")
+        try:
+            request = create_mvt_analysis_request(
+                request.installation,
+                request.backup.path,
+                request.output,
+                request.ioc_files,
+                request.fast,
+                request.hashes,
+                request.allow_network,
+            )
+            request.output.parent.mkdir(parents=True, exist_ok=True)
+            environment = self._prepare_mvt_environment(request.allow_network)
+        except (MVTValidationError, OSError) as error:
+            self._clear_mvt_temporary_config()
+            QMessageBox.critical(
+                self,
+                "Could Not Prepare MVT Analysis",
+                f"The confirmed MVT request changed or could not be prepared: {error}",
+            )
+            self.mvt_status.setText(f"MVT analysis did not start: {error}")
+            return
+        arguments = mvt_analysis_arguments(request)
+        self._mvt_operation = "analyze"
+        self._mvt_request = request
+        self.mvt_output.appendPlainText(
+            f"\n[safety approval: host-write; authorization and interpretation acknowledged]\n"
+            f"$ {request.installation.executable.path} {shlex.join(arguments)}\n"
+            f"Network access: {'allowed' if request.allow_network else 'blocked'}"
+        )
+        self.mvt_status.setText("MVT backup analysis is running. Use Stop to request termination.")
+        self._begin_operation(
+            "mvt",
+            self._host_operation_context(
+                "Analyze Backup with MVT",
+                "Backup",
+                "external MVT CLI with isolated temporary configuration",
+                (str(request.output),),
+            ),
+        )
+        self._mvt_controller.start(
+            mvt_command(request.installation.executable),
+            arguments,
+            environment,
+            request.output.parent,
+            PROCESS_TERMINATE_GRACE_MS,
+        )
+        self._update_mvt_controls()
+
+    def _append_mvt_output(self, output: bytes) -> None:
+        self.mvt_output.moveCursor(QTextCursor.MoveOperation.End)
+        self.mvt_output.insertPlainText(output.decode("utf-8", errors="replace"))
+
+    def _mvt_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("mvt", result_object)
+        operation = self._mvt_operation
+        request = self._mvt_request
+        self._mvt_operation = ""
+        self._mvt_request = None
+        self._clear_mvt_temporary_config()
+        combined = (result_object.stdout + result_object.stderr).decode("utf-8", errors="replace")
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        if operation == "validate" and result_object.outcome == "succeeded":
+            pending_executable = self._mvt_pending_executable
+            if pending_executable is None:
+                raise RuntimeError("MVT validation completed without a pending executable")
+            try:
+                version = parse_mvt_version_output(combined)
+            except MVTValidationError as error:
+                self._mvt_installation = None
+                self.mvt_validation_status.setText(f"Validation failed: {error}")
+                self.mvt_status.setText("MVT installation validation failed; review the complete output.")
+            else:
+                self._mvt_installation = MVTInstallation(pending_executable, version)
+                self.mvt_validation_status.setText(
+                    f"Validated external MVT {version}; executable SHA-256 {pending_executable.sha256}."
+                )
+                self.mvt_status.setText("MVT is validated. Select and review the analysis request before running it.")
+        elif operation == "analyze" and result_object.outcome == "succeeded" and request is not None:
+            self.mvt_status.setText(
+                f"MVT completed and wrote its results under {request.output}. Review its logs and structured records; "
+                "absence of alerts or detected files does not prove the device is clean or uncompromised."
+            )
+        else:
+            if operation == "validate":
+                self._mvt_installation = None
+                self.mvt_validation_status.setText(
+                    f"Validation {result_object.outcome.replace('-', ' ')}; exit {exit_label}."
+                )
+            elif operation == "analyze":
+                self.mvt_status.setText(
+                    f"MVT analysis {result_object.outcome.replace('-', ' ')}; exit {exit_label}. "
+                    "The isolated output may be partial and must not be treated as a completed analysis."
+                )
+            else:
+                raise RuntimeError(f"MVT process completed with unknown operation: {operation!r}")
+        if operation == "analyze":
+            self.mvt_authorization_checkbox.setChecked(False)
+            self.mvt_interpretation_checkbox.setChecked(False)
+        self._mvt_pending_executable = None
+        if result_object.error_message:
+            self.mvt_output.appendPlainText(f"\nProcess error: {result_object.error_message}")
+        self.mvt_output.appendPlainText(
+            f"\n[finished: {result_object.outcome}; exit {exit_label}]\n"
+        )
+        self._update_mvt_controls()
+
+    def stop_mvt_analysis(self) -> None:
+        if not self._mvt_controller.is_running():
+            return
+        self.mvt_status.setText("Stopping the external MVT process; any analysis output remains partial.")
+        self._mvt_controller.cancel()
+
+    def _update_mvt_controls(self) -> None:
+        if not hasattr(self, "run_mvt_button"):
+            return
+        running = self._mvt_controller.is_running()
+        validated = self._mvt_installation is not None
+        acknowledged = (
+            self.mvt_authorization_checkbox.isChecked()
+            and self.mvt_interpretation_checkbox.isChecked()
+        )
+        request_paths_present = bool(
+            self.mvt_backup_field.text().strip() and self.mvt_output_field.text().strip()
+        )
+        self.validate_mvt_button.setEnabled(not running and bool(self.mvt_executable_field.text().strip()))
+        self.run_mvt_button.setEnabled(not running and validated and acknowledged and request_paths_present)
+        self.stop_mvt_button.setEnabled(running)
+        for control in (
+            self.mvt_executable_field,
+            self.mvt_backup_field,
+            self.mvt_output_field,
+            self.mvt_fast_checkbox,
+            self.mvt_hashes_checkbox,
+            self.mvt_network_checkbox,
+            self.mvt_authorization_checkbox,
+            self.mvt_interpretation_checkbox,
+            self.choose_mvt_executable_button,
+            self.find_mvt_executable_button,
+            self.choose_mvt_backup_button,
+            self.choose_mvt_output_button,
+            self.choose_mvt_iocs_button,
+            self.clear_mvt_iocs_button,
+        ):
+            control.setEnabled(not running)
+        self.open_mvt_output_button.setEnabled(not running)
+
+    def open_mvt_output_directory(self) -> None:
+        try:
+            destination = self.mvt_output_path()
+        except MVTValidationError as error:
+            QMessageBox.critical(self, "Invalid MVT Output Path", str(error))
+            return
+        if not destination.is_dir():
+            QMessageBox.information(
+                self,
+                "MVT Result Folder Not Found",
+                f"The result folder does not exist yet:\n{destination}",
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
+
     def _filter_command_presets(self) -> None:
         selected_identifier = self._current_preset.identifier if self._current_preset is not None else None
         category = self.command_category_combo.currentText()
@@ -4899,7 +6980,7 @@ class MainWindow(QMainWindow):
         self._update_command_controls()
 
     def _update_command_controls(self) -> None:
-        running = self._console_process is not None
+        running = self._console_controller.is_running()
         preset = self._current_preset
         preset_valid = False
         if preset is not None:
@@ -5018,7 +7099,7 @@ class MainWindow(QMainWindow):
         self.select_manpage_path(preset.manpage_path)
 
     def run_console_command(self) -> None:
-        if self._console_process is not None:
+        if self._console_controller.is_running():
             QMessageBox.warning(self, "Command Running", "Stop the active console command first.")
             return
         try:
@@ -5054,7 +7135,7 @@ class MainWindow(QMainWindow):
         requires_device: bool,
         profile: ActionSafetyProfile,
     ) -> None:
-        if self._console_process is not None:
+        if self._console_controller.is_running():
             QMessageBox.warning(self, "Command Running", "Stop the active console command first.")
             return
         device = self.selected_device()
@@ -5063,19 +7144,27 @@ class MainWindow(QMainWindow):
             return
         approval = "" if profile.level == "read-only" else f"\n[safety approval: {profile.level}; acknowledgement accepted]"
         self.console_output.appendPlainText(f"\n[{title}]{approval}\n$ pymobiledevice3 {shlex.join(arguments)}\n")
-        process = QProcess(self)
-        process.setProgram(str(self._pmd3.program))
-        process.setArguments(list(command_arguments(self._pmd3, arguments)))
-        process.setWorkingDirectory(str(Path.home()))
         environment = base_environment() if device is None else device_environment(device.identifier)
-        process.setProcessEnvironment(qprocess_environment(environment))
-        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        process.readyReadStandardOutput.connect(self._read_console_output)
-        process.finished.connect(self._console_finished)
-        process.errorOccurred.connect(self._console_error)
-        self._console_process = process
+        history_context = (
+            self._host_operation_context(title, "Command Center", "pymobiledevice3 host command", ())
+            if device is None
+            else self._device_operation_context(
+                title,
+                "Command Center",
+                "pymobiledevice3 selected-device transport",
+                device,
+                (),
+            )
+        )
+        self._begin_operation("command-center", history_context)
+        self._console_controller.start(
+            self._pmd3,
+            arguments,
+            environment,
+            Path.home(),
+            PROCESS_TERMINATE_GRACE_MS,
+        )
         self._update_command_controls()
-        process.start()
 
     def _advanced_command_can_run_without_device(self, arguments: tuple[str, ...]) -> bool:
         prefixes = (
@@ -5086,30 +7175,25 @@ class MainWindow(QMainWindow):
         )
         return any(arguments[: len(prefix)] == prefix for prefix in prefixes)
 
-    def _read_console_output(self) -> None:
-        if self._console_process is not None:
-            text = bytes(self._console_process.readAllStandardOutput()).decode("utf-8", errors="replace")
-            self.console_output.moveCursor(QTextCursor.MoveOperation.End)
-            self.console_output.insertPlainText(text)
+    def _append_console_output(self, output: bytes) -> None:
+        self.console_output.moveCursor(QTextCursor.MoveOperation.End)
+        self.console_output.insertPlainText(output.decode("utf-8", errors="replace"))
 
-    def _console_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        del exit_status
-        self.console_output.appendPlainText(f"\n[finished: exit {exit_code}]")
-        self._console_process = None
+    def _console_completed(self, result_object: object) -> None:
+        if not isinstance(result_object, OperationResult):
+            raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("command-center", result_object)
+        exit_label = "not available" if result_object.exit_code is None else str(result_object.exit_code)
+        self.console_output.appendPlainText(f"\n[finished: {result_object.outcome}; exit {exit_label}]")
+        if result_object.error_message:
+            self.console_output.appendPlainText(f"Process error: {result_object.error_message}")
         self._update_command_controls()
-
-    def _console_error(self, process_error: QProcess.ProcessError) -> None:
-        if self._console_process is not None:
-            self.console_output.appendPlainText(f"\nProcess error: {self._console_process.errorString()}")
-            if process_error == QProcess.ProcessError.FailedToStart:
-                self._console_process = None
-                self._update_command_controls()
 
 
     def stop_console_command(self) -> None:
-        if self._console_process is not None:
+        if self._console_controller.is_running():
             self.console_output.appendPlainText("\nRequesting command stop…")
-            self._console_process.terminate()
+            self._console_controller.cancel()
 
     def start_command_drift_check(self) -> None:
         if self._command_drift_session_active:
@@ -5314,6 +7398,15 @@ class MainWindow(QMainWindow):
             "Loading live help from the installed pymobiledevice3…\n\n"
             "This can take several seconds on the first Python import. Use Cancel Loading to stop immediately."
         )
+        self._begin_operation(
+            "manpage",
+            self._host_operation_context(
+                f"Load Live Help: {entry.display_name()}",
+                "Man Pages",
+                "pymobiledevice3 host help route",
+                (),
+            ),
+        )
         self._manpage_controller.start(
             finite_process_request(
                 self._pmd3,
@@ -5328,6 +7421,7 @@ class MainWindow(QMainWindow):
     def _manpage_completed(self, result_object: object) -> None:
         if not isinstance(result_object, OperationResult):
             raise TypeError(f"Expected OperationResult, received {type(result_object).__name__}")
+        self._complete_operation("manpage", result_object)
         stdout = result_object.stdout.decode("utf-8", errors="replace")
         stderr = result_object.stderr.decode("utf-8", errors="replace")
         output = stdout or stderr
@@ -5609,32 +7703,63 @@ class MainWindow(QMainWindow):
             if window.isVisible():
                 event.ignore()
                 return
+        action_running = self._action_controller.is_running()
+        apps_running = self._apps_controller.is_running()
+        ipa_inspection_running = self._ipa_inspection_controller.is_running()
+        sideload_running = self._sideload_controller.is_running()
+        backup_running = self._backup_controller.is_running()
+        collection_running = self._collection_controller.is_running()
+        mvt_running = self._mvt_controller.is_running()
+        external_tool_running = self._external_tool_controller.is_running()
         critical_processes = tuple(
             process
-            for process in (
-                self._action_process,
-                self._collection_process,
-                self._sideload_process,
-                self._apps_process,
-                self._backup_process,
-                self._console_process,
-                self._location_process,
-            )
+            for process in (self._location_process,)
             if process is not None and process.state() != QProcess.ProcessState.NotRunning
         )
-        if critical_processes:
+        active_operations = (
+            action_running
+            or apps_running
+            or ipa_inspection_running
+            or sideload_running
+            or backup_running
+            or collection_running
+            or mvt_running
+            or external_tool_running
+            or self._console_controller.is_running()
+            or critical_processes
+        )
+        if active_operations and not self._close_after_collection:
             should_close = self._confirm(
                 "Stop Active Operations?",
-                "A DDI, evidence, app, backup, Location Lab, or Command Center operation is still running. "
+                "A DDI, evidence, app, backup, MVT, ecosystem-tool, Location Lab, or Command Center operation is still running. "
                 "Stop it, allow cleanup/finalization, and close the app?",
             )
             if not should_close:
                 event.ignore()
                 return
+        if collection_running:
+            if not self._close_after_collection:
+                self._close_after_collection = True
+                self.case_status.setText(
+                    "Closing is waiting for evidence finalization. The collector has up to two minutes to write its manifest and hashes."
+                )
+                self.stop_collection()
+            event.ignore()
+            return
         self._scanner.stop()
         self._reconnect_timeout_timer.stop()
         self._manpage_controller.shutdown(3000, 1000)
         self._command_drift_controller.shutdown(3000, 1000)
+        self._console_controller.shutdown(10000, 3000)
+        self._action_controller.shutdown(10000, 3000)
+        self._apps_controller.shutdown(10000, 3000)
+        self._ipa_inspection_controller.shutdown(10000, 3000)
+        self._sideload_controller.shutdown(10000, 3000)
+        self._backup_controller.shutdown(10000, 3000)
+        self._mvt_controller.shutdown(10000, 3000)
+        self._clear_mvt_temporary_config()
+        self._external_tool_controller.shutdown(10000, 3000)
+        self._collection_controller.shutdown(10000, 3000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:
             self._terminate_capability_children(capability_process)
@@ -5648,9 +7773,6 @@ class MainWindow(QMainWindow):
             if not process.waitForFinished(10000):
                 process.kill()
                 process.waitForFinished(3000)
-        for process in (self._ipa_inspection_process,):
-            if process is not None and process.state() != QProcess.ProcessState.NotRunning:
-                process.terminate()
         event.accept()
 
 

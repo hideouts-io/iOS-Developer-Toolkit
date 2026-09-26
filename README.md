@@ -7,10 +7,11 @@
 ### iOS Developer Toolkit: a guided pymobiledevice3 GUI, Developer Disk Image mounter, and evidence workbench for macOS
 
 [![CI](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/ci.yml)
+[![Documentation](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/docs.yml/badge.svg)](https://hideouts-io.github.io/iOS-Developer-Toolkit/)
 [![Latest release](https://img.shields.io/github/v/release/hideouts-io/iOS-Developer-Toolkit?display_name=tag)](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white)
 ![Devices](https://img.shields.io/badge/device-iPhone%20%7C%20iPad-0969da)
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776ab?logo=python&logoColor=white)
 ![GUI](https://img.shields.io/badge/GUI-PySide6-41cd52)
 ![pymobiledevice3](https://img.shields.io/badge/pymobiledevice3-11.15.1-8250df)
 [![License](https://img.shields.io/badge/license-MIT-2da44e)](LICENSE)
@@ -19,9 +20,11 @@
 
 ![iOS Developer Toolkit Home workspace](docs/screenshots/home.png)
 
-The current interface organizes one trusted device connection into 12 focused workspaces. It mounts modern DDIs, checks device and developer-service readiness, runs validated `pymobiledevice3` presets, exposes the installed command help, simulates test locations, streams three forms of device logs, captures packets, inspects and installs eligible IPAs, inventories apps, creates encrypted backups, launches an isolated UFADE acquisition, and builds hashed evidence cases.
+The current interface organizes Apple-device work into 13 focused workspaces. It mounts modern DDIs, checks device and developer-service readiness, runs validated `pymobiledevice3` presets, exposes the installed command help, simulates test locations, streams three forms of device logs, captures packets, inspects and installs eligible IPAs, inventories apps, creates encrypted backups, launches an isolated UFADE acquisition, hands decrypted backups to an external MVT analysis, validates optional ecosystem adapters, and builds hashed evidence cases.
 
 The screenshots use an illustrative device name, model, version, build, and UDID. They contain no real device capture, account identifier, backup, credential, or case evidence.
+
+Use the focused [documentation site](https://hideouts-io.github.io/iOS-Developer-Toolkit/) for quick start, architecture, safety, troubleshooting, release verification, contribution, and physical-device testing paths. This README remains the canonical complete feature and workspace reference.
 
 ## Contents
 
@@ -43,8 +46,11 @@ The screenshots use an illustrative device name, model, version, build, and UDID
   - [Backup](#backup)
   - [Sideload IPA](#sideload-ipa)
   - [Evidence Capture](#evidence-capture)
+  - [Ecosystem Tools](#ecosystem-tools)
   - [Man Pages](#man-pages)
   - [Scope and Safety](#scope-and-safety)
+  - [Eligible Action Palette](#eligible-action-palette)
+  - [Session Activity and operation manifests](#session-activity-and-operation-manifests)
 - [Developer Disk Images explained](#developer-disk-images-explained)
 - [Guided command catalog](#guided-command-catalog)
 - [Evidence case contents](#evidence-case-contents)
@@ -76,7 +82,7 @@ The application executes the project-pinned binary directly. Guided values becom
 
 ## Current release additions and visual tour
 
-Release `v0.3.4` combines the complete 12-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
+Release `v0.3.4` combines the complete 13-workspace interface with the latest connection, streaming, packaging, and repository-readiness work:
 
 - **Guided Command Drift** checks the live `pymobiledevice3 --help` surface for all 49 presets before a device command is run, highlighting missing routes, changed options, failed checks, and cancellations without contacting a device;
 - **Action Safety** makes state boundaries explicit: local-output actions require review, device changes require a typed device-bound `RUN` phrase, and high-impact actions additionally require a current-backup acknowledgement and an `IRREVERSIBLE` phrase;
@@ -84,17 +90,22 @@ Release `v0.3.4` combines the complete 12-workspace interface with the latest co
 - **Retry Scan** performs an immediate usbmux device check, while **Reconnect & Retry…** opens a guided detection window without attempting to restart SIP-protected Apple services;
 - **Connection diagnostic** records whether usbmux did not launch, failed, returned malformed output, found no devices, or returned selectable devices; its privacy-safe summary is visible in Device & DDI and included in a sanitized support bundle;
 - **Selected command readiness** maps each guided Command Center action to the exact connection, trust, Developer Mode, DDI, tunnel, CoreDevice, DVT, or Web Inspector checks it needs, with a one-click route to the bounded read-only matrix;
+- **Action Palette** (`⌘ K`) searches all workspaces, guided presets, utilities, and currently eligible read actions while withholding device-only operations until a physical target is selected;
+- **Session Activity** correlates completed typed operations with workspace, target, transport, exact argument vector, timing, terminal status, prerequisite snapshot, output paths, and output hashes without automatically persisting raw command output;
+- **Workspace Profiles** preview and import/export reviewed control defaults for team reuse without including device identity, credentials, paths, coordinates, case text, command parameters, or output;
+- **MVT Analysis** validates a user-installed `mvt-ios` executable and runs a consented decrypted-backup analysis with isolated output, opt-in indicators, network access off by default, no password input, and no clean-device verdict;
+- **Ecosystem Tools** validates user-selected go-ios, idb Companion, and ipsw executables by path, SHA-256, and version/build identity, then enables one bounded read-only inventory probe per adapter;
 - the desktop UI starts independently of the MobileBackup2 transport, and device discovery consumes output both while the child process runs and after it exits, so a fast successful `usbmux list` result is not lost before the picker is updated;
 - **Demo Mode** shows a prominently labeled simulated iPhone for walkthroughs and screenshots, while deliberately withholding a selected physical-device target and disabling device operations;
-- the manual **Capability Matrix** reports host, trust, Developer Mode, DDI, tunnel, DVT, CoreDevice, and related readiness as separate bounded results, then compares completed local probes across real devices without retaining raw UDIDs;
+- the manual **Capability Matrix** reports host, trust, Developer Mode, DDI, tunnel, DVT, CoreDevice, and related readiness as separate bounded results, then compares completed local probes across real devices and previews sanitized JSON or Markdown exports without disclosing stored device fingerprints;
 - **DVT network activity** and **CoreDevice applications** are handled as long-running streams with explicit Stop controls instead of misleading finite snapshots;
 - Unified Logs, classic syslog, and DVT OSLog use independent pop-out windows with raw spooling, pause, filtering, save, and explicit close behavior;
 - Location Lab supports validated coordinates, saved places, offline map selection, generated routes, GPX playback, event evidence, and explicit location clearing;
-- app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one selected-device workflow;
-- native Apple Silicon and Intel release ZIPs are built separately and verified with 94 tests, embedded CLI checks, a 90-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
+- app inventory, local IPA inspection, eligible installation, encrypted MobileBackup2 workflows, isolated UFADE launch, external MVT analysis, PCAP, screenshots, crashes, and hashed evidence cases are integrated into one workbench;
+- native Apple Silicon and Intel release ZIPs are built separately and verified with 133 tests, embedded CLI checks, a 138-button GUI smoke test, full-bundle architecture and deployment-floor inspection, strict code-signature validation, and one SHA-256 manifest;
 - public contribution paths now include structured issues, Discussions, pull requests, CI, CodeQL, dependency review, Dependabot, private vulnerability reporting, and protected `main`.
 
-The README contains 17 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
+The README contains 22 sanitized screenshots. The six views below provide a quick tour; each workspace section later in the README contains the relevant full-size image and operational walkthrough.
 
 | Prepare the device and DDI | Observe live services | Run guided commands |
 |---|---|---|
@@ -111,27 +122,32 @@ The README contains 17 sanitized screenshots. The six views below provide a quic
 | Guided Command Drift | Checks the installed help surface for all 49 presets before device work and reports changed routes, options, failures, timeouts, or cancellation. | Read-only; does not run a preset or contact a device. |
 | Action Safety | Classifies every guided and advanced command as read-only, host-write, device-change, or high-impact. | Device changes require a typed device-bound acknowledgement; high-impact actions additionally require backup acknowledgement and `IRREVERSIBLE`. |
 | Reconnect & Retry | Opens a bounded, guided 30-second device-detection window. | Does not restart SIP-protected Apple services. |
-| Real-Device Compatibility | Compares completed Capability Matrix observations across locally tested devices, builds, and connection types. | Stores a one-way device fingerprint, not raw UDIDs or names. |
+| Real-Device Compatibility | Compares completed Capability Matrix observations across locally tested devices, builds, and connection types, then previews sanitized JSON or Markdown reports. | Local history stores a one-way fingerprint; exports omit names, raw identifiers, stored fingerprints, and local paths. |
 | Guided Cases | Records authorized purpose and scope before a bounded evidence collection. | Creates local intake metadata only; collection remains explicit. |
 | Investigative Live Logs | Adds references, annotated findings, reviewed findings, raw hashing, and evidence-bundle export to pop-out streams. | Keeps raw output distinct from analyst annotations and does not upload captures. |
 | Keyboard-first access | Adds named controls, standard navigation, and application-wide workspace shortcuts. | Shortcuts never bypass action confirmation. |
 | Sanitized Support Bundle | Creates a reviewable local ZIP with environment/readiness summaries and a SHA-256 manifest. | Excludes device identity, captures, backups, command output, credentials, and common host/network identifiers. |
 | Demo Mode | Shows a local simulated iPhone for an honest product walkthrough or screenshot. | The banner identifies the simulation and no device service, command, mount, capture, backup, or location operation can run. |
+| Eligible Action Palette | Searches workspaces, utilities, guided presets, and read actions that are valid for the current device and process state. | Selecting a preset opens it for review; it never runs automatically or bypasses confirmation. |
+| Session Activity | Correlates completed typed operations and previews an exportable structured JSON manifest. | Session-only by default; raw output is omitted, and explicit exports can still contain identifiers and local paths. |
+| Workspace Profiles | Shares reviewed DDI, guided-command, app, backup, evidence, and location-control defaults as validated JSON. | Exact preview; owner-only, no-overwrite export; import changes controls only and never runs a command. |
+| Guided MVT handoff | Validates and records external MVT provenance, then analyzes one authorized decrypted backup into a new result path. | No password input; inherited password/IOC variables are removed, network is off by default, and no result is translated into a clean-device claim. |
 
 ## What the workbench covers
 
 | Workspace | Primary purpose | DDI needed? | Important result |
 |---|---|---:|---|
 | **Home** | Understand the workflow and jump to a task | No | Service-layer overview and guided entry points |
-| **Device & DDI** | Check Developer Mode; mount, list, or remove a developer image | For mounting | Explicit device target and image source |
+| **Device & DDI** | Check Developer Mode; manage a developer image; hand off to CoreDevice, RVI, Xcode, or Instruments | For mounting and some CoreDevice details | Explicit device target, image source, and native-tool output |
 | **Capability Matrix** | Test host, connection, trust, DDI, tunnel, and developer-service readiness | Only for the developer-service rows | Bounded per-capability state, evidence, remediation, and real-device comparison |
 | **Location Lab** | Set a coordinate or replay a validated GPX track | Usually | Structured location-event evidence and explicit Clear |
 | **Live Logs** | Open independent Unified Logs, classic syslog, and DVT OSLog windows | Only DVT OSLog | Complete raw spool plus filtered working view |
 | **Command Center** | Run 49 guided commands or explicit advanced arguments | Command-specific | Validated parameters, risk label, exact preview, exit output |
 | **Installed Apps** | Search the service-visible app inventory and uninstall with confirmation | No | Names, bundle IDs, versions, types, optional sizes |
-| **Backup** | Run MobileBackup2 or launch a separate UFADE environment | No | Full/incremental encrypted backup or external acquisition |
+| **Backup** | Run MobileBackup2, launch separate UFADE, or analyze a decrypted backup with external MVT | No | Encrypted backup, external acquisition, or isolated forensic records |
 | **Sideload IPA** | Inspect a local IPA before attempting installation | No DDI for normal install | Archive, provisioning, and signature report |
 | **Evidence Capture** | Correlate snapshots, timed streams, screenshots, crashes, and PCAP | Partial coverage without it | Timestamped case, coverage states, manifest, SHA-256 inventory |
+| **Ecosystem Tools** | Validate optional go-ios, idb Companion, and ipsw installations; run bounded inventory probes | Uses each external tool's own requirements | Resolved path, SHA-256, version/build, raw session output |
 | **Man Pages** | Browse 59 command routes instantly and request live help on demand | No | Version-matched syntax rather than copied examples |
 | **Scope & Safety** | Keep access and interpretation limits visible | No | Operational boundaries inside the app |
 
@@ -139,7 +155,31 @@ The README contains 17 sanitized screenshots. The six views below provide a quic
 
 The interface gives named controls and descriptions to the primary device picker, workspace navigation, command and help browsers, app inventory, capability results, reports, and the keyboard alternative to Location Lab's mouse map. The offline map is intentionally skipped in keyboard tab order; use the coordinate importer or latitude and longitude fields instead.
 
-Use **Keyboard Shortcuts** in the window header, or press `⌘ /`, for the complete reference. The most useful shortcuts are `⌘ L` to focus workspace navigation, `⌘ F` to focus contextual search, `⌘ R` to retry discovery, `⌘ 1` through `⌘ 0` to open the first ten workspaces, `⌘ ⇧ M` for Man Pages, and `⌘ ⇧ S` for Scope & Safety. `⌘ ⌥ ←` and `⌘ ⌥ →` move between workspaces. Tab, Shift-Tab, Space, Return, and Arrow keys retain their standard Qt behavior. Shortcuts never skip device-action confirmation or typed acknowledgements.
+Use **Keyboard Shortcuts** in the window header, or press `⌘ /`, for the complete reference. The most useful shortcuts are `⌘ K` to open the eligible Action Palette, `⌘ L` to focus workspace navigation, `⌘ F` to focus contextual search, `⌘ R` to retry discovery, `⌘ 1` through `⌘ 0` to open the first ten workspaces, `⌘ ⇧ E` for Ecosystem Tools, `⌘ ⇧ M` for Man Pages, and `⌘ ⇧ S` for Scope & Safety. `⌘ ⌥ ←` and `⌘ ⌥ →` move between workspaces. Tab, Shift-Tab, Space, Return, and Arrow keys retain their standard Qt behavior. Shortcuts never skip device-action confirmation or typed acknowledgements.
+
+### Eligible Action Palette
+
+![Eligible Action Palette](docs/screenshots/action-palette.png)
+
+Press `⌘ K` or use **Action Palette** below the workspace list to search the interface without memorizing where an operation lives. The result set is computed from the current app state: host-only presets remain available while disconnected, device-only presets appear only after a physical target is selected, and actions disappear while their process controller is busy. Workspace and utility navigation is always available.
+
+Choosing a guided preset opens Command Center with that preset selected and its exact command, prerequisites, risk, and confirmation path visible. It does not execute the command. Direct entries are limited to eligible read actions such as discovery, Developer Mode status, developer-image listing, CoreDevice or RVI details, the Capability Matrix, app inventory, backup-encryption status, Command Drift, Man Pages help, and already-validated external-tool probes. State is checked again at activation so a device disconnect, changed external binary, or newly busy controller cannot use a stale palette result.
+
+### Session Activity and operation manifests
+
+![Session Activity and structured operation manifest](docs/screenshots/session-activity.png)
+
+**Session Activity** in the sidebar shows completed operations from typed controllers in the current app session. The journal currently covers Device & DDI and Apple handoffs, Command Center, Installed Apps, IPA inspection and installation, MobileBackup2, MVT, Ecosystem Tools, Evidence Capture, and live Man Pages. Periodic discovery, Command Drift's internal per-route probes, and raw live-log streams are intentionally excluded; those have their own aggregate reports or evidence sidecars.
+
+Each record distinguishes the workspace and target from the transport, exact argument vector, start and finish timestamps, duration, terminal process outcome, exit code, process error, prerequisite-state snapshot, declared output paths, and SHA-256 plus byte count for each captured output channel. The manifest does **not** embed stdout or stderr. The UI keeps at most 250 records in memory and writes nothing automatically.
+
+Use **Copy Selected Manifest** or **Save Selected Manifest…** only when you intend to preserve a record. A saved JSON file is created with owner-only permissions and is never overwritten. Because exact arguments and targets can include a UDID, device details, IPA or GPX paths, case locations, and other sensitive values, review the manifest before sharing it. Session Activity is separate from the sanitized support bundle, which continues to exclude command arguments and device identity.
+
+### Local workspace profiles
+
+Use **Export Workspace…** and **Import Workspace…** below the workspace list to share reviewed workflow defaults without copying operational data. A profile can set the default workspace, DDI source, guided-command category and preset, app-inventory and IPA-install options, backup policy, evidence coverage and duration, and non-coordinate Location Lab timing and route-builder settings.
+
+Export shows the exact JSON before creating an owner-only file and refuses to overwrite an existing file. Import accepts only the bounded versioned schema, previews every proposed setting, refuses to apply while an operation is active, and rechecks the imported values immediately before changing the controls. It does not persist automatically, run a command, choose a device, fill a path, import an acknowledgement, or start a device action. The schema excludes device identity, credential fields, local paths, coordinates, command parameters, case text, and captured output. Profile name and description are user-supplied text; common path, account, device, and network identifier patterns are rejected, but the exact preview still must be reviewed before sharing.
 
 ### Sanitized support bundle
 
@@ -161,6 +201,7 @@ Highlights of the current build:
 - searchable app inventory with optional size calculation and confirmed uninstall;
 - MobileBackup2 encryption checks and new-password handling through a private helper input stream;
 - isolated external UFADE validation and launch without importing its dependencies into this project;
+- consent-based external MVT validation and backup analysis without accepting passwords or weakening MVT's warning model;
 - a multi-source collector that retains failures as coverage evidence and hashes finalized artifacts;
 - no one-click erase, restore, activation, supervision, reboot, shutdown, or nonce-changing shortcut.
 
@@ -200,7 +241,7 @@ These layers are related but not interchangeable:
 ## Requirements
 
 - macOS 13 or later;
-- Python 3.10 or later for this project;
+- Python 3.10 through 3.13 for this project;
 - an unlocked iPhone or iPad you are authorized to test or examine;
 - a data-capable USB cable;
 - enough protected disk space for logs, PCAPs, backups, crash reports, and case output;
@@ -211,7 +252,7 @@ Current pinned runtime:
 
 | Component | Version or path |
 |---|---|
-| Python | `>=3.10` |
+| Python | `>=3.10,<3.14` |
 | PySide6 Essentials | `6.9.3` |
 | pymobiledevice3 | `11.15.1` |
 | Local Xcode candidate | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` |
@@ -241,7 +282,7 @@ cd iOS-Developer-Toolkit
 
 The launcher:
 
-1. creates `venv/` when needed;
+1. creates `venv/` when needed, or safely rebuilds it with a compatible Python if the interpreter or pinned runtime has drifted;
 2. installs the pinned project dependencies into that environment;
 3. stages `dist/iOS Developer Toolkit.app`;
 4. opens the staged app.
@@ -338,7 +379,7 @@ python3 --version
 xcode-select -p
 ```
 
-If `python3` is missing or older than 3.10, install a supported Python locally before launching. Dependencies belong in the project-created `venv/`; do not install this project's pinned packages globally.
+If Python 3.10 through 3.13 is unavailable, install a supported Python locally before launching. Dependencies belong in the project-created `venv/`; do not install this project's pinned packages globally.
 
 If macOS warns about downloaded content, follow [Open the ad-hoc-signed app safely](#open-the-ad-hoc-signed-app-safely). Source installations and local development wrappers are also not a substitute for Developer ID signing and notarization.
 
@@ -439,6 +480,21 @@ The toolkit attaches this outer host image read-only, validates its `Restore` pa
 
 Both modern paths normally require Apple TSS access. A cached DDI payload does not guarantee that personalization can complete offline.
 
+Developer Mode queries and DDI mount, list, unmount, install, and uninstall actions use the shared bounded operation controller. It drains both output channels at completion, reports launch failures and crashes distinctly, prevents periodic device refreshes from re-enabling conflicting controls, and stops an action that exceeds the 15-minute safety limit.
+
+#### Apple developer-tool handoff
+
+![Apple developer-tool handoff controls](docs/screenshots/xcode-handoff.png)
+
+The final group in Device & DDI deliberately hands native work back to Apple tools:
+
+- **CoreDevice Details** runs `xcrun devicectl device info details --device <selected UDID> --timeout 30` and displays Apple's human-readable output without treating it as a stable machine schema;
+- **List RVI Interfaces** runs the installed `rvictl -l` so an existing Remote Virtual Interface can be cross-checked before packet capture;
+- **Open Xcode Project…** validates an `.xcodeproj`, `.xcworkspace`, or `Package.swift` and hands it to Apple's `xed` launcher;
+- **Open Result / Trace…** validates and opens an `.xcresult` or `.trace` bundle in Xcode or Instruments.
+
+These are read-only host handoffs. They do not create a project, run tests, start a trace, create or remove an RVI, or parse proprietary Xcode result formats. CoreDevice, RVI, and `xed` handoffs have a 60-second GUI safety limit and retain the exact command and terminal result in the shared output panel.
+
 ### Device Capability Matrix
 
 ![Device Capability Matrix workspace](docs/screenshots/capability-matrix.png)
@@ -461,6 +517,8 @@ The current matrix reports:
 Every row uses one of six explicit states: **Ready**, **Needs attention**, **Unavailable**, **Blocked**, **Not tested**, or **Not applicable**. Select a row to see the bounded evidence and its next step. **Copy Report** creates a plain-text snapshot for a bug report or development note; command errors redact the selected device identifier.
 
 The **Real-Device Compatibility** tab retains a local, append-only observation only after the worker completes a Capability Matrix run against a connected device. It compares the latest observed result for each locally tested device across model, iOS version, build, connection type, and individual capabilities. The history stores a one-way device fingerprint rather than the raw UDID or device name, and it never predicts compatibility for untested hardware or builds. It lives at `~/Library/Application Support/iOS Developer Toolkit/Compatibility/real-device-observations.jsonl`.
+
+**Export Sanitized JSON…** and **Export Sanitized Markdown…** build an exact local preview before saving an owner-only file. The exported report includes the toolkit, macOS, architecture, Python, PySide6, and `pymobiledevice3` versions plus device model, iOS version/build, connection type, probe time, states, and sanitized evidence and remediation. It omits device names, raw identifiers, and stored fingerprints, and redacts common local paths, email addresses, IPv4 addresses, and MAC addresses. The application never uploads the report; model and build metadata can still be identifying in a small fleet, so review the preview before sharing it.
 
 The matrix does not mount a DDI, enable Developer Mode, start a tunnel daemon, change Safari settings, or unlock the device. A service being reachable at refresh time is not proof that every command in that family will succeed, and an empty Web Inspector tab list is different from a failed Web Inspector request.
 
@@ -532,7 +590,7 @@ For retained system log archives, use the applicable `syslog collect` command th
 
 ![Command Center](docs/screenshots/pymobiledevice3-console.png)
 
-Command Center is the low-typing interface to the pinned `pymobiledevice3` runtime. Search or filter a preset, review its description and prerequisites, fill only the required parameters, inspect the exact command, and run it directly. The **Selected command readiness** pane evaluates only the capabilities that preset needs. **Run Device Readiness Check** opens the existing bounded, read-only Capability Matrix; it does not execute the selected command or repair the device automatically. **Check Guided Command Drift** is a separate host-only preflight that calls the installed CLI's `--help` for every guided route and verifies any preset option flags such as `--out`; it does not run a preset or contact a device. Each route uses the shared finite-operation controller for complete output draining, a five-second timeout, cancellation, launch diagnostics, and clean sequential relaunch. The report distinguishes unavailable routes, changed option syntax, failed checks, and routes not completed before cancellation.
+Command Center is the low-typing interface to the pinned `pymobiledevice3` runtime. Search or filter a preset, review its description and prerequisites, fill only the required parameters, inspect the exact command, and run it directly. The **Selected command readiness** pane evaluates only the capabilities that preset needs. **Run Device Readiness Check** opens the existing bounded, read-only Capability Matrix; it does not execute the selected command or repair the device automatically. Guided and advanced commands use a typed interactive-process controller that drains both output channels at completion, distinguishes launch failure, crash, failure, success, and cancellation, and preserves the explicit **Stop** control required by streaming presets without imposing an arbitrary runtime limit. **Check Guided Command Drift** is a separate host-only preflight that calls the installed CLI's `--help` for every guided route and verifies any preset option flags such as `--out`; it does not run a preset or contact a device. Each drift route uses the shared finite-operation controller for complete output draining, a five-second timeout, cancellation, launch diagnostics, and clean sequential relaunch. The report distinguishes unavailable routes, changed option syntax, failed checks, and routes not completed before cancellation.
 
 Every preset has a visible risk class:
 
@@ -550,6 +608,8 @@ Long-running commands remain attached to a visible Stop control. Stopping a proc
 
 Refresh loads the app inventory for the selected trusted device. The table can search and sort by app name, bundle ID, version, build, type, and optional calculated size. It can copy a selected bundle ID and uninstall a selected app only after explicit confirmation.
 
+Inventory and uninstall operations use the shared bounded controller, including terminal output draining, explicit launch/crash/timeout/cancellation results, and a 10-minute safety limit. The visible Stop control requests controller cancellation and retains the terminal result in the workspace output.
+
 The inventory is held in memory unless it is included in an evidence collection. App names and bundle IDs can reveal sensitive usage or organizational information; do not publish them without review.
 
 An empty inventory is not proof that no apps exist. It may instead indicate device lock state, pairing, service availability, filters, command failure, or incomplete visibility.
@@ -558,7 +618,7 @@ An empty inventory is not proof that no apps exist. It may instead indicate devi
 
 ![Backup providers workspace](docs/screenshots/backup.png)
 
-The Backup workspace keeps two providers isolated.
+The Backup workspace keeps three providers isolated.
 
 #### MobileBackup2
 
@@ -574,7 +634,7 @@ If encryption is currently off and **Require encrypted backup** is selected:
 
 Backup encryption is a persistent device setting. The toolkit never disables it automatically. Store the password securely: an encrypted backup cannot be restored without it. Do not reuse an account password or device passcode.
 
-Stopping a backup asks the worker to stop and preserves visible status. Confirm the finalized backup state before depending on it for recovery or evidence.
+The GUI starts the backup helper asynchronously, validates each structured progress event, drains terminal output, and converges launch failure, worker failure, cancellation, and success on one typed result. Malformed worker output stops the operation instead of silently continuing with an unreliable progress channel. Stopping a backup asks the worker to stop and preserves visible status. Confirm the finalized backup state before depending on it for recovery or evidence.
 
 #### UFADE External
 
@@ -627,6 +687,38 @@ The selected toolkit device is shown only as a cross-check; UFADE performs its o
 
 Use UFADE's own documentation to assess version compatibility, licensing, dependencies, and the forensic meaning of each output format.
 
+#### MVT Analysis
+
+[MVT](https://github.com/mvt-project/mvt) is an independent forensic research tool intended for consented mobile-device analysis. It remains separately installed under the MVT License; the toolkit does not bundle, import, patch, update, relicense, or redistribute it.
+
+![Guided external MVT backup analysis](docs/screenshots/mvt-analysis.png)
+
+The guided handoff validates the selected `mvt-ios` executable asynchronously, records its resolved path, version, and SHA-256, and disables automatic MVT version and indicator update checks for a reproducible run. Choose one decrypted iTunes-style backup containing `Manifest.db` and `Info.plist`, a new output path that does not exist, and optional `.stix`, `.stix2`, or `.json` indicator files. An encrypted backup is rejected with instructions to prepare a protected decrypted working copy outside the toolkit.
+
+The toolkit has no MVT password field. It removes inherited MVT backup-password, implicit IOC, VirusTotal-key, profiling, and hashing variables before starting the external process. MVT receives an isolated temporary configuration directory that is deleted when the process completes. Network access is off by default; enabling it can allow shortened-URL resolution and other MVT requests. The selected source backup is never modified by the toolkit, and MVT must create a fresh result directory outside that source.
+
+Both acknowledgements are required: the operator must own the backup or have explicit authorization and consent, and must accept that successful completion or no findings does not prove that a device is clean, safe, uncompromised, or never targeted. The toolkit displays and records process outcome but does not parse MVT output into a verdict. Public indicators may be incomplete or stale; high-risk cases require qualified forensic support and appropriate non-public threat intelligence.
+
+##### Install and run MVT on macOS
+
+The **Copy Setup Commands** button follows MVT's separate-installation approach:
+
+```bash
+brew install python3 pipx sqlite3
+pipx ensurepath
+pipx install mvt
+```
+
+Then, in **Backup → MVT Analysis**:
+
+1. Click **Find Installed** or choose an absolute `mvt-ios` path, then click **Validate Installation**.
+2. Choose the authorized decrypted backup. If the backup is encrypted, follow the [official decryption and backup-check guide](https://docs.mvt.re/en/latest/ios/backup/check/) outside this app; never place its password in a command, issue, or support bundle.
+3. Choose a parent for a new result folder. Existing paths and locations inside the source backup are rejected.
+4. Optionally select reviewed STIX2/JSON indicators, Fast mode, MVT hashing, or explicit network access.
+5. Read and select both required acknowledgements, review the complete launch confirmation, and start the analysis.
+6. Use **Stop** to request termination. A stopped or failed output directory is partial and must not be interpreted as a completed analysis.
+7. Review MVT's `command.log`, structured records, alerts, timeline, hashes, tool version, and indicator provenance directly. Protect the output before sharing it.
+
 ### Sideload IPA
 
 ![Sideload IPA workspace](docs/screenshots/sideload-ipa.png)
@@ -641,7 +733,7 @@ Selecting an IPA starts host-side inspection before the install control can be e
 - reports bundle ID, display name, version, build, executable, signature status, team, certificate authorities, provisioning UUID, expiration, device count, debugging entitlement, and all-device provisioning state where available;
 - keeps installation disabled when the signature is missing or invalid.
 
-After inspection, choose normal installation or **Install as developer package** and confirm the operation. The toolkit does not sign, patch, re-sign, decrypt, or repair the IPA. Stock iOS still enforces package integrity, provisioning, trust, device eligibility, entitlements, and any App Store DRM. A DDI does not bypass those policies.
+After inspection, choose normal installation or **Install as developer package** and confirm the operation. Inspection and installation use the same bounded operation lifecycle as other finite toolkit actions: terminal output is drained, launch failures are explicit, installation can be cancelled, inspection is limited to five minutes, and installation is limited to 15 minutes. The toolkit does not sign, patch, re-sign, decrypt, or repair the IPA. Stock iOS still enforces package integrity, provisioning, trust, device eligibility, entitlements, and any App Store DRM. A DDI does not bypass those policies.
 
 Successful installation refreshes the Installed Apps inventory. Removal is a separate confirmed action in that workspace.
 
@@ -681,7 +773,33 @@ Optional scope:
 - current device screenshot;
 - complete crash-report pull.
 
-The collector retries failed snapshots once, keeps the final artifact and a complete per-attempt command log, records semantic validation failures, and distinguishes required identification failures from optional coverage gaps. Stop/Finalize ends streams and still finalizes the case where possible.
+The collector retries failed snapshots once, keeps the final artifact and a complete per-attempt command log, records semantic validation failures, and distinguishes required identification failures from optional coverage gaps. Its typed GUI controller reassembles JSON events across arbitrary output chunks, drains terminal output, and records launch, protocol, cancellation, crash, and exit outcomes explicitly.
+
+**Stop/Finalize** sends a graceful stop request and gives the collector up to two minutes to close streams, write `manifest.json`, and regenerate `SHA256SUMS.txt`. Closing the application while a collection is active waits for that finalization instead of immediately killing the worker. If finalization is not confirmed, the guided case remains active for review or retry rather than being labeled complete.
+
+### Ecosystem Tools
+
+![Optional ecosystem tool adapters](docs/screenshots/ecosystem-tools.png)
+
+Ecosystem Tools is an interoperability surface for three independently maintained MIT-licensed projects. Nothing is bundled, auto-downloaded, auto-updated, imported as a Python dependency, or treated as trusted merely because it was found on `PATH`.
+
+| Adapter | Installation command shown by the app | Validation | Bounded probe |
+|---|---|---|---|
+| [go-ios](https://github.com/danielpaulus/go-ios) | `npm install -g go-ios` | `ios --version` | `ios list --details` |
+| [Meta idb](https://github.com/facebook/idb) | `brew install facebook/fb/idb` | `idb_companion --version` | `idb_companion --list 1` |
+| [blacktop ipsw](https://github.com/blacktop/ipsw) | `brew install blacktop/tap/ipsw` | `ipsw version` | `ipsw idev list` |
+
+For each adapter:
+
+1. Click **Find Installed** or choose an executable manually.
+2. Review the resolved path, SHA-256, version/build arguments, and third-party execution warning.
+3. Validate the executable. A changed hash invalidates the installation before any probe.
+4. Review the probe's exact argument vector and independent target-selection boundary.
+5. Run or stop the 30-second read-only probe. The raw output stays in the session and the typed result appears in Session Activity.
+
+The adapters remove inherited target-routing and known credential variables such as `IDB_UDID`, `IDB_COMPANION`, `P12_PASSWORD`, and IPSW/GitHub API tokens before launch. That prevents an invisible environment value from selecting a remote target or supplying a credential to these specific probes. It is not a sandbox or a guarantee that a third-party executable performs no other I/O.
+
+go-ios is a separate device protocol implementation and may require its own tunnel setup for modern iOS. idb is a client/companion automation system whose current companion reports build identity rather than a semantic client version. ipsw is primarily a firmware and Apple-platform research suite; only its local `idev list` surface is exposed here. The toolkit does not reconcile their inventories with its selected-device state, infer that one tool is more authoritative, or expose mutating commands from these projects.
 
 ### Man Pages
 
@@ -884,9 +1002,11 @@ Treat these outputs as potentially sensitive:
 - Unified Logs, classic syslog, DVT logs, process lists, and crash reports;
 - screenshots, AFC listings, GPX routes, and simulated coordinates;
 - MobileBackup2 and UFADE acquisitions;
+- MVT source backups, indicator files, command logs, and analysis results;
+- go-ios, idb, and ipsw inventory output, which can include device or simulator identifiers;
 - IPA provisioning records and signing identities.
 
-The repository `.gitignore` excludes the toolkit's common backup, case, capture, crash, log, packet, GPX, UFADE, DDI, certificate, profile, and IPA artifact patterns. That is a publication guard, not an access-control system. Store evidence outside a public checkout when possible, restrict filesystem permissions, encrypt sensitive archives, and review every staged file before committing.
+The repository `.gitignore` excludes the toolkit's common backup, case, capture, crash, log, packet, GPX, UFADE, MVT, DDI, certificate, profile, and IPA artifact patterns. That is a publication guard, not an access-control system. Store evidence outside a public checkout when possible, restrict filesystem permissions, encrypt sensitive archives, and review every staged file before committing.
 
 ### Capability is not observed behavior
 
@@ -991,8 +1111,10 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 .
 ├── ios_developer_toolkit/
 │   ├── app.py                  # PySide6 workbench and workflow orchestration
+│   ├── action_palette.py       # searchable state-eligible navigation and actions
 │   ├── action_safety.py        # typed confirmation policy for state-changing actions
-│   ├── backup_protocol.py       # dependency-free backup request/event schema
+│   ├── backup_process.py       # password-safe backup-worker lifecycle controller
+│   ├── backup_protocol.py      # dependency-free backup request/event schema
 │   ├── backup_worker.py        # MobileBackup2 worker and password-input protocol
 │   ├── capability_matrix.py    # typed readiness catalog, probes, and result validation
 │   ├── capability_matrix_worker.py # bounded NDJSON capability worker
@@ -1000,18 +1122,26 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 │   ├── catalog.py              # evidence snapshot catalog and mutation classification
 │   ├── collector.py            # case creation, streams, retries, manifest, hashes
 │   ├── command_catalog.py      # guided presets and live-help routes
+│   ├── collection_process.py   # evidence-worker lifecycle and graceful finalization
+│   ├── collection_protocol.py  # validated collector JSON-line events
 │   ├── device_compatibility.py # redacted local real-device readiness history
+│   ├── external_tools.py       # optional executable provenance and probe policies
+│   ├── file_integrity.py       # shared streaming file SHA-256 helper
 │   ├── gui_pages.py            # stateless Home, Live Logs, Safety pages and styling
 │   ├── installed_apps.py       # app inventory validation and formatting
+│   ├── interactive_process.py  # typed user-stoppable process lifecycle controller
 │   ├── ipa_inspector.py        # safe IPA extraction, provisioning, signature checks
 │   ├── live_logs.py            # independent raw-spooling log windows
 │   ├── local_ddi.py            # local Xcode candidate/Cryptex workflow
 │   ├── location_lab.py         # coordinates, GPX, routes, saved places, evidence
 │   ├── models.py               # typed device and collection models
+│   ├── mvt_connector.py        # external MVT provenance, request, and isolation policy
+│   ├── operation_history.py    # session journal, output digests, and explicit JSON export
 │   ├── entrypoint.py           # packaged internal CLI and worker dispatch
 │   ├── qt_process.py           # typed, bounded finite-process lifecycle controller
 │   ├── runtime.py              # source/frozen commands and device environment
 │   ├── ufade_connector.py      # isolated external UFADE validation and launch
+│   ├── xcode_handoff.py        # validated CoreDevice, RVI, project, and artifact handoffs
 │   └── assets/
 ├── .github/workflows/          # native Intel and Apple Silicon release builds
 ├── docs/screenshots/           # sanitized current-interface captures
@@ -1037,11 +1167,20 @@ venv/bin/python -m ios_developer_toolkit.ipa_inspector --help
 
 The final launcher check opens the application and briefly verifies the process. It stops an existing toolkit process first, so do not run it during an active capture or backup.
 
+Build the focused documentation site with its isolated pinned dependency:
+
+```bash
+venv/bin/python -m pip install --requirement requirements/docs.txt
+venv/bin/python -m mkdocs build --strict --clean
+```
+
+Pull requests validate the site without publishing it. A documentation change merged to `main` publishes through the dedicated GitHub Pages workflow.
+
 Physical-device validation is opt-in and is not required for pull requests. Use the [physical-device test protocol](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md) to separate USB, usbmux, CoreDevice, Developer Mode, DDI, tunnel, DVT, and state-changing checks; publish only sanitized results.
 
 ### Release model
 
-The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 94 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 90-button offscreen GUI smoke test, verifies live help from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
+The release workflow builds natively on separate Apple Silicon and Intel GitHub-hosted macOS runners. Each job creates a self-contained PySide6/Nuitka `.app`, runs all 133 tests, verifies the embedded pymobiledevice3 command, checks the internal worker route, runs the 138-button offscreen GUI smoke test, verifies live help and a synthetic external-adapter lifecycle from inside the app, verifies the native launcher architecture, and checks the architecture and macOS deployment floor of every bundled Mach-O file. It also embeds third-party notices and a CycloneDX SBOM with the serial number required for GitHub attestation, applies an ad-hoc signature, and uploads an architecture-labeled ZIP and SBOM. The release job publishes both architectures with one SHA-256 inventory and creates GitHub build-provenance and SBOM attestations for each ZIP.
 
 The builder requires `MACOSX_DEPLOYMENT_TARGET=13.0`. It rejects any bundled executable, library, extension, or framework slice that requires a newer macOS version or omits the native release architecture. A component may support an older minimum because the application still advertises macOS 13 as its supported floor. PySide6 is pinned to the newest validated line whose actual Shiboken load commands satisfy that floor; wheel filenames alone are not treated as compatibility evidence. Local release builds should use a Python toolchain capable of producing macOS 13-compatible binaries; GitHub release CI supplies the target explicitly.
 
@@ -1055,6 +1194,8 @@ Windows and Linux would require a separate host implementation or deliberately i
 - [`DeveloperDiskImage`](https://github.com/doronz88/DeveloperDiskImage) supplies the downloadable modern DDI payload used by upstream auto-mount.
 - [Apple Developer Mode documentation](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device) describes the on-device security workflow.
 - [`UFADE`](https://github.com/prosch88/UFADE) is supported only as a separately installed and independently licensed external provider.
+- [`MVT`](https://github.com/mvt-project/mvt) is supported only as a separately installed external analysis provider under its own license and warning model.
+- [`go-ios`](https://github.com/danielpaulus/go-ios), [`idb`](https://github.com/facebook/idb), and [`ipsw`](https://github.com/blacktop/ipsw) are supported only through user-selected, separately installed MIT-licensed executables; no source or binary from these projects is bundled.
 - [`ostrace`](https://github.com/BerkayCaglar/ostrace) informed live-log interaction design; no GPL source is copied, imported, or linked into this MIT project.
 - [`LocationSimulator`](https://github.com/Schlaubischlump/LocationSimulator) informed the offline map/teleport workflow. Its GPL source is not copied or linked, and its public backend does not support iOS 17 or later.
 - [Natural Earth](https://www.naturalearthdata.com/) provides the public-domain 1:110m land geometry rendered into the bundled offline Location Lab map.
