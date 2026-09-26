@@ -50,3 +50,11 @@ nuitka-crash-report.xml
 *.trustcache
 BuildManifest.plist
 DeveloperDiskImage.dmg.signature
+
+# Swift / Xcode
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+/build-output/
