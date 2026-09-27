@@ -78,10 +78,32 @@ public enum ToolchainCheck {
         return Result(route: route, state: .available, detail: "")
     }
 
+    /// Why a tool cannot be checked at all (Xcode missing or not selected), or nil when it runs.
+    static func unavailableReason(_ tool: XcodeTool, in status: DeveloperToolsStatus) -> String? {
+        let availability: DeveloperToolsStatus.Availability
+        switch tool {
+        case .devicectl: availability = status.devicectl
+        case .simctl: availability = status.simctl
+        case .xctrace: availability = status.xctrace
+        case .xed: return nil
+        }
+        guard case .missing(let reason) = availability else { return nil }
+        if status.developerDirectory == nil || status.isCommandLineToolsOnly {
+            return "Xcode is not installed or not selected (only the Command Line Tools are available). Install Xcode and open it once."
+        }
+        return "\(tool.rawValue) could not run: \(reason)"
+    }
+
     public static func run(runner: CommandRunning, progress: @Sendable (Int, Int) -> Void = { _, _ in }) async -> [Result] {
+        let tools = await DeveloperToolsStatus.probe(runner: runner)
         var results: [Result] = []
         for (index, route) in routes.enumerated() {
             if Task.isCancelled { break }
+            if let reason = unavailableReason(route.tool, in: tools) {
+                results.append(Result(route: route, state: .missing, detail: reason))
+                progress(index + 1, routes.count)
+                continue
+            }
             do {
                 let output = try await runner.run(try helpRequest(route))
                 results.append(evaluate(route, helpText: output.standardOutputText + output.standardErrorText, succeeded: output.succeeded || !output.standardOutputText.isEmpty))

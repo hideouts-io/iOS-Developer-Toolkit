@@ -27,6 +27,17 @@ struct ToolchainTests {
         #expect(report.contains("--beta"))
     }
 
+    @Test func missingXcodeIsReportedAsTheCause() {
+        let missing = DeveloperToolsStatus.Availability.missing(reason: "xcrun: error: unable to find utility \"devicectl\"")
+        let commandLineToolsOnly = DeveloperToolsStatus(developerDirectory: "/Library/Developer/CommandLineTools", xcodeVersion: nil, devicectl: missing, simctl: missing, xctrace: missing)
+        #expect(ToolchainCheck.unavailableReason(.devicectl, in: commandLineToolsOnly)?.hasPrefix("Xcode is not installed") == true)
+        #expect(ToolchainCheck.unavailableReason(.xed, in: commandLineToolsOnly) == nil)
+
+        let brokenTool = DeveloperToolsStatus(developerDirectory: "/Applications/Xcode.app/Contents/Developer", xcodeVersion: "Xcode 27.0", devicectl: missing, simctl: .available(version: nil), xctrace: .available(version: nil))
+        #expect(ToolchainCheck.unavailableReason(.devicectl, in: brokenTool)?.hasPrefix("devicectl could not run") == true)
+        #expect(ToolchainCheck.unavailableReason(.simctl, in: brokenTool) == nil)
+    }
+
     @Test(.enabled(if: xcodeAvailable))
     func referenceDiscoversDevicectlSubcommands() async throws {
         let root = ToolReference.roots[0]
