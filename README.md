@@ -49,7 +49,7 @@ Instruments. It needs no Python, no Homebrew packages, and no administrator righ
 | **Location Lab** | Set a coordinate (offline world map, map-link parsing, nudges, saved places), move along a route at constant speed, or replay a GPX track. Always clearable; every change is logged. |
 | **Apps** | Search and sort installed apps (with sizes over USB), launch, and remove with confirmation. |
 | **Install App** | Inspect an `.ipa` on the Mac first — contents, provisioning profile, and code signature verified with Security.framework — then install it on a device, or install an `.app` on a simulator. |
-| **Actions** | Over 40 guided actions (diagnostics, battery, IORegistry, provisioning and configuration profiles, crash reports, screenshots, sysdiagnose, Instruments recordings, packet capture, network discovery, launch, open URL, simulated location, restart, simulator controls), each showing its risk, what it needs, and exactly how it runs. An Advanced Mode runs `devicectl` subcommands bound to the selected device. |
+| **Actions** | Over 40 guided actions (diagnostics, battery, IORegistry, provisioning and configuration profiles, crash reports, screenshots, sysdiagnose, Instruments recordings, packet capture, Safari and web view tabs, network discovery, launch, open URL, simulated location, restart, simulator controls), each showing its risk, what it needs, and exactly how it runs. An Advanced Mode runs `devicectl` subcommands bound to the selected device. |
 | **Backup** | Encrypted local backups with the same protocol Finder uses, full or incremental, with progress. Turn on backup encryption with a new password (never stored or logged). |
 | **Evidence Capture** | A documented case folder with snapshots, optional timed streams (Unified Logs, syslog, packet capture), a screenshot, and crash reports, plus a manifest and SHA-256 hashes. Failed steps are recorded as coverage gaps. |
 | **Packet capture** | Device-side network packets written as a standard `.pcap` file for Wireshark or tcpdump, as an action or as part of Evidence Capture. |
@@ -100,7 +100,7 @@ Features that use Xcode's developer tools need Xcode installed (open it once to 
 |---|---|
 | Device discovery (USB and Wi-Fi sync), identity, trust, Developer Mode status | Simulators (everything in the Simulators section) |
 | Live Logs from physical devices (Unified and classic syslog) | Location simulation on iOS 17 and later |
-| Packet capture; checking the developer image, and mounting it over USB from an image Xcode installed or a folder you choose ([Developer images](#developer-images)) | Xcode's device service (`devicectl`) route for the developer image |
+| Packet capture; Safari and web view tab listing (with Web Inspector on); checking the developer image, and mounting it over USB from an image Xcode installed or a folder you choose ([Developer images](#developer-images)) | Xcode's device service (`devicectl`) route for the developer image |
 | Encrypted backups and encryption setup | Screenshots, launch app, open URL, stop a process |
 | Diagnostics, battery, IORegistry, MobileGestalt, running processes, configuration profiles | Lock state, displays |
 | Installed apps (with sizes), removing apps, installing `.ipa` packages | Sysdiagnose and Instruments recordings |
@@ -343,8 +343,7 @@ Version 1.0 is a complete rewrite of the earlier Python/PySide6 app (0.3.x), whi
   end against a protocol-accurate simulated device and against macOS's real device service, but
   **not yet against physical iPhones or iPads**. Please report results using the
   [physical-device test protocol](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md).
-- Not available in 1.0: Safari/WebView tab listing, Bluetooth HCI capture, and the
-  developer-service file listing. Details and alternatives are in [MIGRATION.md](MIGRATION.md#6-known-limitations-and-features-not-reproduced).
+- Not available in 1.0: Bluetooth HCI capture and the developer-service file listing. Details and alternatives are in [MIGRATION.md](MIGRATION.md#6-known-limitations-and-features-not-reproduced).
 - Release builds are ad-hoc signed and not notarized.
 
 ## Contributing, support, and license

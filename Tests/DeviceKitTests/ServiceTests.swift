@@ -143,6 +143,49 @@ struct ServiceTests {
         #expect(throws: ToolkitError.self) { try ConfigurationProfileService.parse(["Status": "Error"]) }
     }
 
+    @Test func webInspectorListsPagesAfterRetryingRefusals() async throws {
+        // The first session is dropped (as when a session starts too soon); the retry succeeds.
+        let inspector = FakeWebInspector(refusals: 1)
+        try await runWithServer({ inspector.register(on: $0) }) { server in
+            let applications = try await WebInspector.openPages(on: server.target, usbmux: server.client, retryInterval: .milliseconds(100), listingWindow: .milliseconds(500))
+            let safari = try #require(applications.first)
+            #expect(safari.name == "Safari" && safari.bundleIdentifier == "com.apple.mobilesafari" && safari.isActive == true)
+            #expect(safari.pages.map(\.title) == [nil, "Example Domain"])
+            #expect(safari.pages.map(\.kindLabel) == ["JavaScript context", "Web page"])
+            #expect(safari.pages.last?.url == "https://example.com/")
+            #expect(inspector.sessions == 2)
+            #expect(inspector.connectionIdentifiers.count == 1, "every message carries the same connection identifier")
+            #expect(inspector.selectors.prefix(3) == ["_rpc_reportIdentifier:", "_rpc_getConnectedApplications:", "_rpc_forwardGetListing:"])
+        }
+    }
+
+    @Test func webInspectorExplainsHowToTurnItOnWhenRefused() async throws {
+        let inspector = FakeWebInspector(refusals: 100)
+        try await runWithServer({ inspector.register(on: $0) }) { server in
+            do {
+                _ = try await WebInspector.openPages(on: server.target, usbmux: server.client, handshakeDeadline: .milliseconds(600), retryInterval: .milliseconds(100))
+                Issue.record("expected a refusal")
+            } catch let error as ToolkitError {
+                #expect(error.message == "Safari Web Inspector did not answer.")
+                #expect(error.recovery?.contains("Settings › Apps › Safari › Advanced › Web Inspector") == true)
+                #expect(error.recovery?.contains("ten seconds") == true)
+            }
+            #expect(inspector.sessions > 2, "refusals are retried until the deadline")
+        }
+    }
+
+    @Test func webInspectorListingStateFollowsTheDevice() {
+        var state = WebInspector.ListingState()
+        state.apply(["__selector": "_rpc_reportConnectedApplicationList:", "__argument": ["WIRApplicationDictionaryKey": ["A": ["WIRApplicationNameKey": "Safari"], "B": ["WIRApplicationNameKey": "Mail"]]]])
+        state.apply(["__selector": "_rpc_applicationSentListing:", "__argument": ["WIRApplicationIdentifierKey": "A", "WIRListingKey": ["1": ["WIRTitleKey": "One", "WIRTypeKey": "WIRTypeWeb"], "2": ["WIRTitleKey": "Two", "WIRTypeKey": "WIRTypeWeb"]]]])
+        // A new listing replaces the old one: closed tabs disappear.
+        state.apply(["__selector": "_rpc_applicationSentListing:", "__argument": ["WIRApplicationIdentifierKey": "A", "WIRListingKey": ["2": ["WIRTitleKey": "Two", "WIRTypeKey": "WIRTypeWeb"]]]])
+        state.apply(["__selector": "_rpc_applicationDisconnected:", "__argument": ["WIRApplicationIdentifierKey": "B"]])
+        state.apply(["__selector": "_rpc_unknownSelector:", "__argument": [:]])
+        #expect(state.result.map(\.name) == ["Safari"])
+        #expect(state.result.first?.pages.map(\.title) == ["Two"])
+    }
+
     @Test func springBoardServicesAnswerQueries() async throws {
         let png = Data([0x89, 0x50, 0x4E, 0x47])
         try await runWithServer({ _ in }) { server in

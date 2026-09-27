@@ -87,7 +87,7 @@ Swift device discovery (usbmuxd + CoreDevice + simctl), so nothing is lost.
 | 32 | Activation state, personalization identifiers | `pmd3 activation state`, `mounter query-personalization-identifiers` | Native lockdown / `mobile_image_mounter` | Lockdown | No | 🟡 |
 | 33 | DVT telemetry (sysmon, energy, graphics, netstat, notifications, KDebug/CoreProfile) | `pmd3 developer dvt …` | 🔁 Instruments recordings via `xcrun xctrace record --device` (Activity Monitor, Network, Power Profiler, System Trace, Time Profiler…) | xctrace | No | 🔁 🟡 |
 | 34 | RSD / RemoteXPC Bonjour discovery | `pmd3 bonjour rsd`, `remote browse` | Network.framework `NWBrowser` for `_remotepairing._tcp` / `_apple-mobdev2._tcp` | Network.framework | No | 🟡 |
-| 35 | Safari/WebView tab list | `pmd3 webinspector opened-tabs` | ❌ Not migrated in 1.0 (see §6) | — | No | ❌ |
+| 35 | Safari/WebView tab list | `pmd3 webinspector opened-tabs` | Native `com.apple.webinspector` client (Action “Safari and web view tabs”, Readiness row) — §9 G3 | Private lockdown service | No | 🟡 |
 | 36 | Bluetooth HCI capture | `pmd3 btlogger` | ❌ Not migrated in 1.0 (see §6) | — | No | ❌ |
 | 37 | DVT filesystem listing (`dvt ls /`), AFC media listing | `pmd3 developer dvt ls`, `afc ls` | AFC via native `com.apple.afc`; DVT listing ❌ (see §6) | Lockdown | No | 🟡 AFC · ❌ DVT |
 | 38 | Session Activity journal + manifest export | `operation_history.py` | Ported (`OperationJournal` actor) | Foundation | No | ✅ |
@@ -225,7 +225,7 @@ Everything marked 🟡 in §2 needs a pass of
 
 | Feature (Python) | Why not in 1.0 | Alternatives investigated | Native implementation possible? |
 |---|---|---|---|
-| **Safari/WebView tab listing** (`pmd3 webinspector opened-tabs`) | Needs the undocumented WebKit remote-inspector RPC protocol (`com.apple.webinspector`: `_rpc_reportIdentifier:`, `_rpc_getConnectedApplications:`, `_rpc_forwardGetListing:`), plus *Web Inspector* enabled on the device. Without a device the protocol cannot be verified, and shipping an unverified reverse-engineered protocol conflicts with the "do not claim it works" rule. | Safari › Develop menu on the Mac (Apple-supported, lists and inspects tabs on a connected device); `ios_webkit_debug_proxy` (third-party executable — rejected: no hidden shell-outs to third-party tools); CoreDevice has no web-inspector command. | **Yes.** The service is reachable through lockdown with the existing `DeviceSession`; it needs a plist RPC client and hardware verification. Candidate for 1.1. |
+| **Safari/WebView tab listing** (`pmd3 webinspector opened-tabs`) | ✅ Implemented after the parity audit (§9 G3): native `com.apple.webinspector` client, retrying refusals until a deadline. Opening a URL through Web Inspector (automation) is still not reproduced — it needs a WebDriver session and Safari’s Remote Automation setting; Open URL uses CoreDevice. | — | — |
 | **Bluetooth HCI capture** (`pmd3 btlogger`) | `com.apple.bluetooth.BTPacketLogger` only streams after Apple's *Bluetooth logging profile* is installed on the device, and there was no device to verify the record format. | Apple **PacketLogger** (Additional Tools for Xcode) captures from a connected iOS device with the same profile — the documented route, recommended in the meantime; a sysdiagnose taken with the profile installed also contains the HCI log. | **Yes**, over lockdown with the existing service plumbing (framing is similar to pcapd). Needs the profile and a device to verify. |
 | **DVT file-system listing** (`pmd3 developer dvt ls`) | DVT uses Apple's private DTX protocol (NSKeyedArchiver messages over `com.apple.instruments.remoteserver*`). On iOS 17+ it is only reachable through the RemoteXPC tunnel that CoreDevice owns; creating that tunnel needs a utun interface (root) or CoreDevice's private frameworks — both excluded (no `sudo`, no private frameworks). | AFC (`com.apple.afc`, Media folder — implemented as *List Media folder*); `devicectl device info files` and `device copy from` for app containers and supported domains (available through Advanced Mode); crash reports through `crashreportcopymobile` (implemented). | **Not for iOS 17+** without privileges or private frameworks. For iOS 16 and earlier, DTX over lockdown is possible but serves only legacy devices and is not planned. |
 
@@ -373,7 +373,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | mounted-images, personalization | Actions (native image mounter) | = | `DeveloperImageTests` |
 | bonjour-rsd | Action `bonjour` (Network.framework) | = | — |
 | remote-browse (RSD service list) | — | — | needs RemoteXPC (HTTP/2 + XPC over the device's USB network link); `devicectl device info details` lists capabilities instead |
-| web-tabs (`webinspector opened-tabs`) | — | ✗ → **G3** | §6.1 said possible |
+| web-tabs (`webinspector opened-tabs`) | Action `web-tabs` (native `com.apple.webinspector`) | = (**G3 resolved**) | `webInspectorListsPagesAfterRetryingRefusals`, `nativeActionsRunAgainstTheCapturedTarget` |
 | launch-app, location-set, location-clear | Actions via CoreDevice / simctl / legacy service | = | real-simulator test |
 | open-url (`webinspector launch`, Safari automation) | Action `open-url` via CoreDevice / simctl | ◐ | the Web Inspector route needs a WebDriver automation session and Settings › Safari › Remote Automation; kept on CoreDevice |
 
@@ -414,7 +414,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 |---|---|---|---|
 | G1 | Native process list (`os_trace_relay` `PidList`) for actions and evidence | P1 | ✅ resolved — no Xcode needed over USB |
 | G2 | Native configuration profiles (`com.apple.mobile.MCInstall` `GetProfileList`) | P1 | ✅ resolved — no Xcode needed over USB (also avoids `profile list --type`, missing in Xcode 26) |
-| G3 | Safari/WebView tab listing (`com.apple.webinspector`) + Web Inspector readiness row | P1 | previously “not migrated”; native is possible |
+| G3 | Safari/WebView tab listing (`com.apple.webinspector`) + Web Inspector readiness row | P1 | ✅ resolved — action “Safari and web view tabs”, Readiness row “Safari Web Inspector” |
 | G4 | Bluetooth HCI capture (`com.apple.bluetooth.BTPacketLogger`) to `.pklg` | P1 | previously “not migrated”; native is possible |
 | G5 | Guided reconnect | P2 | user-facing help in 0.3.x |
 | G6 | Import 0.3.x workspace profiles; profile fields for the developer-image mechanism and selected action | P2 | migration path for existing users |

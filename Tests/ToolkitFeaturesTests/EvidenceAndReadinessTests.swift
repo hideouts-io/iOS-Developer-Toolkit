@@ -7,6 +7,7 @@ import ToolkitCore
 
 /// Registers the lockdown services used by collection and readiness checks on a fake device.
 func registerStandardServices(_ server: FakeDeviceServer, afc: FakeAFCFileSystem, crashes: FakeAFCFileSystem) {
+    FakeWebInspector().register(on: server)
     server.register(service: ConfigurationProfileService.serviceName) { channel in
         let messages = PlistMessageConnection(channel: channel)
         guard (try await messages.receive(timeout: 5))["RequestType"]?.stringValue == "GetProfileList" else { return }
@@ -186,6 +187,7 @@ struct ReadinessAndActionTests {
         #expect(states["developer-mode"] == .ready)
         #expect(states["lockdown-services"] == .ready)
         #expect(states["backup-service"] == .ready)
+        #expect(states["web-inspector"] == .ready)
         #expect(states["coredevice"] == .blocked)
         // Without Xcode the native check still reads the device; with no image on this Mac for it, the state is Missing.
         #expect(states["developer-services"] == .unavailable)
@@ -243,6 +245,9 @@ struct ReadinessAndActionTests {
         #expect(profiles.summary == "1 configuration profile installed.")
         #expect(profiles.details.first?.0 == "Office Wi-Fi")
         #expect(profiles.details.first?.1 == "Example Corp")
+        let tabs = try await executor.execute(try #require(ActionCatalog.descriptor("web-tabs")), target: target, values: [:])
+        #expect(tabs.summary == "2 inspectable pages.")
+        #expect(tabs.details.contains { $0.0 == "Example Domain" && $0.1.contains("https://example.com/") && $0.1.contains("Safari") })
 
         // A pcapd record with no link-layer header: 95-byte header + a 20-byte IPv4 packet.
         var record = [UInt8](repeating: 0, count: 95)

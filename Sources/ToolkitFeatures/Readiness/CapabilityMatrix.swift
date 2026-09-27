@@ -66,6 +66,7 @@ public enum CapabilityRow: String, CaseIterable, Sendable {
     case lockState = "lock-state"
     case lockdownServices = "lockdown-services"
     case backupService = "backup-service"
+    case webInspector = "web-inspector"
     case simulatorRuntime = "simulator-runtime"
     case simulatorRunning = "simulator-running"
 
@@ -74,7 +75,7 @@ public enum CapabilityRow: String, CaseIterable, Sendable {
         case .host, .xcodeTools, .usbmux: return "This Mac"
         case .deviceConnection, .pairingTrust: return "Connection"
         case .developerMode, .coreDevice, .developerServices: return "Developer readiness"
-        case .lockState, .lockdownServices, .backupService: return "Device services"
+        case .lockState, .lockdownServices, .backupService, .webInspector: return "Device services"
         case .simulatorRuntime, .simulatorRunning: return "Simulator"
         }
     }
@@ -92,6 +93,7 @@ public enum CapabilityRow: String, CaseIterable, Sendable {
         case .lockState: return "Device unlocked"
         case .lockdownServices: return "Logging and diagnostics services"
         case .backupService: return "Backup service"
+        case .webInspector: return "Safari Web Inspector"
         case .simulatorRuntime: return "Simulator runtime installed"
         case .simulatorRunning: return "Simulator running"
         }
@@ -110,6 +112,7 @@ public enum CapabilityRow: String, CaseIterable, Sendable {
         case .lockState: return "Unlock the device and keep it awake while working."
         case .lockdownServices: return "Unlock the device; if it was just restarted, unlock it once."
         case .backupService: return "Unlock the device and make sure no other backup (Finder) is running."
+        case .webInspector: return "Only needed to list Safari and web view tabs. Turn on Settings › Apps › Safari › Advanced › Web Inspector (Settings › Safari › Advanced before iOS 18)."
         case .simulatorRuntime: return "Install the simulator runtime in Xcode › Settings › Components."
         case .simulatorRunning: return "Start the simulator from the Simulator actions or from Xcode."
         }
@@ -117,7 +120,7 @@ public enum CapabilityRow: String, CaseIterable, Sendable {
 
     public static func rows(for kind: DeviceKind) -> [CapabilityRow] {
         switch kind {
-        case .physical: return [.host, .xcodeTools, .usbmux, .deviceConnection, .pairingTrust, .developerMode, .coreDevice, .developerServices, .lockState, .lockdownServices, .backupService]
+        case .physical: return [.host, .xcodeTools, .usbmux, .deviceConnection, .pairingTrust, .developerMode, .coreDevice, .developerServices, .lockState, .lockdownServices, .backupService, .webInspector]
         case .simulator: return [.host, .xcodeTools, .simulatorRuntime, .simulatorRunning]
         case .demo: return [.host]
         }
@@ -264,6 +267,20 @@ public struct CapabilityProbe: Sendable {
             record(.pairingTrust, pairing == .paired ? CapabilityRow.pairingTrust.result(.ready, "Trusted (reported by Xcode).") : CapabilityRow.pairingTrust.result(.blocked, "Needs a connected device."))
             record(.lockdownServices, CapabilityRow.lockdownServices.result(.blocked, "Needs a USB or Wi-Fi sync connection."))
             record(.backupService, CapabilityRow.backupService.result(.blocked, "Needs a USB or Wi-Fi sync connection."))
+        }
+
+        // Web Inspector: a short probe, because it is off on most devices and a refusal only shows as
+        // a dropped connection. “Not answering” is attention, not a failure.
+        if lockdownReady {
+            do {
+                let applications = try await WebInspector.openPages(on: target, usbmux: usbmux, handshakeDeadline: .seconds(4), listingWindow: .seconds(1))
+                let pages = applications.reduce(0) { $0 + $1.pages.count }
+                record(.webInspector, CapabilityRow.webInspector.result(.ready, pages == 1 ? "Answering (1 inspectable page)." : "Answering (\(pages) inspectable pages)."))
+            } catch {
+                record(.webInspector, CapabilityRow.webInspector.result(.attention, "Not answering — Web Inspector is probably off.", evidence: (error as? ToolkitError)?.technicalDetail ?? error.localizedDescription))
+            }
+        } else {
+            record(.webInspector, CapabilityRow.webInspector.result(.blocked, "Needs a trusted USB connection."))
         }
 
         // With a trusted USB session the developer-image row comes from the native check below.

@@ -355,6 +355,15 @@ public struct ActionExecutor: Sendable {
             let digest = try writer.finish()
             return make(action, target, summary: "\(ending) \(writer.packetCount == 1 ? "1 packet" : "\(writer.packetCount) packets") saved.", details: [("File", output.path), ("Packets", "\(writer.packetCount)"), ("SHA-256", digest)], raw: output.path, files: [output])
 
+        case "web-tabs":
+            let target = try requireTarget(target)
+            let applications = try await WebInspector.openPages(on: target, usbmux: usbmux)
+            let pages = applications.flatMap { app in app.pages.map { (app, $0) } }
+            let summary = pages.isEmpty
+                ? (applications.isEmpty ? "No app currently allows inspection." : "\(applications.count) inspectable apps, no open pages.")
+                : (pages.count == 1 ? "1 inspectable page." : "\(pages.count) inspectable pages.")
+            return make(action, target, summary: summary, details: pages.prefix(500).map { app, page in (page.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled", [page.url, app.name ?? app.bundleIdentifier, page.kindLabel].compactMap { $0 }.joined(separator: " · ")) }, raw: String(decoding: (try? JSONOutput.encode(applications)) ?? Data(), as: UTF8.self))
+
         case "bonjour":
             let services = await NetworkServiceBrowser.browse()
             return make(action, target, summary: services.isEmpty ? "No devices are advertising on this network." : "\(services.count) services found.", details: services.map { ($0.name, $0.meaning) }, raw: services.map { "\($0.type)\t\($0.name)\t\($0.interface ?? "")" }.joined(separator: "\n"))
