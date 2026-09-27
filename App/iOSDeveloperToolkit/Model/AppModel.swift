@@ -250,7 +250,7 @@ final class AppModel {
         case .failure(let error):
             let outcome = OperationOutcome.from(error)
             record(title: title, workspace: workspace, target: target, transport: transport, argv: argv, started: started, finished: finished, outcome: outcome, error: (error as? ToolkitError)?.message ?? error.localizedDescription, outputPaths: outputPaths)
-            logger.error("\(title, privacy: .public) failed: \(outcome.rawValue, privacy: .public)")
+            logger.error("\(title, privacy: .private) failed: \(outcome.rawValue, privacy: .public)")
             if presentErrors && outcome != .cancelled {
                 presentedError = PresentedError(error, context: title)
             } else if outcome == .cancelled {

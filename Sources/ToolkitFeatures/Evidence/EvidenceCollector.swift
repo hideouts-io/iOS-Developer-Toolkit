@@ -167,7 +167,7 @@ public actor EvidenceCollector {
             try SecureFileIO.writeNewFile(try JSONOutput.encode(manifest), to: caseFolder.appendingPathComponent(CaseWorkflow.manifestFileName))
             try HashManifest.write(for: caseFolder, fileName: "SHA256SUMS")
         } catch {
-            logger.error("Could not finalize the case: \(error.localizedDescription, privacy: .public)")
+            logger.error("Could not finalize the case: \(error.localizedDescription, privacy: .private)")
         }
         logger.info("Evidence collection finished: \(outcome.rawValue, privacy: .public)")
         return manifest

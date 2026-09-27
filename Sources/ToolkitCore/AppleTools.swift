@@ -71,7 +71,7 @@ public enum XcodeTool: String, Sendable, CaseIterable {
             standardInput: standardInput,
             timeout: timeout,
             outputLimit: outputLimit,
-            displayName: displayName ?? ([rawValue] + arguments.prefix(3)).joined(separator: " ")
+            displayName: displayName ?? CommandRequest.defaultDisplayName(tool: rawValue, arguments: arguments)
         )
     }
 }

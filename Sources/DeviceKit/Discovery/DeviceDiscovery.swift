@@ -262,7 +262,7 @@ public actor DeviceDiscovery {
                     await handle(event)
                 }
             } catch {
-                logger.error("usbmuxd listener ended: \(String(describing: error), privacy: .public)")
+                logger.error("usbmuxd listener ended: \((error as? ToolkitError)?.kind.rawValue ?? "error", privacy: .public) \(String(describing: error), privacy: .private)")
             }
             try? await Task.sleep(nanoseconds: backoff * 1_000_000_000)
             backoff = min(backoff * 2, 30)

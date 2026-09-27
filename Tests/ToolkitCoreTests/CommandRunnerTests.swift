@@ -18,6 +18,17 @@ struct CommandRunnerTests {
         )
     }
 
+    /// Display names are logged publicly, so identifiers, paths, and values must never appear.
+    @Test func defaultDisplayNamesContainNoIdentifiers() throws {
+        #expect(CommandRequest.defaultDisplayName(tool: "simctl", arguments: ["boot", "780C6431-EBAF-4AAE-AA6C-E8886DD4D415"]) == "simctl boot")
+        #expect(CommandRequest.defaultDisplayName(tool: "devicectl", arguments: ["device", "info", "details", "--device", "00008110-001234560ABC801E"]) == "devicectl device info details")
+        #expect(CommandRequest.defaultDisplayName(tool: "simctl", arguments: ["openurl", "booted", "https://example.com"]) == "simctl openurl booted")
+        #expect(CommandRequest.defaultDisplayName(tool: "open", arguments: ["/Users/someone/Case.trace"]) == "open")
+        #expect(CommandRequest.defaultDisplayName(tool: "devicectl", arguments: ["list", "devices", "--json-output", "/tmp/x.json"]) == "devicectl list devices")
+        let request = try XcodeTool.simctl.request(["shutdown", "780C6431-EBAF-4AAE-AA6C-E8886DD4D415"])
+        #expect(request.displayName == "simctl shutdown")
+    }
+
     @Test func capturesStandardOutputAndError() async throws {
         let result = try await runner.run(shell("printf out; printf err 1>&2"))
         #expect(result.succeeded)

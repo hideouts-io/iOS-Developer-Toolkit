@@ -37,8 +37,16 @@ public struct CommandRequest: Sendable, Hashable {
         self.standardInput = standardInput
         self.timeout = timeout
         self.outputLimit = outputLimit
-        self.displayName = displayName ?? ([executable.lastPathComponent] + arguments.prefix(3)).joined(separator: " ")
+        self.displayName = displayName ?? Self.defaultDisplayName(tool: executable.lastPathComponent, arguments: arguments)
         self.terminationGracePeriod = terminationGracePeriod
+    }
+
+    /// The tool plus its leading subcommand words (at most three). Display names are logged
+    /// publicly, so the name stops at the first argument that is not a plain word: UDIDs, paths,
+    /// URLs, options, and values never appear in it.
+    public static func defaultDisplayName(tool: String, arguments: [String]) -> String {
+        let words = arguments.prefix(3).prefix { $0.range(of: "^[A-Za-z][A-Za-z-]*$", options: .regularExpression) != nil }
+        return ([tool] + words).joined(separator: " ")
     }
 
     /// A copy-pasteable rendering of the argument vector (quoted for display only).
@@ -267,7 +275,7 @@ private final class ProcessExecution: @unchecked Sendable {
         do {
             try ExecutableValidator.validate(request.executable)
         } catch {
-            Self.logger.error("Refused to launch \(self.request.displayName, privacy: .public): \(String(describing: error), privacy: .public)")
+            Self.logger.error("Refused to launch \(self.request.displayName, privacy: .public): \((error as? ToolkitError)?.kind.rawValue ?? "error", privacy: .public) \(String(describing: error), privacy: .private)")
             continuation.finish(throwing: error)
             return
         }
@@ -299,7 +307,7 @@ private final class ProcessExecution: @unchecked Sendable {
         } catch {
             outputPipe.fileHandleForReading.readabilityHandler = nil
             errorPipe.fileHandleForReading.readabilityHandler = nil
-            Self.logger.error("Launch failed for \(self.request.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            Self.logger.error("Launch failed for \(self.request.displayName, privacy: .public): \(error.localizedDescription, privacy: .private)")
             continuation.finish(throwing: ToolkitError(
                 .toolMissing,
                 message: "\(request.executable.lastPathComponent) could not be started.",
@@ -316,7 +324,7 @@ private final class ProcessExecution: @unchecked Sendable {
                 do {
                     try handle.write(contentsOf: input)
                 } catch {
-                    Self.logger.error("Could not write standard input: \(error.localizedDescription, privacy: .public)")
+                    Self.logger.error("Could not write standard input: \(error.localizedDescription, privacy: .private)")
                 }
                 try? handle.close()
             }
