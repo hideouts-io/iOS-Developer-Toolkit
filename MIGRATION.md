@@ -182,8 +182,12 @@ screenshots come from these renders.
 `scripts/build-release.sh` produced a universal (arm64 + x86_64) app, ad-hoc signed with the
 hardened runtime (`flags=0x10002(adhoc,runtime)`), with `idt`, dependency licenses, and the SPDX
 SBOM inside, and verified it again from the ZIP. The release build launched and rendered, and its
-`idt` listed devices. The x86_64 slice is present (`lipo`) but was **not executed**: this Mac has
-no Rosetta. `spctl` rejects the app, as expected for an app that is not notarized.
+`idt` listed devices. After Rosetta 2 was installed (2026-09-27), the x86_64 slices were run under
+Rosetta: the release script's check ran the Intel `idt`; the Intel `idt` listed devices, found all
+27 Xcode routes, and reported developer-image status; the Intel app rendered all 14 pages at both
+window sizes without layout problems; and all 161 package tests pass when built for x86_64 and run
+with `arch -x86_64 xctest`. This is Rosetta on Apple silicon, not a real Intel Mac. `spctl`
+rejects the app, as expected for an app that is not notarized.
 
 ### 5.4 Physical devices
 
@@ -239,7 +243,8 @@ Everything marked 🟡 in §2 needs a pass of
 - **CoreDevice commands** are verified for argument construction, JSON parsing (from recorded
   output shapes), and presence in the installed Xcode (Toolchain Check), not against a device.
 - **UI tests** run only in CI (Automation Mode authorization cannot be granted non-interactively).
-- **Intel Macs:** the universal build is produced and signed, but the x86_64 slice has not been run.
+- **Intel Macs:** the x86_64 slice is verified under Rosetta 2 on Apple silicon (tests, CLI, and
+  rendering), not on Intel hardware.
 - **CI** has not run yet: the workflows were validated as YAML and their scripts were run locally
   with Xcode 27. GitHub's `macos-26` image ships an older Xcode; if the Swift 6.4 toolchain is
   required, set the `XCODE_VERSION` repository variable.

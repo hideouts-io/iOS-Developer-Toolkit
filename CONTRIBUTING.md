@@ -80,6 +80,17 @@ Also, when relevant:
 - **Device protocol code:** add a test against the fake device in `Tests/DeviceTestSupport`, and
   if you can, run the relevant part of [docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md).
   State the device family, iOS version, and connection you tested — no identifiers.
+- **Intel (x86_64):** with Rosetta 2 installed, build the tests for x86_64 and run each bundle
+  with the universal `xctest` (SwiftPM's own test helper is arm64-only):
+
+  ```bash
+  swift build --build-tests --arch x86_64 --scratch-path build-output/x86-tests
+  for t in ToolkitCoreTests DeviceKitTests ToolkitFeaturesTests; do
+    arch -x86_64 xcrun xctest build-output/x86-tests/out/Products/Debug/$t.xctest
+  done
+  ```
+
+  `scripts/build-release.sh` also runs the Intel `idt` when Rosetta is available.
 - **Release packaging:** `scripts/build-release.sh` must succeed (it builds the version in `ToolkitVersion.swift` into `build-output/release/`).
 
 ## Pull requests
