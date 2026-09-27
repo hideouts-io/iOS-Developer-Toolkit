@@ -12,6 +12,9 @@ public enum ToolchainCheck {
         public var path: [String]
         public var requiredOptions: [String]
         public var usedFor: String
+        /// Present in Xcode 27 but not in Xcode 26.6 (seen on the CI runner): older Xcode versions
+        /// lack the command or option, so the feature needs a newer Xcode rather than being broken.
+        public var needsRecentXcode = false
     }
 
     public enum State: String, Sendable {
@@ -19,6 +22,7 @@ public enum ToolchainCheck {
         case changed = "Changed"
         case missing = "Missing"
         case failed = "Could not check"
+        case needsNewerXcode = "Needs a newer Xcode"
     }
 
     public struct Result: Sendable, Hashable, Identifiable {
@@ -36,17 +40,17 @@ public enum ToolchainCheck {
         Route(tool: .devicectl, path: ["device", "info", "lockState"], requiredOptions: ["--device"], usedFor: "Readiness Check"),
         Route(tool: .devicectl, path: ["device", "info", "ddiServices"], requiredOptions: ["--auto-mount-ddis", "--no-auto-mount-ddis"], usedFor: "Developer services"),
         Route(tool: .devicectl, path: ["device", "info", "displays"], requiredOptions: ["--device"], usedFor: "Displays action"),
-        Route(tool: .devicectl, path: ["device", "profile", "list"], requiredOptions: ["--type"], usedFor: "Configuration profiles"),
-        Route(tool: .devicectl, path: ["device", "capture", "screenshot"], requiredOptions: ["--destination"], usedFor: "Screenshot"),
+        Route(tool: .devicectl, path: ["device", "profile", "list"], requiredOptions: ["--type"], usedFor: "Configuration profiles", needsRecentXcode: true),
+        Route(tool: .devicectl, path: ["device", "capture", "screenshot"], requiredOptions: ["--destination"], usedFor: "Screenshot", needsRecentXcode: true),
         Route(tool: .devicectl, path: ["device", "sysdiagnose"], requiredOptions: ["--destination"], usedFor: "Sysdiagnose"),
         Route(tool: .devicectl, path: ["device", "install", "app"], requiredOptions: ["--device"], usedFor: "Install App"),
         Route(tool: .devicectl, path: ["device", "uninstall", "app"], requiredOptions: ["--device"], usedFor: "Remove app"),
         Route(tool: .devicectl, path: ["device", "process", "launch"], requiredOptions: ["--terminate-existing"], usedFor: "Launch app"),
         Route(tool: .devicectl, path: ["device", "process", "terminate"], requiredOptions: ["--pid"], usedFor: "Stop a process"),
-        Route(tool: .devicectl, path: ["device", "process", "openURL"], requiredOptions: ["--device"], usedFor: "Open URL"),
-        Route(tool: .devicectl, path: ["device", "simulate", "location", "coordinate"], requiredOptions: ["--latitude", "--longitude"], usedFor: "Location Lab"),
-        Route(tool: .devicectl, path: ["device", "simulate", "location", "route"], requiredOptions: ["--route-file"], usedFor: "Location Lab routes"),
-        Route(tool: .devicectl, path: ["device", "simulate", "location", "clear"], requiredOptions: ["--device"], usedFor: "Location Lab"),
+        Route(tool: .devicectl, path: ["device", "process", "openURL"], requiredOptions: ["--device"], usedFor: "Open URL", needsRecentXcode: true),
+        Route(tool: .devicectl, path: ["device", "simulate", "location", "coordinate"], requiredOptions: ["--latitude", "--longitude"], usedFor: "Location Lab", needsRecentXcode: true),
+        Route(tool: .devicectl, path: ["device", "simulate", "location", "route"], requiredOptions: ["--route-file"], usedFor: "Location Lab routes", needsRecentXcode: true),
+        Route(tool: .devicectl, path: ["device", "simulate", "location", "clear"], requiredOptions: ["--device"], usedFor: "Location Lab", needsRecentXcode: true),
         Route(tool: .devicectl, path: ["device", "reboot"], requiredOptions: ["--device"], usedFor: "Restart device"),
         Route(tool: .devicectl, path: ["manage", "ddis", "update"], requiredOptions: [], usedFor: "Update developer images"),
         Route(tool: .devicectl, path: ["list", "preferredDDI"], requiredOptions: ["--platform"], usedFor: "Preferred developer image"),
@@ -69,11 +73,14 @@ public enum ToolchainCheck {
 
     public static func evaluate(_ route: Route, helpText: String, succeeded: Bool) -> Result {
         let text = helpText.lowercased()
+        let newerXcode = "Not in this Xcode; update Xcode to use \(route.usedFor) through the Xcode device service."
         if !succeeded || text.contains("unknown subcommand") || text.contains("error: unexpected argument") || text.contains("unrecognized subcommand") {
+            if route.needsRecentXcode { return Result(route: route, state: .needsNewerXcode, detail: newerXcode) }
             return Result(route: route, state: .missing, detail: "The installed \(route.tool.rawValue) does not offer this command.")
         }
         let missing = route.requiredOptions.filter { !helpText.contains($0) }
         if !missing.isEmpty {
+            if route.needsRecentXcode { return Result(route: route, state: .needsNewerXcode, detail: newerXcode + " (missing option(s): \(missing.joined(separator: ", ")))") }
             return Result(route: route, state: .changed, detail: "Missing option(s): \(missing.joined(separator: ", "))")
         }
         return Result(route: route, state: .available, detail: "")
@@ -118,7 +125,7 @@ public enum ToolchainCheck {
 
     public static func render(_ results: [Result]) -> String {
         var lines = ["Toolchain check — \(ISO8601.string(Date()))", ""]
-        for state in [State.missing, .changed, .failed, .available] {
+        for state in [State.missing, .changed, .failed, .needsNewerXcode, .available] {
             let matching = results.filter { $0.state == state }
             guard !matching.isEmpty else { continue }
             lines.append("\(state.rawValue) (\(matching.count)):")

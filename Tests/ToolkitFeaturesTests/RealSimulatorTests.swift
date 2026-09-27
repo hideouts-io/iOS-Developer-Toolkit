@@ -8,14 +8,20 @@ import ToolkitCore
 /// booting a simulator takes time and changes local simulator state.
 @Suite("Real simulator (opt-in)", .serialized, .enabled(if: ProcessInfo.processInfo.environment["IDT_SIMULATOR_TESTS"] == "1"))
 struct RealSimulatorTests {
-    @Test(.timeLimit(.minutes(5)))
+    // A cold first boot on a CI runner can take several minutes.
+    @Test(.timeLimit(.minutes(20)))
     func simulatorWorkflowEndToEnd() async throws {
+        let clock = ContinuousClock()
+        let start = clock.now
+        func step(_ name: String) { print("[simulator e2e] \(clock.now - start): \(name)") }
         let client = SimulatorClient()
         let records = try await client.list()
         let record = try #require(records.first { $0.isAvailable && $0.device.family == .iPhone }, "No available iPhone simulator")
         let target = record.device.target
         let wasBooted = record.state == .booted
+        step("booting")
         try await client.boot(target)
+        step("booted")
 
         // Wait for the boot to settle.
         var booted = false
@@ -25,6 +31,7 @@ struct RealSimulatorTests {
         }
         #expect(booted)
 
+        step("location")
         let location = LocationController(simulators: client)
         try await location.set(latitude: 51.5007, longitude: -0.1246, on: target)
         try await location.startRoute([(51.5007, -0.1246), (51.5010, -0.1200)], speedMetresPerSecond: 5, intervalSeconds: 1, on: target)
@@ -41,6 +48,7 @@ struct RealSimulatorTests {
         #expect(apps.contains { $0.bundleIdentifier == "com.apple.mobilesafari" })
 
         // Live logs: open the stream, collect for a few seconds, then stop.
+        step("logs")
         let capture = try LogCapture(kind: .simulator, target: target, directory: directory.appendingPathComponent("logs"))
         let stream = try await LiveLogSource.open(.simulator, target: target)
         let collector = Task { () -> Int in
@@ -70,7 +78,9 @@ struct RealSimulatorTests {
         #expect(readiness.first { $0.id == "xcode-tools" }?.state == .ready)
 
         // Install, list, launch, and remove a real (minimal) simulator app.
+        step("building fixture app")
         let fixture = try await Self.buildFixtureApp(in: directory)
+        step("installing fixture app")
         try await client.install(appAt: fixture, on: target)
         #expect(try await client.apps(target).contains { $0.bundleIdentifier == Self.fixtureBundleID })
         let launched = try await client.launch(bundleIdentifier: Self.fixtureBundleID, on: target, terminateExisting: true)
@@ -78,6 +88,7 @@ struct RealSimulatorTests {
         try await client.uninstall(bundleIdentifier: Self.fixtureBundleID, on: target)
         #expect(try await !client.apps(target).contains { $0.bundleIdentifier == Self.fixtureBundleID })
 
+        step("done")
         if !wasBooted { try await client.shutdown(target) }
     }
 

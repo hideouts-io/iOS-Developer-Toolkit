@@ -175,6 +175,13 @@ final class FakeTSS: PersonalizationTransport, @unchecked Sendable {
     }
 }
 
+/// Host locations with nothing installed, so tests see only their fixtures (CI runners have older
+/// Xcode versions whose legacy images would otherwise be found first).
+let isolatedHostLocations = DeveloperImageHostLocations(
+    xcodePersonalizedImage: URL(fileURLWithPath: "/nonexistent/idt-tests/iOS_DDI", isDirectory: true),
+    applications: URL(fileURLWithPath: "/nonexistent/idt-tests", isDirectory: true)
+)
+
 private func withDevice(version: String, developerMode: Bool = true, _ body: (FakeDeviceServer, FakeImageMounter) async throws -> Void) async throws {
     let server = try FakeDeviceServer()
     server.lockdownValues = [
@@ -237,6 +244,21 @@ struct DeveloperImageLibraryTests {
         #expect(direct.map(\.version) == ["15.5"])
         #expect(DeveloperImageLibrary.majorMinor("16") == "16.0")
         #expect(DeveloperImageLibrary.majorMinor("iPhone") == nil)
+    }
+
+    /// Legacy images shipped by older Xcode versions installed on this machine (for example on CI
+    /// runners) are found with their version, and their files are readable.
+    @Test(.enabled(if: !DeveloperImageLibrary.legacySources().isEmpty))
+    func installedLegacyImagesAreUsable() throws {
+        let sources = DeveloperImageLibrary.legacySources()
+        for source in sources {
+            #expect(DeveloperImageLibrary.majorMinor(source.version) == source.version)
+            #expect(source.origin == .xcode)
+            #expect(try DeveloperImageLibrary.readImage(source.image).count > 1_000_000)
+            #expect(try DeveloperImageLibrary.readSmallFile(source.signature).count > 0)
+        }
+        let first = try #require(sources.first)
+        #expect(DeveloperImageLibrary.legacyImage(forVersion: first.version + ".1", in: sources)?.version == first.version)
     }
 
     /// The image Xcode installs on this Mac has a build identity for current iPhones.
@@ -394,7 +416,7 @@ struct DeveloperImageMountTests {
         defer { fixture.remove() }
         try await withDevice(version: "26.1") { server, mounter in
             let tss = FakeTSS()
-            let manager = DeveloperImageManager(usbmux: server.client, transport: tss)
+            let manager = DeveloperImageManager(usbmux: server.client, transport: tss, locations: isolatedHostLocations)
             let folders = [fixture.root]
 
             let before = await manager.status(for: server.target, userFolders: folders)
@@ -435,7 +457,7 @@ struct DeveloperImageMountTests {
         defer { fixture.remove() }
         try await withDevice(version: "15.5.1") { server, mounter in
             let tss = FakeTSS()
-            let manager = DeveloperImageManager(usbmux: server.client, transport: tss)
+            let manager = DeveloperImageManager(usbmux: server.client, transport: tss, locations: isolatedHostLocations)
             let status = await manager.status(for: server.target, userFolders: [fixture.root])
             #expect(status.state == .available)
             #expect(status.requiredKind == .legacy)
@@ -453,7 +475,7 @@ struct DeveloperImageMountTests {
         let fixture = try PersonalizedFixture()
         defer { fixture.remove() }
         try await withDevice(version: "26.1", developerMode: false) { server, mounter in
-            let manager = DeveloperImageManager(usbmux: server.client, transport: FakeTSS())
+            let manager = DeveloperImageManager(usbmux: server.client, transport: FakeTSS(), locations: isolatedHostLocations)
             let status = await manager.status(for: server.target, userFolders: [fixture.root])
             #expect(status.state == .blocked)
             #expect(status.headline == "Developer Mode is off.")
@@ -461,7 +483,7 @@ struct DeveloperImageMountTests {
             #expect(mounter.uploads.isEmpty)
         }
         try await withDevice(version: "16.4") { server, _ in
-            let manager = DeveloperImageManager(usbmux: server.client, transport: FakeTSS())
+            let manager = DeveloperImageManager(usbmux: server.client, transport: FakeTSS(), locations: isolatedHostLocations)
             let status = await manager.status(for: server.target, userFolders: [])
             // This Mac may have Xcode's modern image, but never a 16.4 legacy image in these folders.
             #expect(status.state == .missing || status.state == .incompatible)
@@ -469,7 +491,7 @@ struct DeveloperImageMountTests {
         }
         try await withDevice(version: "26.1") { server, mounter in
             mounter.mountError = ("DeviceLocked", "The device is locked")
-            let manager = DeveloperImageManager(usbmux: server.client, transport: FakeTSS())
+            let manager = DeveloperImageManager(usbmux: server.client, transport: FakeTSS(), locations: isolatedHostLocations)
             do {
                 _ = try await manager.mount(server.target, userFolders: [fixture.root])
                 Issue.record("expected a locked-device error")
@@ -486,7 +508,7 @@ struct DeveloperImageMountTests {
         try await withDevice(version: "26.1") { server, _ in
             server.lockdownValues["ChipID"] = nil
             server.lockdownValues["BoardId"] = nil
-            let status = await DeveloperImageManager(usbmux: server.client, transport: FakeTSS()).status(for: server.target, userFolders: [fixture.root])
+            let status = await DeveloperImageManager(usbmux: server.client, transport: FakeTSS(), locations: isolatedHostLocations).status(for: server.target, userFolders: [fixture.root])
             #expect(status.state == .personalizationRequired)
             #expect(status.facts?.chipID == PersonalizedFixture.chipID)
             #expect(status.facts?.boardID == PersonalizedFixture.boardID)

@@ -250,6 +250,11 @@ Everything marked 🟡 in §2 needs a pass of
   all 8 UI tests, the layout check, and dependency review pass. Two fixes came out of the first
   runs: an array-type inference difference in Swift 6.3 (test code), and waiting for simulators to
   finish booting (`simctl bootstatus -b`) before launching apps.
+- **Older Xcode:** Xcode 26.6 (the CI runner) lacks `devicectl device simulate location`, the
+  screenshot `--destination` option, `device process openURL`, and `device profile list --type`.
+  With Xcode 26, location simulation on iOS 17+ and those actions through Xcode's device service are
+  unavailable; the app says so (“needs a newer Xcode”) and the Toolchain Check lists them. Native
+  replacements that avoid `devicectl` are tracked in §9 (G1, G2). The app is verified with Xcode 27.
 
 ### 6.3 Behaviour differences from 0.3.x
 

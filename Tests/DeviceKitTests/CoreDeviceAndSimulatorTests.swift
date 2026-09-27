@@ -128,6 +128,31 @@ struct CoreDeviceClientTests {
         }
     }
 
+    /// An older Xcode rejects newer subcommands or options before doing anything (no JSON output).
+    @Test(arguments: [
+        "Error: Unknown option '--destination'\nUsage: devicectl device capture screenshot --device <device>",
+        "Error: Unexpected argument 'simulate'\nUsage: devicectl device <subcommand>",
+    ])
+    func olderXcodeSyntaxErrorsSayXcodeIsTooOld(stderr: String) async throws {
+        let runner = ScriptedCommandRunner { _ in .init(exitCode: 64, standardError: Data(stderr.utf8)) }
+        do {
+            _ = try await CoreDeviceClient(runner: runner).lockState(target())
+            Issue.record("expected failure")
+        } catch let error as ToolkitError {
+            #expect(error.kind == .unsupported)
+            #expect(error.message.contains("does not support this command"))
+            #expect(error.recovery?.contains("newer Xcode") == true)
+        }
+        // A device error that happens to mention an option still comes from the JSON envelope.
+        let locked = ScriptedCommandRunner { _ in .init(exitCode: 1, standardError: Data("Unknown option".utf8), jsonFile: Fixture.data("coredevice/error-locked.json")) }
+        do {
+            _ = try await CoreDeviceClient(runner: locked).lockState(target())
+            Issue.record("expected failure")
+        } catch let error as ToolkitError {
+            #expect(error.kind == .deviceLocked)
+        }
+    }
+
     @Test func missingJSONWithFailureStillExplains() async throws {
         let runner = ScriptedCommandRunner { _ in .init(exitCode: 72, standardError: Data("xcrun: error: unable to find utility \"devicectl\"".utf8)) }
         do {

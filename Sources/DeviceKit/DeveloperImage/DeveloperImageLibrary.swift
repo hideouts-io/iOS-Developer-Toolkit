@@ -79,10 +79,11 @@ public enum DeveloperImageLibrary {
     /// Xcode's installed image plus any user folders that contain a personalized image.
     public static func personalizedSources(userFolders: [URL] = [], xcodeImage: URL = xcodePersonalizedImage) -> [PersonalizedImageSource] {
         var sources: [PersonalizedImageSource] = []
-        if let source = try? personalizedSource(at: xcodeImage, origin: .xcode) { sources.append(source) }
+        // Folders the user chose come first: an explicit choice wins over what Xcode installed.
         for folder in userFolders {
             if let source = try? personalizedSource(at: folder, origin: .userFolder) { sources.append(source) }
         }
+        if let source = try? personalizedSource(at: xcodeImage, origin: .xcode) { sources.append(source) }
         return sources
     }
 
@@ -157,18 +158,19 @@ public enum DeveloperImageLibrary {
     /// "16.4") or version subfolders like Xcode's DeviceSupport.
     public static func legacySources(userFolders: [URL] = [], applications: URL = URL(fileURLWithPath: "/Applications", isDirectory: true)) -> [LegacyImageSource] {
         var sources: [LegacyImageSource] = []
-        let xcodes = ((try? FileManager.default.contentsOfDirectory(at: applications, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.lastPathComponent.hasPrefix("Xcode") && $0.pathExtension == "app" }
-        for xcode in xcodes {
-            let deviceSupport = xcode.appendingPathComponent("Contents/Developer/Platforms/iPhoneOS.platform/DeviceSupport", isDirectory: true)
-            sources += legacyImages(inContainer: deviceSupport, origin: .xcode)
-        }
+        // Folders the user chose come first: an explicit choice wins over what Xcode installed.
         for folder in userFolders {
             if let direct = legacyImage(in: folder, origin: .userFolder) {
                 sources.append(direct)
             } else {
                 sources += legacyImages(inContainer: folder, origin: .userFolder)
             }
+        }
+        let xcodes = ((try? FileManager.default.contentsOfDirectory(at: applications, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.lastPathComponent.hasPrefix("Xcode") && $0.pathExtension == "app" }
+        for xcode in xcodes {
+            let deviceSupport = xcode.appendingPathComponent("Contents/Developer/Platforms/iPhoneOS.platform/DeviceSupport", isDirectory: true)
+            sources += legacyImages(inContainer: deviceSupport, origin: .xcode)
         }
         return sources
     }
@@ -218,4 +220,22 @@ public enum DeveloperImageLibrary {
 
     static func readImage(_ url: URL) throws -> Data { try readValidatedFile(url, limit: maximumImageSize) }
     static func readSmallFile(_ url: URL) throws -> Data { try readValidatedFile(url, limit: maximumSmallFileSize) }
+}
+
+/// Where Xcode keeps developer images on this Mac. Injectable so tests see only their fixtures.
+public struct DeveloperImageHostLocations: Sendable, Hashable {
+    /// Xcode 16 and later: the personalized iOS image.
+    public var xcodePersonalizedImage: URL
+    /// The folder searched for `Xcode*.app` bundles with legacy DeviceSupport images.
+    public var applications: URL
+
+    public init(xcodePersonalizedImage: URL, applications: URL) {
+        self.xcodePersonalizedImage = xcodePersonalizedImage
+        self.applications = applications
+    }
+
+    public static let system = DeveloperImageHostLocations(
+        xcodePersonalizedImage: DeveloperImageLibrary.xcodePersonalizedImage,
+        applications: URL(fileURLWithPath: "/Applications", isDirectory: true)
+    )
 }

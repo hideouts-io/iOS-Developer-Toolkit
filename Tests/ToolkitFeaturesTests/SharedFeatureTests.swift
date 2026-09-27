@@ -13,8 +13,12 @@ struct ToolchainTests {
     func installedXcodeProvidesEveryRoute() async throws {
         let results = await ToolchainCheck.run(runner: ProcessCommandRunner())
         #expect(results.count == ToolchainCheck.routes.count)
-        let problems = results.filter { $0.state != .available }
+        // Routes every supported Xcode must have are required; routes newer Xcode versions add are
+        // reported as “needs a newer Xcode” (for example on the Xcode 26.6 CI runner).
+        let problems = results.filter { $0.state != .available && $0.state != .needsNewerXcode }
         #expect(problems.isEmpty, "\(problems.map { "\($0.route.id): \($0.state.rawValue) \($0.detail)" })")
+        let unexpectedNewer = results.filter { $0.state == .needsNewerXcode && !$0.route.needsRecentXcode }
+        #expect(unexpectedNewer.isEmpty)
     }
 
     @Test func evaluationDetectsMissingOptionsAndRoutes() {
@@ -22,6 +26,11 @@ struct ToolchainTests {
         #expect(ToolchainCheck.evaluate(route, helpText: "USAGE --alpha --beta", succeeded: true).state == .available)
         #expect(ToolchainCheck.evaluate(route, helpText: "USAGE --alpha", succeeded: true).state == .changed)
         #expect(ToolchainCheck.evaluate(route, helpText: "Error: Unknown subcommand", succeeded: false).state == .missing)
+        var newer = route
+        newer.needsRecentXcode = true
+        #expect(ToolchainCheck.evaluate(newer, helpText: "USAGE --alpha", succeeded: true).state == .needsNewerXcode)
+        #expect(ToolchainCheck.evaluate(newer, helpText: "Error: Unknown subcommand", succeeded: false).state == .needsNewerXcode)
+        #expect(ToolchainCheck.evaluate(newer, helpText: "USAGE --alpha --beta", succeeded: true).state == .available)
         let report = ToolchainCheck.render([ToolchainCheck.evaluate(route, helpText: "--alpha", succeeded: true)])
         #expect(report.contains("Changed (1)"))
         #expect(report.contains("--beta"))
@@ -49,7 +58,7 @@ struct ToolchainTests {
         let device = try #require(ToolReference.children(of: root, helpText: text).first { $0.path == ["device"] })
         let deviceChildren = ToolReference.children(of: device, helpText: try await ToolReference.helpText(device, runner: ProcessCommandRunner()))
         #expect(deviceChildren.contains { $0.path == ["device", "info"] })
-        #expect(deviceChildren.contains { $0.path == ["device", "simulate"] })
+        #expect(deviceChildren.contains { $0.path == ["device", "process"] })
     }
 }
 

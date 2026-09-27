@@ -42,6 +42,16 @@ jobs:
           swift run idt --version
           swift run idt toolchain
           swift run idt devices --simulators
+      - name: Record the runner's devicectl syntax (diagnostic)
+        # Shows how this Xcode spells the commands whose syntax changed between Xcode versions.
+        if: always()
+        run: |
+          xcrun devicectl --version || true
+          for route in "device" "device capture" "device capture screenshot" "device process" "device process launch" "device profile" "device profile list" "device simulate location"; do
+            echo "::group::devicectl help $route"
+            xcrun devicectl help $route || true
+            echo "::endgroup::"
+          done
 
   app:
     name: App build, UI tests, and layout
@@ -87,7 +97,7 @@ jobs:
   simulator:
     name: Real simulator end-to-end test
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - name: Select Xcode

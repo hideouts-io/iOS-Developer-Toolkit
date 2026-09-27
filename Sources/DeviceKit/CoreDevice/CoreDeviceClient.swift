@@ -285,6 +285,13 @@ public enum CoreDeviceErrorInterpreter {
         if (json == nil && command.exitCode == 72) || combined.contains("unable to find utility \"devicectl\"") {
             return error(.toolMissing, "CoreDevice tools (devicectl) are not available.", "Install Xcode 15 or later from the App Store, open it once, and select it with xcode-select.")
         }
+        // devicectl rejected the command line itself: the installed Xcode predates this command or
+        // option (for example Xcode 26.6 has no `device simulate location`). Checked before the
+        // phrase matches below, which could otherwise match words in the usage text.
+        let syntaxPhrases = ["unknown option", "unexpected argument", "unknown subcommand", "unrecognized subcommand"]
+        if json == nil, syntaxPhrases.contains(where: combined.contains) {
+            return error(.unsupported, "The installed Xcode's device tool (devicectl) does not support this command.", "This feature needs a newer Xcode (the app is verified with Xcode 27). Update Xcode, or open Tool Reference › Toolchain Check to see which features your Xcode supports.")
+        }
         let notFoundPhrases = ["no devices matched", "device was not found", "device not found", "unable to locate device", "no device found", "could not find device", "no such device"]
         if notFoundPhrases.contains(where: combined.contains) {
             return error(.deviceNotFound, "The selected device is no longer available to Xcode's device service.", "Reconnect the device with a USB cable, unlock it, and refresh the device list.")

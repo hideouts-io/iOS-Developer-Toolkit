@@ -178,10 +178,10 @@ public struct DeveloperImageHostInventory: Sendable, Hashable {
         self.coreDeviceAvailable = coreDeviceAvailable
     }
 
-    public static func discover(userFolders: [URL], coreDeviceAvailable: Bool) -> DeveloperImageHostInventory {
+    public static func discover(userFolders: [URL], coreDeviceAvailable: Bool, locations: DeveloperImageHostLocations = .system) -> DeveloperImageHostInventory {
         DeveloperImageHostInventory(
-            personalized: DeveloperImageLibrary.personalizedSources(userFolders: userFolders),
-            legacy: DeveloperImageLibrary.legacySources(userFolders: userFolders),
+            personalized: DeveloperImageLibrary.personalizedSources(userFolders: userFolders, xcodeImage: locations.xcodePersonalizedImage),
+            legacy: DeveloperImageLibrary.legacySources(userFolders: userFolders, applications: locations.applications),
             coreDeviceAvailable: coreDeviceAvailable
         )
     }
@@ -300,12 +300,14 @@ public struct DeveloperImageManager: Sendable {
     public let usbmux: USBMuxClient
     public let coreDevice: CoreDeviceClient
     public let transport: PersonalizationTransport
+    public let locations: DeveloperImageHostLocations
     static let logger = ToolkitLog.logger(.deviceCommunication)
 
-    public init(usbmux: USBMuxClient = USBMuxClient(), coreDevice: CoreDeviceClient = CoreDeviceClient(), transport: PersonalizationTransport = AppleTSSTransport()) {
+    public init(usbmux: USBMuxClient = USBMuxClient(), coreDevice: CoreDeviceClient = CoreDeviceClient(), transport: PersonalizationTransport = AppleTSSTransport(), locations: DeveloperImageHostLocations = .system) {
         self.usbmux = usbmux
         self.coreDevice = coreDevice
         self.transport = transport
+        self.locations = locations
     }
 
     // MARK: Status
@@ -318,7 +320,7 @@ public struct DeveloperImageManager: Sendable {
         case .physical:
             break
         }
-        let host = DeveloperImageHostInventory.discover(userFolders: userFolders, coreDeviceAvailable: target.coreDeviceIdentifier != nil)
+        let host = DeveloperImageHostInventory.discover(userFolders: userFolders, coreDeviceAvailable: target.coreDeviceIdentifier != nil, locations: locations)
         guard target.usbmuxDeviceID != nil else {
             return coreDeviceOnlyStatus(target: target, host: host)
         }
@@ -450,7 +452,7 @@ public struct DeveloperImageManager: Sendable {
         guard target.usbmuxDeviceID != nil else {
             throw ToolkitError(.unsupported, message: "The built-in mount needs a USB connection.", recovery: "Connect the device with a USB cable, or use Xcode's device service.")
         }
-        let host = DeveloperImageHostInventory.discover(userFolders: userFolders, coreDeviceAvailable: false)
+        let host = DeveloperImageHostInventory.discover(userFolders: userFolders, coreDeviceAvailable: false, locations: locations)
         try await DeviceSession.with(target, usbmux: usbmux) { session in
             let facts = try await gatherFacts(session)
             let mounter = try await ImageMounter.open(session)

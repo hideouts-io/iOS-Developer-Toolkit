@@ -167,7 +167,8 @@ struct Toolchain: AsyncParsableCommand {
     func run() async throws {
         let results = await ToolchainCheck.run(runner: ProcessCommandRunner())
         print(ToolchainCheck.render(results))
-        if results.contains(where: { $0.state != .available }) { throw ExitCode(2) }
+        // Features that only need a newer Xcode are reported but are not an error.
+        if results.contains(where: { $0.state != .available && $0.state != .needsNewerXcode }) { throw ExitCode(2) }
     }
 }
 
