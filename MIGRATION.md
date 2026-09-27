@@ -265,3 +265,30 @@ Everything marked 🟡 in §2 needs a pass of
 - 2026-09-27 — Test results and known limitations recorded (§5, §6); feature statuses set (§2).
 - 2026-09-27 — Python implementation, packaging, and go-ios/ipsw references removed.
 - 2026-09-27 — Final verification (§5.5): fresh clone, clean builds, every screen rendered, no-Xcode / no-usbmuxd / no-device states, unified log review. Fixed on the way: UI-test concurrency warnings (and a CI check for them), Toolchain Check message without Xcode, identifiers in public log fields. Physical-device verification remains open.
+
+## 8. Developer image (DDI) audit and restoration
+
+### 8.1 What the Python app did (0.3.4, via `pymobiledevice3` 11.15.1)
+
+| Path | Python behaviour |
+|---|---|
+| “Mount Personalized DDI” (default) | `pymobiledevice3 mounter auto-mount`. **iOS ≤ 16:** download `DeveloperDiskImage.dmg` + `.signature` for the device's `major.minor` from the third-party GitHub mirror `doronz88/DeveloperDiskImage`, `ReceiveBytes` (ImageType `Developer`) + `MountImage` over `com.apple.mobile.mobile_image_mounter`, mounted at `/Developer`. **iOS ≥ 17:** download `Image.dmg`, `Image.dmg.trustcache`, `BuildManifest.plist` (Xcode's personalized DDI) from the same mirror into `~/.pymobiledevice3`; `QueryPersonalizationManifest` (SHA-384 of the image) to reuse a manifest the device already holds, otherwise `QueryPersonalizationIdentifiers` + `QueryNonce` and an Apple TSS request (`gs.apple.com`) for an `ApImg4Ticket`; then `ReceiveBytes`/`MountImage` with ImageType `Personalized` and the trust cache; mounted at `/System/Developer`. Refused to mount when an image was already mounted or Developer Mode was off. |
+| “Install Local Xcode DDI Cryptex” | `local_ddi.py`: `hdiutil attach -readonly` of `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg`, then `pymobiledevice3 cryptex auto-install --restore-dir …/Restore` (personalized Cryptex install through the RemoteXPC `cryptexd` service), then detach. |
+| Unmount | `mounter umount-personalized` (`/System/Developer`) or `cryptex uninstall com.apple.MobileAsset.DDI`. |
+| Status | `mounter list`, `mounter lookup`, `query-developer-mode-status`, `query-nonce`, `query-personalization-identifiers`; Capability Matrix row “developer-image” from `mounter list`. |
+
+### 8.2 Gaps found in the Swift app (before this work)
+
+| # | Gap |
+|---|---|
+| G1 | No native detection of the mounted image (`LookupImage`) or of its compatibility; state came only from CoreDevice. |
+| G2 | Chip ID, board ID, and ECID (needed to select and personalize an image) were never read. |
+| G3 | No native iOS 17+ personalized mount (manifest reuse, TSS personalization, upload, mount). Only `devicectl … ddiServices --auto-mount-ddis`, which needs Xcode **and** a CoreDevice-paired device. |
+| G4 | No iOS ≤ 16 mount at all. |
+| G5 | No “already mounted → do not remount” guard on a native path. |
+| G6 | Unmount handled only `/System/Developer`, not the legacy `/Developer`. |
+| G7 | No image-state model; the GUI showed only “Available / Not prepared / Needs Xcode”. |
+| G8 | Image-mounter errors surfaced as “The image mounter service did not answer”. |
+| G9 | Readiness row and `idt ddi` depended on CoreDevice only. |
+
+Not reproduced by design: downloading Apple's images from the third-party mirror (redistributed Apple binaries — the Swift app uses the images Xcode installs in `/Library/Developer/DeveloperDiskImages`, or a folder the user chooses), and the RemoteXPC Cryptex install (needs a privileged tunnel; `devicectl` covers it).
