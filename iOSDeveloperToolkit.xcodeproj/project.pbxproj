@@ -329,6 +329,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.hideouts.iOSDeveloperToolkitUITests;
 				SDKROOT = macosx;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 				TEST_TARGET_NAME = iOSDeveloperToolkit;
 			};
 			name = Release;
@@ -355,6 +356,7 @@
 				PRODUCT_MODULE_NAME = iOSDeveloperToolkitApp;
 				PRODUCT_NAME = "iOS Developer Toolkit";
 				SDKROOT = macosx;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 			};
 			name = Release;
 		};
@@ -380,6 +382,7 @@
 				PRODUCT_MODULE_NAME = iOSDeveloperToolkitApp;
 				PRODUCT_NAME = "iOS Developer Toolkit";
 				SDKROOT = macosx;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 			};
 			name = Debug;
 		};
@@ -399,6 +402,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.hideouts.iOSDeveloperToolkitUITests;
 				SDKROOT = macosx;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 				TEST_TARGET_NAME = iOSDeveloperToolkit;
 			};
 			name = Debug;

@@ -211,6 +211,25 @@ struct ReadinessAndActionTests {
         let query = try await executor.execute(try #require(ActionCatalog.descriptor("app-query")), target: target, values: ["bundle": "com.example.demo"])
         #expect(query.summary.hasPrefix("Demo"))
 
+        // A pcapd record with no link-layer header: 95-byte header + a 20-byte IPv4 packet.
+        var record = [UInt8](repeating: 0, count: 95)
+        record[3] = 95
+        record[8] = 20
+        record[16] = 2
+        let blob = Data(record + [0x45] + [UInt8](repeating: 0, count: 19))
+        server.register(service: PacketCaptureService.serviceName) { channel in
+            try await PlistMessageConnection(channel: channel).send(.data(blob), format: .binary)
+        }
+        let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "action-pcap")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let capture = directory.appendingPathComponent("capture.pcap")
+        let pcap = try await executor.execute(try #require(ActionCatalog.descriptor("packet-capture")), target: target, values: ["duration": "5", "output": capture.path])
+        #expect(pcap.summary == "The device ended the capture early. 1 packet saved.")
+        #expect(try Data(contentsOf: capture).count == 24 + 16 + 14 + 20)
+        await #expect(throws: ToolkitError.self) {
+            _ = try await executor.execute(try #require(ActionCatalog.descriptor("packet-capture")), target: target, values: ["duration": "5", "output": capture.path])
+        }
+
         await #expect(throws: ToolkitError.self) {
             _ = try await executor.execute(try #require(ActionCatalog.descriptor("app-query")), target: target, values: ["bundle": "not valid!"])
         }

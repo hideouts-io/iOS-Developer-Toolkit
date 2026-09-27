@@ -49,6 +49,7 @@ targets:
         COMBINE_HIDPI_IMAGES: YES
         ARCHS: "$(ARCHS_STANDARD)"
         ONLY_ACTIVE_ARCH[config=Debug]: YES
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
   iOSDeveloperToolkitUITests:
     type: bundle.ui-testing
     platform: macOS
@@ -64,6 +65,7 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         DEVELOPMENT_TEAM: ""
         GENERATE_INFOPLIST_FILE: YES
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
 schemes:
   iOSDeveloperToolkit:
     build:

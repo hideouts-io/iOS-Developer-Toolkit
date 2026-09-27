@@ -299,6 +299,38 @@ public struct ActionExecutor: Sendable {
             }
             return make(action, target, summary: "Recording saved. Open it in Instruments.", details: [("File", output.path)], raw: result.standardOutputText, files: [output], argv: request.arguments)
 
+        case "packet-capture":
+            let target = try requireTarget(target)
+            let output = URL(fileURLWithPath: parameters["output"] ?? "")
+            let seconds = Int(parameters["duration"] ?? "") ?? 30
+            let writer = try PcapFileWriter(creatingNewFileAt: output)
+            let ending: String
+            do {
+                ending = try await session(target) { session -> String in
+                    try await withThrowingTaskGroup(of: String.self) { group in
+                        group.addTask {
+                            for try await packet in try await PacketCaptureService.stream(session) {
+                                try writer.write(packet)
+                            }
+                            return "The device ended the capture early."
+                        }
+                        group.addTask {
+                            try await Task.sleep(for: .seconds(seconds))
+                            return "Captured for \(seconds) seconds."
+                        }
+                        let first = try await group.next() ?? ""
+                        group.cancelAll()
+                        return first
+                    }
+                }
+            } catch {
+                // Keep whatever was captured as a valid file, then report the failure.
+                _ = try? writer.finish()
+                throw error
+            }
+            let digest = try writer.finish()
+            return make(action, target, summary: "\(ending) \(writer.packetCount == 1 ? "1 packet" : "\(writer.packetCount) packets") saved.", details: [("File", output.path), ("Packets", "\(writer.packetCount)"), ("SHA-256", digest)], raw: output.path, files: [output])
+
         case "bonjour":
             let services = await NetworkServiceBrowser.browse()
             return make(action, target, summary: services.isEmpty ? "No devices are advertising on this network." : "\(services.count) services found.", details: services.map { ($0.name, $0.meaning) }, raw: services.map { "\($0.type)\t\($0.name)\t\($0.interface ?? "")" }.joined(separator: "\n"))

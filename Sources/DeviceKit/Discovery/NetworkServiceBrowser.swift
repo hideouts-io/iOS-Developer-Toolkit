@@ -35,7 +35,7 @@ public enum NetworkServiceBrowser {
             browser.browseResultsChangedHandler = { results, _ in
                 for result in results {
                     if case .service(let name, let serviceType, let domain, let interface) = result.endpoint {
-                        found.withLock { $0.insert(AdvertisedDeviceService(name: name, type: serviceType, domain: domain, interface: interface?.name)) }
+                        _ = found.withLock { $0.insert(AdvertisedDeviceService(name: name, type: serviceType, domain: domain, interface: interface?.name)) }
                     }
                 }
             }
