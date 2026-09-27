@@ -51,11 +51,19 @@ jobs:
       - uses: actions/checkout@v7
       - name: Select Xcode
         run: scripts/ci-select-xcode.sh
-      - name: Build the app and UI tests (warnings are errors in project.yml)
+      - name: Build the app and UI tests with zero warnings
+        # project.yml makes warnings errors, but Swift does not promote every diagnostic (for
+        # example actor-isolation warnings involving XCTest), so also fail on any warning in
+        # this repository's sources.
         run: |
+          set -o pipefail
           xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
             -configuration Debug -destination 'platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/dd" build-for-testing
+            -derivedDataPath "$RUNNER_TEMP/dd" build-for-testing 2>&1 | tee "$RUNNER_TEMP/build.log"
+          if grep -E "\.swift:[0-9]+:[0-9]+: warning:" "$RUNNER_TEMP/build.log" | grep -v -e /SourcePackages/ -e /checkouts/; then
+            echo "::error::The build has warnings."
+            exit 1
+          fi
       - name: UI tests
         run: |
           xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \

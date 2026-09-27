@@ -2,17 +2,18 @@ import XCTest
 
 /// GUI smoke tests. The app runs with `-ui-testing` (no real device discovery) and
 /// `-demo-mode` (a clearly labelled simulated iPhone), so results are deterministic.
+@MainActor
 final class SmokeUITests: XCTestCase {
     var app: XCUIApplication!
 
-    override func setUpWithError() throws {
+    override func setUp() async throws {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchArguments = ["-ui-testing", "YES", "-demo-mode", "YES", "-ApplePersistenceIgnoreState", "YES"]
         app.launch()
     }
 
-    override func tearDownWithError() throws {
+    override func tearDown() async throws {
         app.terminate()
     }
 
