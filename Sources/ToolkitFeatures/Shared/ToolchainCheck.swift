@@ -53,6 +53,7 @@ public enum ToolchainCheck {
         Route(tool: .simctl, path: ["list"], requiredOptions: ["-j"], usedFor: "Simulator discovery"),
         Route(tool: .simctl, path: ["location"], requiredOptions: ["start", "clear", "set"], usedFor: "Simulator location"),
         Route(tool: .simctl, path: ["io"], requiredOptions: ["screenshot"], usedFor: "Simulator screenshot"),
+        Route(tool: .simctl, path: ["bootstatus"], requiredOptions: ["-b"], usedFor: "Start simulator"),
         Route(tool: .simctl, path: ["launch"], requiredOptions: ["--terminate-running-process"], usedFor: "Simulator launch"),
         Route(tool: .simctl, path: ["spawn"], requiredOptions: [], usedFor: "Simulator logs"),
         Route(tool: .xctrace, path: ["record"], requiredOptions: ["--template", "--device", "--time-limit", "--all-processes", "--no-prompt"], usedFor: "Instruments recordings"),

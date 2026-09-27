@@ -151,11 +151,13 @@ public struct SimulatorClient: Sendable {
 
     // MARK: Lifecycle
 
+    /// Boots the simulator (if needed) and returns once iOS has finished starting. `simctl boot`
+    /// alone returns while the system is still coming up, and the first app launch can then take
+    /// minutes; `simctl bootstatus -b` waits for boot (and any data migration) to complete.
     public func boot(_ target: DeviceTarget) async throws {
         try requireSimulator(target)
-        let result = try await runner.run(try XcodeTool.simctl.request(["boot", target.udid], timeout: 180, displayName: "simctl boot"))
-        // "Unable to boot device in current state: Booted" is not a failure.
-        if !result.succeeded && !result.standardErrorText.contains("current state: Booted") {
+        let result = try await runner.run(try XcodeTool.simctl.request(["bootstatus", target.udid, "-b"], timeout: 600, displayName: "simctl bootstatus"))
+        guard result.succeeded else {
             throw interpret(result, operation: "Starting the simulator")
         }
     }
@@ -226,7 +228,7 @@ public struct SimulatorClient: Sendable {
         var arguments = ["launch"]
         if terminateExisting { arguments.append("--terminate-running-process") }
         arguments += [target.udid, bundleIdentifier]
-        let result = try await runner.run(try XcodeTool.simctl.request(arguments, timeout: 60, displayName: "simctl launch"))
+        let result = try await runner.run(try XcodeTool.simctl.request(arguments, timeout: 120, displayName: "simctl launch"))
         guard result.succeeded else { throw interpret(result, operation: "Launching the app") }
         return result.standardOutputText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
