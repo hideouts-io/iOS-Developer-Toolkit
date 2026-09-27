@@ -8,6 +8,7 @@ import ToolkitFeatures
 ///     "iOS Developer Toolkit" -capture-screenshots <folder>
 ///         [-demo-mode] [-ui-testing] [-window-size WxH] [-only overview,apps]
 ///         [-populate-demo YES] [-select-booted-simulator YES] [-start-simulator-log YES]
+///         [-scroll-fraction 0.0–1.0]
 ///
 /// Every flag takes a value: AppKit reads arguments as `-key value` pairs, and a lone flag would
 /// swallow the next argument, leaving a stray path that macOS treats as a file to open (which
@@ -72,6 +73,10 @@ enum ScreenshotHarness {
             for workspace in workspaces {
                 model.workspace = workspace
                 try? await Task.sleep(for: .milliseconds(900))
+                if let fraction = value("-scroll-fraction").flatMap(Double.init) {
+                    scrollContent(of: window, to: fraction)
+                    try? await Task.sleep(for: .milliseconds(400))
+                }
                 render(window, to: folder.appendingPathComponent("\(workspace.rawValue).png"))
                 let sidebarWidth = sidebar(in: window)?.frame.width ?? 0
                 let contentHeight = window.contentView?.frame.height ?? 0
@@ -95,7 +100,7 @@ enum ScreenshotHarness {
         await model.apps.refresh(app: model, device: demo)
         model.readinessResults[demo.id] = CapabilityRow.rows(for: .physical).map { row in
             switch row {
-            case .developerServices: return row.result(.attention, "Not prepared yet (demo data).")
+            case .developerServices: return row.result(.attention, "Personalization required: a compatible image is on this Mac (demo data).")
             case .lockState: return row.result(.attention, "Locked — unlock the device to continue (demo data).")
             default: return row.result(.ready, "Ready (demo data).")
             }
@@ -115,6 +120,24 @@ enum ScreenshotHarness {
             }
             try? await Task.sleep(for: .seconds(1))
         }
+    }
+
+    /// Scrolls the workspace page (the widest scroll view that is not the sidebar) to a fraction of
+    /// its height, so cards below the fold can be rendered.
+    static func scrollContent(of window: NSWindow, to fraction: Double) {
+        let sidebarScroll = sidebar(in: window)?.enclosingScrollView
+        let candidates = scrollViews(in: window.contentView).filter { $0 !== sidebarScroll }
+        guard let scrollView = candidates.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }),
+              let document = scrollView.documentView else { return }
+        let range = max(0, document.frame.height - scrollView.contentView.bounds.height)
+        let offset = range * min(max(fraction, 0), 1)
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: document.isFlipped ? offset : range - offset))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    static func scrollViews(in view: NSView?) -> [NSScrollView] {
+        guard let view else { return [] }
+        return ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews(in:))
     }
 
     static func dump(_ view: NSView?, depth: Int) -> String {

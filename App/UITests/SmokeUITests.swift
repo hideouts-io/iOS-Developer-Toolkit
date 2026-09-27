@@ -63,6 +63,15 @@ final class SmokeUITests: XCTestCase {
         attachScreenshot("action-detail")
     }
 
+    func testDeveloperImageCardShowsStateAndBlocksDemoMount() throws {
+        app.descendants(matching: .any)["sidebar-device"].click()
+        XCTAssertTrue(app.descendants(matching: .any)["ddi-state"].waitForExistence(timeout: 10), "The developer image state is not shown")
+        let mount = app.buttons["mount-ddi"]
+        XCTAssertTrue(mount.waitForExistence(timeout: 5))
+        XCTAssertFalse(mount.isEnabled, "Mounting must be disabled in Demo Mode")
+        attachScreenshot("developer-image")
+    }
+
     func testCommandPaletteNavigates() throws {
         app.typeKey("k", modifierFlags: .command)
         let search = app.textFields["palette-search"]

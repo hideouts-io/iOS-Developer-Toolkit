@@ -172,32 +172,128 @@ struct Toolchain: AsyncParsableCommand {
 }
 
 struct DDI: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Developer services (Developer Disk Image) management through Xcode's CoreDevice.", subcommands: [Status.self, Prepare.self, UpdateHost.self])
+    static let configuration = CommandConfiguration(
+        abstract: "Check, mount, and unmount the developer image (Developer Disk Image).",
+        discussion: "iOS 17 and later use an image Apple personalizes for each device (from Xcode's /Library/Developer/DeveloperDiskImages or --image-folder); iOS 16 and earlier use DeveloperDiskImage.dmg and its signature for the exact version.",
+        subcommands: [Status.self, Mount.self, Prepare.self, Unmount.self, UpdateHost.self]
+    )
+
+    enum MechanismOption: String, ExpressibleByArgument, CaseIterable {
+        case automatic
+        case coreDevice = "core-device"
+        case native
+
+        var mechanism: DeveloperImageMechanism {
+            switch self {
+            case .automatic: return .automatic
+            case .coreDevice: return .coreDevice
+            case .native: return .native
+            }
+        }
+    }
+
+    struct Report: Encodable {
+        var state: String
+        var headline: String
+        var explanation: String
+        var remediation: String?
+        var imageNeeded: String?
+        var facts: DeveloperImageDeviceFacts?
+        var mountedAt: [String]
+        var imageOnThisMac: String?
+        var mechanism: String?
+
+        init(_ status: DeveloperImageStatus) {
+            state = status.state.rawValue
+            headline = status.headline
+            explanation = status.explanation
+            remediation = status.remediation
+            imageNeeded = status.requiredKind?.rawValue
+            facts = status.facts
+            mountedAt = status.mountedImages.filter(\.isDeveloperImage).compactMap(\.mountPath)
+            imageOnThisMac = status.hostImage
+            mechanism = status.state.canMount ? status.recommendedMechanism?.rawValue : nil
+        }
+    }
+
+    static func print(_ status: DeveloperImageStatus, json: Bool) throws {
+        if json {
+            FileHandle.standardOutput.write(try JSONOutput.encode(Report(status)))
+            Swift.print()
+        } else {
+            Swift.print(status.headline)
+            Swift.print(status.explanation)
+            for (label, value) in status.detailRows { Swift.print("  \(label): \(value)") }
+        }
+    }
+
+    static func confirm(_ phrase: String, for device: Device) throws {
+        let requirement = ConfirmationRequirement.make(for: .deviceChange, target: device.target)
+        guard requirement.isSatisfied(typedPhrase: phrase, backupAcknowledged: false) else {
+            throw ToolkitError.invalidInput("Confirmation must be exactly “\(requirement.phrase ?? "")”.")
+        }
+    }
 
     struct Status: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Show developer services status without changing anything.")
+        static let configuration = CommandConfiguration(abstract: "Show the developer-image state without changing anything.", discussion: "Exit status: 0 mounted (or not required), 2 not mounted but a compatible image can be mounted, 1 anything else.")
         @Option(help: "Device UDID.") var udid: String
+        @Option(name: .customLong("image-folder"), help: "Folder containing a developer image (repeatable).") var imageFolders: [String] = []
+        @Flag(help: "Print JSON.") var json = false
+        func run() async throws {
+            let status: DeveloperImageStatus
+            do {
+                let device = try await resolve(udid: udid)
+                status = await DeveloperImageManager().status(for: device.target, userFolders: imageFolders.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) })
+                try DDI.print(status, json: json)
+            } catch { throw report(error) }
+            switch status.state {
+            case .mounted, .notRequired: return
+            case .available, .personalizationRequired: throw ExitCode(2)
+            default: throw ExitCode(1)
+            }
+        }
+    }
+
+    struct Mount: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Mount the developer image the device needs (does nothing if one is already mounted).", discussion: "On iOS 17 and later the image is personalized by Apple for this device: this needs the internet and sends the device's chip, board, and ECID with a one-time nonce to Apple, as Xcode does.")
+        @Option(help: "Device UDID.") var udid: String
+        @Option(help: "Type RUN followed by the last six characters of the UDID to confirm.") var confirm: String
+        @Option(help: "automatic, core-device (Xcode's devicectl), or native (built-in, over USB).") var mechanism: MechanismOption = .automatic
+        @Option(name: .customLong("image-folder"), help: "Folder containing a developer image (repeatable).") var imageFolders: [String] = []
+        @Flag(help: "Print JSON.") var json = false
         func run() async throws {
             do {
                 let device = try await resolve(udid: udid)
-                print(try await CoreDeviceClient().ddiServices(device.target, autoMount: false).json.prettyString())
+                try DDI.confirm(confirm, for: device)
+                let status = try await DeveloperImageManager().mount(device.target, mechanism: mechanism.mechanism, userFolders: imageFolders.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }) { progress in
+                    if !json { FileHandle.standardError.write(Data("\(progress.step)…\n".utf8)) }
+                }
+                try DDI.print(status, json: json)
             } catch { throw report(error) }
         }
     }
 
+    /// Kept for scripts written for earlier versions; same as `mount`.
     struct Prepare: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Install the matching personalized developer image on the device.")
+        static let configuration = CommandConfiguration(abstract: "Same as `mount`.", shouldDisplay: false)
+        @Option(help: "Device UDID.") var udid: String
+        @Option(help: "Type RUN followed by the last six characters of the UDID to confirm.") var confirm: String
+        func run() async throws {
+            let mount = try Mount.parse(["--udid", udid, "--confirm", confirm])
+            try await mount.run()
+        }
+    }
+
+    struct Unmount: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Unmount the developer image (restarting the device has the same effect).")
         @Option(help: "Device UDID.") var udid: String
         @Option(help: "Type RUN followed by the last six characters of the UDID to confirm.") var confirm: String
         func run() async throws {
             do {
                 let device = try await resolve(udid: udid)
-                let requirement = ConfirmationRequirement.make(for: .deviceChange, target: device.target)
-                guard requirement.isSatisfied(typedPhrase: confirm, backupAcknowledged: false) else {
-                    throw ToolkitError.invalidInput("Confirmation must be exactly “\(requirement.phrase ?? "")”.")
-                }
-                _ = try await CoreDeviceClient().ddiServices(device.target, autoMount: true)
-                print("Developer services are ready on \(device.name).")
+                try DDI.confirm(confirm, for: device)
+                let status = try await DeveloperImageManager().unmount(device.target)
+                Swift.print("The developer image is no longer mounted on \(device.name). State now: \(status.state.label).")
             } catch { throw report(error) }
         }
     }
@@ -207,7 +303,7 @@ struct DDI: AsyncParsableCommand {
         func run() async throws {
             do {
                 _ = try await CoreDeviceClient().updateHostDDIs()
-                print("This Mac's developer images are up to date.")
+                Swift.print("This Mac's developer images are up to date.")
             } catch { throw report(error) }
         }
     }

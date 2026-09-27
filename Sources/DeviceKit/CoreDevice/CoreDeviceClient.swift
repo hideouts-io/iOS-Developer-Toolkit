@@ -299,7 +299,7 @@ public enum CoreDeviceErrorInterpreter {
             return error(.notPaired, "The selected device has not trusted this Mac.", "Unlock the device, connect it with a USB cable, and tap Trust when asked. Then try again.")
         }
         if combined.contains("developer disk image") || combined.contains("ddi") {
-            return error(.developerDiskImageUnavailable, "Developer services could not be prepared on the selected device.", "Keep the device unlocked and connected with USB, make sure this Mac is online, and use “Prepare Developer Services” on the Device page.")
+            return error(.developerDiskImageUnavailable, "The developer image could not be mounted on the selected device.", "Keep the device unlocked and connected with USB, make sure this Mac is online, and use “Mount Developer Image” on the Device page (its Options menu can switch to the built-in mount).")
         }
         if combined.contains("timed out") || combined.contains("timeout") {
             return error(.timedOut, "The device did not respond in time.", "Make sure the device is unlocked, awake, and connected, then try again.")

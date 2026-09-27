@@ -37,13 +37,18 @@ public struct ActionExecutor: Sendable {
     public let simulators: SimulatorClient
     public let usbmux: USBMuxClient
     public let location: LocationController
+    public let developerImages: DeveloperImageManager
+    /// Folders the user chose that contain developer images (in addition to Xcode's).
+    public let developerImageFolders: [URL]
 
-    public init(runner: CommandRunning = ProcessCommandRunner(), usbmux: USBMuxClient = USBMuxClient()) {
+    public init(runner: CommandRunning = ProcessCommandRunner(), usbmux: USBMuxClient = USBMuxClient(), developerImageFolders: [URL] = [], personalization: PersonalizationTransport = AppleTSSTransport()) {
         self.runner = runner
         coreDevice = CoreDeviceClient(runner: runner)
         simulators = SimulatorClient(runner: runner)
         self.usbmux = usbmux
         location = LocationController(coreDevice: coreDevice, simulators: simulators, usbmux: usbmux)
+        developerImages = DeveloperImageManager(usbmux: usbmux, coreDevice: coreDevice, transport: personalization)
+        self.developerImageFolders = developerImageFolders
     }
 
     public func execute(_ action: ActionDescriptor, target: DeviceTarget?, values: [String: String]) async throws -> ActionResult {
@@ -241,27 +246,33 @@ public struct ActionExecutor: Sendable {
             try HashManifest.write(for: folder)
             return make(action, target, summary: "Copied \(copied) reports.", details: [("Folder", folder.path)], raw: folder.path, files: [folder])
 
-        case "ddi-status", "ddi-prepare":
+        case "ddi-status":
             let target = try requireTarget(target)
-            let response = try await coreDevice.ddiServices(target, autoMount: action.id == "ddi-prepare")
-            return make(action, target, summary: action.id == "ddi-prepare" ? "Developer services are ready." : "Developer services status received.", raw: response.json.prettyString(), argv: response.command.request.arguments)
+            let status = await developerImages.status(for: target, userFolders: developerImageFolders)
+            return make(action, target, summary: status.headline, details: status.detailRows, raw: status.explanation + (status.technicalDetail.map { "\n\n\($0)" } ?? ""))
 
-        case "mounted-images", "personalization", "ddi-unmount":
+        case "ddi-prepare":
+            let target = try requireTarget(target)
+            let mechanism = DeveloperImageMechanism.allCases.first { $0.label == parameters["mechanism"] } ?? .automatic
+            let status = try await developerImages.mount(target, mechanism: mechanism, userFolders: developerImageFolders)
+            return make(action, target, summary: status.headline, details: status.detailRows, raw: status.explanation)
+
+        case "ddi-unmount":
+            let target = try requireTarget(target)
+            let status = try await developerImages.unmount(target, userFolders: developerImageFolders)
+            return make(action, target, summary: "The developer image is no longer mounted.", details: status.detailRows, raw: status.explanation)
+
+        case "mounted-images", "personalization":
             let target = try requireTarget(target)
             let id = action.id
             let output = try await session(target) { session -> (String, String) in
                 let mounter = try await ImageMounter.open(session)
                 defer { Task { await mounter.close() } }
-                switch id {
-                case "mounted-images":
+                if id == "mounted-images" {
                     let images = try await mounter.mountedImages()
-                    return (images.isEmpty ? "No developer images are mounted." : "\(images.count) images mounted.", images.map { $0.raw.prettyJSONString() }.joined(separator: "\n"))
-                case "personalization":
-                    return ("Personalization identifiers received.", try await mounter.personalizationIdentifiers().prettyJSONString())
-                default:
-                    try await mounter.unmountDeveloperImage()
-                    return ("The developer image is no longer mounted.", "")
+                    return (images.isEmpty ? "No images are mounted." : "\(images.count) images mounted.", images.map { $0.raw.prettyJSONString() }.joined(separator: "\n"))
                 }
+                return ("Personalization identifiers received.", try await mounter.personalizationIdentifiers().prettyJSONString())
             }
             return make(action, target, summary: output.0, raw: output.1)
 

@@ -68,7 +68,8 @@ final class AppModel {
     let runner: CommandRunning = ProcessCommandRunner()
     let journal = OperationJournal()
     let discovery: DeviceDiscovery
-    let executor: ActionExecutor
+    /// A fresh executor carries the current developer-image folders.
+    var executor: ActionExecutor { ActionExecutor(runner: runner, developerImageFolders: developerImage.folders) }
     let logger = ToolkitLog.application
 
     // MARK: State
@@ -96,6 +97,7 @@ final class AppModel {
     var statusMessage: String?
 
     // Feature models
+    let developerImage: DeveloperImageModel
     let location: LocationModel
     let logs: LiveLogsModel
     let apps: AppsModel
@@ -123,7 +125,7 @@ final class AppModel {
             ? .init(usbmux: USBMuxClient(socketPath: "/nonexistent/ui-testing-usbmuxd"), coreDevice: nil, simulators: nil, enrichWithLockdown: false)
             : .init()
         discovery = DeviceDiscovery(configuration: configuration)
-        executor = ActionExecutor(runner: runner)
+        developerImage = DeveloperImageModel()
         location = LocationModel()
         logs = LiveLogsModel()
         apps = AppsModel()
@@ -273,7 +275,7 @@ final class AppModel {
     // MARK: Readiness
 
     func runReadiness(for device: Device) async {
-        let probe = CapabilityProbe(runner: runner)
+        let probe = CapabilityProbe(runner: runner, developerImageFolders: developerImage.folders)
         readinessResults[device.id] = CapabilityRow.rows(for: device.kind).map(\.untested)
         let results = await run("Readiness Check", workspace: .readiness, target: device.target, transport: "Native services + CoreDevice", presentErrors: false) { _ in
             await probe.run(for: device)

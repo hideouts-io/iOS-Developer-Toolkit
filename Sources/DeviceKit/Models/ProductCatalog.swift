@@ -116,7 +116,7 @@ public enum DeviceField: String, CaseIterable, Sendable, Identifiable {
         case .developerMode:
             return "An iOS 16+ setting (Settings › Privacy & Security › Developer Mode) that allows development features such as running your own apps, location simulation, and developer services. Turning it on requires a restart."
         case .developerServices:
-            return "Whether Xcode's developer services (the Developer Disk Image) are available on the device. They are installed automatically when needed and are required for screenshots, location simulation, and process control."
+            return "Whether Apple's developer image (Developer Disk Image) is mounted on the device. It is required for screenshots, location simulation, launching apps, and Instruments. The Developer image card on the Device page shows its state and mounts it: iOS 17 and later use an image Apple personalizes for the device; iOS 16 and earlier use DeveloperDiskImage.dmg for that exact version."
         case .serialNumber:
             return "The hardware serial number printed on the device and box. It is personally identifying; avoid sharing it."
         case .ecid:

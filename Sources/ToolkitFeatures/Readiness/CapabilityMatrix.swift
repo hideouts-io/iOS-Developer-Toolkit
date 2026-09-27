@@ -106,7 +106,7 @@ public enum CapabilityRow: String, CaseIterable, Sendable {
         case .pairingTrust: return "Unlock the device and tap Trust when asked. If no prompt appears, disconnect and reconnect the cable."
         case .developerMode: return "On the device open Settings › Privacy & Security › Developer Mode, turn it on, restart, and confirm. If the setting is missing, open Xcode › Window › Devices and Simulators once with the device connected."
         case .coreDevice: return "Open Xcode › Window › Devices and Simulators with the device connected and unlocked, and wait for Xcode to finish preparing it."
-        case .developerServices: return "Use “Prepare Developer Services” on the Device page. Keep the device unlocked and this Mac online."
+        case .developerServices: return "Use “Mount Developer Image” on the Device page. Keep the device unlocked; on iOS 17 and later this Mac must be online so Apple can personalize the image."
         case .lockState: return "Unlock the device and keep it awake while working."
         case .lockdownServices: return "Unlock the device; if it was just restarted, unlock it once."
         case .backupService: return "Unlock the device and make sure no other backup (Finder) is running."
@@ -139,12 +139,27 @@ public struct CapabilityProbe: Sendable {
     public let coreDevice: CoreDeviceClient
     public let usbmux: USBMuxClient
     public let simulators: SimulatorClient
+    public let developerImageFolders: [URL]
 
-    public init(runner: CommandRunning = ProcessCommandRunner(), usbmux: USBMuxClient = USBMuxClient()) {
+    public init(runner: CommandRunning = ProcessCommandRunner(), usbmux: USBMuxClient = USBMuxClient(), developerImageFolders: [URL] = []) {
         self.runner = runner
         coreDevice = CoreDeviceClient(runner: runner)
         simulators = SimulatorClient(runner: runner)
         self.usbmux = usbmux
+        self.developerImageFolders = developerImageFolders
+    }
+
+    /// The readiness row for a natively evaluated developer-image state.
+    static func developerImageResult(_ status: DeveloperImageStatus) -> CapabilityResult {
+        let state: CapabilityState
+        switch status.state {
+        case .mounted: state = .ready
+        case .notRequired: state = .notApplicable
+        case .available, .personalizationRequired, .blocked: state = .attention
+        case .missing, .incompatible, .failed: state = .unavailable
+        }
+        let summary = status.state == .mounted ? "Mounted." : "\(status.state.label): \(status.headline)"
+        return CapabilityRow.developerServices.result(state, summary, evidence: ([status.explanation] + (status.technicalDetail.map { [$0] } ?? [])).joined(separator: " "))
     }
 
     public func run(for device: Device, progress: @Sendable (CapabilityResult) -> Void = { _ in }) async -> [CapabilityResult] {
@@ -251,11 +266,16 @@ public struct CapabilityProbe: Sendable {
             record(.backupService, CapabilityRow.backupService.result(.blocked, "Needs a USB or Wi-Fi sync connection."))
         }
 
+        // With a trusted USB session the developer-image row comes from the native check below.
+        func recordImageFallback(_ result: CapabilityResult) {
+            if !lockdownReady { record(.developerServices, result) }
+        }
+
         // CoreDevice checks
         var coreDeviceRecord: CoreDeviceRecord?
         if !hasCoreDevice {
             record(.coreDevice, CapabilityRow.coreDevice.result(.blocked, "Needs Xcode."))
-            record(.developerServices, CapabilityRow.developerServices.result(.blocked, "Needs Xcode."))
+            recordImageFallback(CapabilityRow.developerServices.result(.blocked, "Needs Xcode."))
             record(.lockState, CapabilityRow.lockState.result(.blocked, "Needs Xcode."))
         } else {
             do {
@@ -276,16 +296,23 @@ public struct CapabilityProbe: Sendable {
                 do {
                     _ = try await coreDevice.ddiServices(target, autoMount: false)
                     let available = coreDeviceRecord?.ddiServicesAvailable
-                    record(.developerServices, available == false ? CapabilityRow.developerServices.result(.attention, "Not prepared yet.") : CapabilityRow.developerServices.result(.ready, "Available."))
+                    recordImageFallback(available == false ? CapabilityRow.developerServices.result(.attention, "Not mounted yet.") : CapabilityRow.developerServices.result(.ready, "Available."))
                 } catch let error as ToolkitError {
-                    record(.developerServices, CapabilityRow.developerServices.result(.attention, error.message, evidence: error.technicalDetail ?? ""))
+                    recordImageFallback(CapabilityRow.developerServices.result(.attention, error.message, evidence: error.technicalDetail ?? ""))
                 } catch {
-                    record(.developerServices, CapabilityRow.developerServices.result(.attention, error.localizedDescription))
+                    recordImageFallback(CapabilityRow.developerServices.result(.attention, error.localizedDescription))
                 }
             } else {
                 record(.lockState, CapabilityRow.lockState.result(.blocked, "Needs the Xcode device service."))
-                record(.developerServices, CapabilityRow.developerServices.result(.blocked, "Needs the Xcode device service."))
+                recordImageFallback(CapabilityRow.developerServices.result(.blocked, "Needs the Xcode device service."))
             }
+        }
+
+        // With a trusted USB session, the native developer-image check is more precise than
+        // CoreDevice's: it reads what is mounted and whether this Mac has a compatible image.
+        if lockdownReady {
+            let status = await DeveloperImageManager(usbmux: usbmux, coreDevice: coreDevice).status(for: target, userFolders: developerImageFolders)
+            record(.developerServices, Self.developerImageResult(status))
         }
 
         // Developer Mode from whichever source answered.

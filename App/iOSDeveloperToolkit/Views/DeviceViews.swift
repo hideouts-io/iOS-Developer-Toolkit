@@ -119,8 +119,10 @@ struct DeviceDetailView: View {
             if let device = model.selectedDevice {
                 identity(device)
                 status(device)
-                if device.kind == .physical {
+                if device.kind == .physical || device.kind == .demo {
                     developerServices(device)
+                }
+                if device.kind == .physical {
                     handoffs(device)
                 }
                 if device.kind == .simulator {
@@ -132,6 +134,12 @@ struct DeviceDetailView: View {
         }
         .sheet(item: $confirmation) { pending in
             ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: nil, onConfirm: pending.action)
+        }
+        .task(id: model.selectedDevice?.id) {
+            // Check the developer image once per device when it is shown (never changes the device).
+            if let device = model.selectedDevice, device.kind != .simulator, model.developerImage.status(for: device) == nil {
+                await model.developerImage.refresh(device, app: model)
+            }
         }
     }
 
@@ -171,7 +179,7 @@ struct DeviceDetailView: View {
                             .controlSize(.small)
                     }
                 }
-                InfoRow(.developerServices, value: device.ddiServicesAvailable.map { $0 ? "Available" : "Not prepared" } ?? (device.supportsCoreDevice ? "Unknown" : "Needs Xcode"))
+                InfoRow(.developerServices, value: model.developerImage.status(for: device)?.state.label ?? device.ddiServicesAvailable.map { $0 ? "Available" : "Not prepared" } ?? "Not checked yet")
                 InfoRow("Reported by", device.sources.map { source -> String in
                     switch source {
                     case .usbmux: return "USB services (usbmuxd)"
@@ -185,28 +193,108 @@ struct DeviceDetailView: View {
     }
 
     private func developerServices(_ device: Device) -> some View {
-        Card(title: "Developer services", systemImage: "hammer", subtitle: "Screenshots, location simulation, launching apps, and Instruments need Apple's Developer Disk Image on the device. Xcode's device service installs the correct, personalized image for you.") {
-            HStack {
-                Button("Check Status") { runAction("ddi-status", device) }
-                Button("Prepare Developer Services") {
-                    confirmation = PendingConfirmation(title: "Prepare developer services", detail: "Xcode's device service will install the Developer Disk Image that matches \(device.name). Keep the device unlocked and this Mac online.", requirement: .make(for: .deviceChange, target: device.target), target: device.target) {
-                        runAction("ddi-prepare", device)
+        let images = model.developerImage
+        let status = images.status(for: device)
+        let busy = images.isBusy(device)
+        return Card(title: "Developer image", systemImage: "externaldrive.badge.checkmark", subtitle: "Screenshots, location simulation, launching apps, and Instruments need Apple's developer image (Developer Disk Image) mounted on the device.") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    if let status {
+                        Label(status.state.label, systemImage: status.state.symbolName)
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(Self.color(for: status.state))
+                            .accessibilityIdentifier("ddi-state")
+                        Text(status.headline).font(.callout)
+                    } else {
+                        Text("Not checked yet.").font(.callout).foregroundStyle(.secondary)
                     }
+                    Spacer(minLength: 0)
+                    if busy { ProgressView().controlSize(.small) }
                 }
-                .disabled(!device.supportsCoreDevice)
-                Button("Unmount Image") {
-                    confirmation = PendingConfirmation(title: "Unmount the developer image", detail: "Developer services stop until they are prepared again. Restarting the device has the same effect.", requirement: .make(for: .deviceChange, target: device.target), target: device.target) {
-                        runAction("ddi-unmount", device)
+                if let status {
+                    Text(status.explanation)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let remediation = status.remediation {
+                        Label(remediation, systemImage: "lightbulb")
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                }
-                .disabled(!device.supportsLockdownServices)
-            }
-            if !device.supportsCoreDevice {
-                Label("Needs Xcode. Install Xcode and open Window › Devices and Simulators once with the device connected.", systemImage: "info.circle")
+                    DisclosureGroup("Details") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(status.detailRows.filter { $0.0 != "State" && $0.0 != "Next step" }.enumerated()), id: \.offset) { _, row in
+                                InfoRow(row.0, row.1, monospaced: row.0 == "Chip / board")
+                            }
+                            if let technical = status.technicalDetail {
+                                InfoRow("Technical detail", technical, monospaced: true)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button("Check Again") { Task { await images.refresh(device, app: model) } }
+                        .disabled(busy)
+                    Button("Mount Developer Image") {
+                        confirmation = PendingConfirmation(title: "Mount the developer image", detail: Self.mountDetail(status, device: device), requirement: .make(for: .deviceChange, target: device.target), target: device.target) {
+                            Task { await images.mount(device, app: model) }
+                        }
+                    }
+                    .disabled(busy || device.kind != .physical || !(status?.state.canMount ?? false))
+                    .accessibilityIdentifier("mount-ddi")
+                    Button("Unmount") {
+                        confirmation = PendingConfirmation(title: "Unmount the developer image", detail: "Developer services stop until the image is mounted again. Restarting the device has the same effect.", requirement: .make(for: .deviceChange, target: device.target), target: device.target) {
+                            Task { await images.unmount(device, app: model) }
+                        }
+                    }
+                    .disabled(busy || status?.state != .mounted || !device.supportsLockdownServices)
+                    Menu("Options") {
+                        Picker("Mount with", selection: Binding(get: { images.mechanism }, set: { images.mechanism = $0 })) {
+                            ForEach(DeveloperImageMechanism.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }
+                        Divider()
+                        Button("Add Image Folder…") {
+                            if let folder = FilePanels.chooseFolder(title: "Choose a folder that contains a developer image", canCreate: false) {
+                                model.statusMessage = images.addFolder(folder)
+                                Task { await images.refresh(device, app: model) }
+                            }
+                        }
+                        if !images.folders.isEmpty {
+                            Menu("Remove Image Folder") {
+                                ForEach(images.folders, id: \.self) { folder in
+                                    Button(folder.path) { images.removeFolder(folder) }
+                                }
+                            }
+                        }
+                        Divider()
+                        Button("Update This Mac's Images from Xcode") { runAction("host-ddis-update", device) }
+                            .disabled(!device.supportsCoreDevice)
+                    }
+                    .fixedSize()
+                }
             }
         }
+    }
+
+    static func color(for state: DeveloperImageState) -> Color {
+        switch state {
+        case .mounted: return .green
+        case .notRequired: return .secondary
+        case .available, .personalizationRequired: return .blue
+        case .missing, .incompatible, .blocked: return .orange
+        case .failed: return .red
+        }
+    }
+
+    static func mountDetail(_ status: DeveloperImageStatus?, device: Device) -> String {
+        var lines = ["The developer image will be uploaded to \(device.name) and mounted. Keep the device unlocked and connected until it finishes."]
+        if status?.requiredKind == .personalized && status?.state == .personalizationRequired {
+            lines.append("Apple personalizes the image for this device first: this Mac sends the device's chip, board, and ECID with a one-time nonce to Apple's signing server (gs.apple.com), as Xcode does. An internet connection is required.")
+        }
+        if let host = status?.hostImage { lines.append("Image: \(host).") }
+        return lines.joined(separator: "\n\n")
     }
 
     private func handoffs(_ device: Device) -> some View {

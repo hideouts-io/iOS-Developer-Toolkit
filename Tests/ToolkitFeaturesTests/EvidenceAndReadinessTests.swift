@@ -165,7 +165,9 @@ struct ReadinessAndActionTests {
         #expect(states["lockdown-services"] == .ready)
         #expect(states["backup-service"] == .ready)
         #expect(states["coredevice"] == .blocked)
-        #expect(states["developer-services"] == .blocked)
+        // Without Xcode the native check still reads the device; with no image on this Mac for it, the state is Missing.
+        #expect(states["developer-services"] == .unavailable)
+        #expect(results.first { $0.id == "developer-services" }?.summary.hasPrefix("Missing") == true)
         #expect(progress.current == results.count)
         #expect(results.first { $0.id == "xcode-tools" }?.remediation.contains("App Store") == true)
 
