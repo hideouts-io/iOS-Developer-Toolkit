@@ -1,18 +1,13 @@
-.venv/
-venv/
-build/
-dist/
-site/
-output/
-.playwright-cli/
-ios_developer_toolkit/deployment/
-packaging/deployment/
-*.egg-info/
-__pycache__/
-*.pyc
+# Swift, Xcode, and build output
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+/build-output/
 .DS_Store
 
-# Private or generated device data
+# Private or generated device data — never commit
 backups/
 captures/
 cases/
@@ -32,11 +27,12 @@ Generated Routes/
 location-events.jsonl
 *.backup/
 *.crash
-nuitka-crash-report.xml
 *.ips
 *.log
 *.pcap
 *.pcapng
+*.trace/
+*.xcresult/
 *.ufd
 *.ufdr
 *.stix
@@ -50,14 +46,3 @@ nuitka-crash-report.xml
 *.trustcache
 BuildManifest.plist
 DeveloperDiskImage.dmg.signature
-
-# Swift / Xcode
-.build/
-.swiftpm/
-DerivedData/
-*.xcuserstate
-xcuserdata/
-/build-output/
-
-# Local build output
-build-output/
