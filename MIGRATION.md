@@ -160,13 +160,13 @@ or iPad was connected during the migration.
 
 | Suite | Tests | What it exercises | Result |
 |---|---:|---|---|
-| `ToolkitCoreTests` | 29 | `CommandRunner` (argument vectors, timeouts, cancellation, output draining, minimal environment), `ToolkitError`, secure file I/O (owner-only, no overwrite, path traversal), sanitizer, hashing, journal, ZIP writer | ✅ pass |
+| `ToolkitCoreTests` | 30 | `CommandRunner` (argument vectors, timeouts, cancellation, output draining, minimal environment), `ToolkitError`, secure file I/O (owner-only, no overwrite, path traversal), sanitizer, hashing, journal, ZIP writer | ✅ pass |
 | `DeviceKitTests` | 62 | usbmuxd framing and `Listen` events, pairing-record handling, lockdown TLS with certificate pinning and UDID check, the lockdown service clients (syslog, os_trace, pcapd, MobileBackup2, diagnostics, installation proxy, AFC, image mounter, springboard) against an in-process **fake usbmuxd + lockdownd device**; CoreDevice JSON parsing; `simctl` parsing | ✅ pass |
-| `ToolkitFeaturesTests` | 54 | Location Lab, GPX, location mechanism routing and legacy-service message encoding, provisioning profiles (misagent) and packet capture through the action executor, IPA inspection (fixtures incl. malicious archives), live-log capture/findings/export, action catalog and safety policy, actions and readiness against the fake device, evidence collection, workspace profiles, support bundle, external-tool validation | ✅ pass |
+| `ToolkitFeaturesTests` | 55 | Location Lab, GPX, location mechanism routing and legacy-service message encoding, provisioning profiles (misagent) and packet capture through the action executor, IPA inspection (fixtures incl. malicious archives), live-log capture/findings/export, action catalog and safety policy, actions and readiness against the fake device, evidence collection, workspace profiles, support bundle, external-tool validation | ✅ pass |
 | Real simulator (opt-in, `IDT_SIMULATOR_TESTS=1`) | 1 | Boots an iOS 26.3.1 iPhone simulator; sets, routes, and clears location; screenshot; app list; live unified log capture with hash; launches an app; Open URL action; readiness | ✅ pass (9.6 s) |
-| XCUITest smoke tests (`App/UITests`) | 7 | Window size, Demo Mode labelling, every workspace, disabled demo actions, command palette, Location Lab validation, minimum size | ⚠️ not run locally: macOS requires an interactive Automation Mode authorization. Runs in CI (`.github/workflows/ci.yml`) |
+| XCUITest smoke tests (`App/UITests`) | 7 | Window size, Demo Mode labelling, every workspace, disabled demo actions, command palette, Location Lab validation, minimum size | ⚠️ compiled warning-free (`build-for-testing`) but not run locally: macOS requires an interactive Automation Mode authorization. Runs in CI (`.github/workflows/ci.yml`) |
 
-Totals: 145 package tests pass with `-warnings-as-errors`; the app and UI-test targets build with
+Totals: 147 package tests pass with `-warnings-as-errors`; the app and UI-test targets build with
 `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` and zero warnings.
 
 ### 5.2 GUI verification
@@ -196,6 +196,24 @@ Everything marked 🟡 in §2 needs a pass of
 | Device | iOS | Connection | Stage 1 | Stage 2 | Stage 3 | Stage 4 | Tester, date |
 |---|---|---|---|---|---|---|---|
 | — | — | — | not tested | not tested | not tested | not tested | — |
+
+### 5.5 Final verification (2026-09-27)
+
+| Check | Result |
+|---|---|
+| Fresh clone of `swift-native-migration` to a temporary folder; `swift build -Xswiftc -warnings-as-errors`; `swift test` | ✅ builds with no warnings; 147 tests pass |
+| Clean `xcodebuild … clean build-for-testing` of the app and UI tests | ✅ succeeded. It exposed 78 Swift 6 actor-isolation warnings in the UI tests that a plain `build` never compiles and that `SWIFT_TREAT_WARNINGS_AS_ERRORS` does not promote; fixed, and CI now fails on any warning in the build log |
+| Launch and render every screen | ✅ all 14 pages at 1180×700 and 900×560 (Demo Mode, `scripts/check-layout.sh`), and all 14 with a booted iOS 26.3.1 simulator selected and its live log streaming |
+| Nothing requires Python | ✅ no Python in the repository except the optional, user-installed UFADE and MVT integrations (Python programs themselves); the release script fails if a binary links Python; the build, tests, SBOM generator, and release script use only Xcode |
+| `idt devices`, `idt toolchain` | ✅ no devices → guidance and exit 0; simulators listed with `--simulators`; all 27 `devicectl`/`simctl`/`xctrace` routes present in Xcode 27.0 |
+| Real simulator end-to-end (`IDT_SIMULATOR_TESTS=1`) | ✅ passed (9.6 s) |
+| No Xcode (simulated with `DEVELOPER_DIR=/Library/Developer/CommandLineTools`) | ✅ usbmuxd discovery still works; CoreDevice and simulators report "Xcode is not installed…"; the app's sidebar shows them as Unavailable. The Toolchain Check blamed each individual command; fixed to report the missing Xcode (exit 2) |
+| usbmuxd missing | ✅ the app (discovery pointed at a nonexistent socket) shows USB & Wi-Fi as Unavailable with the reason in the tooltip; the library error names usbmuxd (tested) |
+| No device | ✅ Overview shows "No device selected" with next steps; `idt devices` explains how to connect |
+| Unified log review | ✅ subsystem `io.hideouts.iOSDeveloperToolkit` logs discovery, commands (start/finish, duration, status), and outcomes; errors seen were the tests' deliberate negative cases. Found and fixed: default command names could put a simulator UDID in a public field, and some error descriptions and operation titles (paths, app names) were public |
+| Default window on a 1280×800 display | ✅ first launch opens at 1180×700 including title bar and toolbar (minimum 900×612), within the ~1280×705 usable area below the menu bar with a bottom Dock |
+| README matches the app | ✅ menus, shortcuts, pages, labels, `idt` options and exit codes, file locations, and the with/without-Xcode table checked against the code; the no-Xcode column was checked against the implementation (native lockdown paths) |
+| Physical iPhone/iPad | ❌ **none connected** — discovery, trust, live logs, backup, packet capture, and multi-device handling are **untested on hardware** (§5.4) |
 
 ## 6. Known limitations and features not reproduced
 
@@ -245,3 +263,5 @@ Everything marked 🟡 in §2 needs a pass of
 - 2026-09-26 — README and documentation rewritten for the Swift app; mkdocs removed.
 - 2026-09-26 — GitHub Actions replaced (CI, release, CodeQL for Swift, dependency review); `scripts/build-release.sh` verified locally.
 - 2026-09-27 — Test results and known limitations recorded (§5, §6); feature statuses set (§2).
+- 2026-09-27 — Python implementation, packaging, and go-ios/ipsw references removed.
+- 2026-09-27 — Final verification (§5.5): fresh clone, clean builds, every screen rendered, no-Xcode / no-usbmuxd / no-device states, unified log review. Fixed on the way: UI-test concurrency warnings (and a CI check for them), Toolchain Check message without Xcode, identifiers in public log fields. Physical-device verification remains open.
