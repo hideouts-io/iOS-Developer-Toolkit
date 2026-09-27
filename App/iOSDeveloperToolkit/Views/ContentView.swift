@@ -120,11 +120,16 @@ struct ConnectionSummaryView: View {
                 .frame(width: 7, height: 7)
             Text(title).foregroundStyle(.secondary)
             Spacer(minLength: 4)
-            Text(status.summary)
+            // The full reason for an unavailable source is a sentence; the sidebar shows a short
+            // state and keeps the reason in the tooltip, the accessibility label, and Device ›
+            // Connection diagnostics.
+            Text(status.isAvailable || status == .notChecked ? status.summary : "Unavailable")
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .help(status.summary)
         }
+        .help(status.summary)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title): \(status.summary)")
     }
 }
 
