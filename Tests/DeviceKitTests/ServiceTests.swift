@@ -118,6 +118,31 @@ struct ServiceTests {
         #expect(OSTraceRecordParser.parse(truncated).level == "Undecoded")
     }
 
+    @Test func springBoardServicesAnswerQueries() async throws {
+        let png = Data([0x89, 0x50, 0x4E, 0x47])
+        try await runWithServer({ _ in }) { server in
+            server.register(service: SpringBoardServices.serviceName) { channel in
+                let messages = PlistMessageConnection(channel: channel)
+                while let request = try? await messages.receive(timeout: 5) {
+                    switch request["command"]?.stringValue {
+                    case "getInterfaceOrientation": try await messages.send(["interfaceOrientation": 3])
+                    case "getHomeScreenIconMetrics": try await messages.send(["homeScreenIconColumns": 4])
+                    case "getIconPNGData": try await messages.send(["pngData": .data(png)])
+                    default: return
+                    }
+                }
+            }
+            try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                let springboard = try await SpringBoardServices.open(session)
+                #expect(try await springboard.interfaceOrientation() == .landscapeLeft)
+                #expect(try await springboard.homeScreenIconMetrics()["homeScreenIconColumns"]?.intValue == 4)
+                #expect(try await springboard.iconPNG(bundleIdentifier: "com.apple.mobilesafari") == png)
+                await #expect(throws: ToolkitError.self) { _ = try await springboard.iconPNG(bundleIdentifier: "bad id!") }
+                await springboard.close()
+            }
+        }
+    }
+
     @Test func pcapdPacketsBecomeAValidPcapFile() async throws {
         var header = [UInt8](repeating: 0, count: 95)
         let payload: [UInt8] = [0x45, 0x00, 0x00, 0x14] + [UInt8](repeating: 0xAB, count: 16)

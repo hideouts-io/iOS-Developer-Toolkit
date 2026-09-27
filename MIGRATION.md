@@ -4,9 +4,10 @@ This document tracks the rewrite of iOS Developer Toolkit from the PySide6 / `py
 application (v0.3.4) to a native Swift/SwiftUI macOS application. It is the working checklist
 for the migration and is updated as each feature is migrated, tested, and verified.
 
-Status legend: ✅ migrated and tested · 🟡 migrated, unit-tested only against simulated device
-traffic (needs physical-device verification) · 🔁 replaced by a different Apple-supported
-mechanism · ❌ intentionally not migrated (see reason) · ⏳ in progress
+Status legend: ✅ migrated and verified end to end (real simulator, real Xcode tools, or the app
+itself) · 🟡 migrated and tested against the protocol-accurate fake device or recorded tool output;
+needs physical-device verification · 🔁 replaced by a different Apple-supported mechanism · ❌ not
+migrated (see §6) or removed
 
 ## 1. Audit of the Python application (v0.3.4)
 
@@ -52,55 +53,55 @@ Swift device discovery (usbmuxd + CoreDevice + simctl), so nothing is lost.
 
 | # | Feature (Python) | Python implementation | Swift implementation | Apple API? | go-ios/ipsw? | Status |
 |---|---|---|---|---|---|---|
-| 1 | Device discovery | `pmd3 usbmux list` polled every 3 s | usbmuxd `Listen` event stream (event-driven) + CoreDevice `list devices` + `simctl list` | usbmuxd socket, devicectl, simctl | No | ⏳ |
-| 2 | Device identity (name, model, iOS, build, UDID, connection) | `usbmux list` / `lockdown info` | Native lockdown `GetValue` + CoreDevice details, with plain-language explanations | Yes | No | ⏳ |
-| 3 | Developer Mode status + on-device guide | `pmd3 amfi developer-mode-status` | Native lockdown (`com.apple.security.mac.amfi`) and CoreDevice `developerModeStatus`; guide sheet | Yes | No | ⏳ |
-| 4 | Personalized DDI mount (iOS 17+) | `pmd3 mounter auto-mount` (TSS) | 🔁 CoreDevice `device info ddiServices --auto-mount-ddis` (Apple mounts the correct personalized DDI) | devicectl | No | ⏳ |
-| 5 | Local Xcode DDI Cryptex install | `hdiutil` + `pmd3 cryptex auto-install` | 🔁 `devicectl manage ddis update` + `list preferredDDI` (host DDI store managed by Apple) | devicectl | No | ⏳ |
-| 6 | Mounted image list / unmount | `pmd3 mounter list/umount` | Native `mobile_image_mounter` (`CopyDevices`, `UnmountImage`) | Lockdown service | No | ⏳ |
-| 7 | CoreDevice details, RVI list, open project (`xed`), open .xcresult/.trace | `xcrun`, `rvictl`, `xed`, `open` | Same Apple tools through the central `CommandRunner` | Yes | No | ⏳ |
-| 8 | Capability Matrix | Worker running `pmd3` probes | Native probes (usbmuxd, pair record, lockdown session, AMFI, image mounter) + CoreDevice probes (details, lock state, DDI services) + Xcode tools | Yes | No | ⏳ |
-| 9 | Real-device compatibility history + sanitized JSON/Markdown export | `device_compatibility.py` | Ported (`CompatibilityStore`) | Foundation, CryptoKit | No | ⏳ |
-| 10 | Location Lab (coordinate, nudge, saved places, offline map, map-link parsing, route generator, GPX inspection/replay, evidence log, clear) | `pmd3 developer dvt simulate-location` | Physical: CoreDevice `simulate location coordinate/route/clear`; Simulator: `simctl location`; GPX replay driven by the app; offline MapKit-free world map | devicectl, simctl | No | ⏳ |
-| 11 | Live Logs — Unified | `pmd3 syslog live --format json` (os_trace_relay) | Native `com.apple.os_trace_relay` client; Simulator: `simctl spawn log stream --style ndjson` | Lockdown service / simctl | No | ⏳ |
-| 12 | Live Logs — Classic syslog | `pmd3 syslog live-old` | Native `com.apple.syslog_relay` client | Lockdown service | No | ⏳ |
-| 13 | Live Logs — DVT OSLog | `pmd3 developer dvt oslog` | 🔁 Covered by #11 (os_trace_relay needs no DDI); DVT/DTX is not an Apple-public interface | — | No | ⏳ |
-| 14 | Live log spool, pause, filter (literal/regex/case), findings, review, raw/filtered save, evidence bundle, metadata sidecar | `live_logs.py` | Ported (`LogCapture`, `FindingsStore`, `InvestigationReport`) | Foundation | No | ⏳ |
-| 15 | Command Center — 49 `pmd3` presets + Advanced Mode + risk classes + typed confirmation | `command_catalog.py`, `action_safety.py` | 🔁 Guided **Actions** catalog backed by native services / devicectl / simctl / xctrace, same risk classes and device-bound `RUN XXXXXX` / `IRREVERSIBLE XXXXXX` phrases; Advanced Mode for `devicectl` with safety classification | Yes | No | ⏳ |
-| 16 | Guided Command Drift | `pmd3 <route> --help` probes | 🔁 **Toolchain Check**: verifies every devicectl/simctl/xctrace route the app uses is present in the installed Xcode | Yes | No | ⏳ |
-| 17 | Man Pages (59 `pmd3` routes) | `pmd3 --help` | 🔁 Help browser for the Apple tools actually used (`devicectl help …`, `simctl help …`, `xctrace help …`) | Yes | No | ⏳ |
-| 18 | Installed Apps (search, sort, sizes, copy bundle ID, uninstall) | `pmd3 apps list/uninstall` | Native `installation_proxy` (sizes) with CoreDevice `info apps` fallback; uninstall via CoreDevice / simctl | Yes | No | ⏳ |
-| 19 | MobileBackup2 (encryption status, require encryption + new password, full/incremental, progress, cancel) | `pmd3` backup2 worker | Native `com.apple.mobilebackup2` DeviceLink client + `notification_proxy` sync lock; password never in argv | Lockdown service | No | ⏳ |
-| 20 | UFADE external launch | `ufade_connector.py` | Kept as optional external provider through `CommandRunner` | — | No | ⏳ |
-| 21 | MVT analysis handoff | `mvt_connector.py` | Kept as optional external provider through `CommandRunner` | — | No | ⏳ |
-| 22 | Sideload IPA (safe archive validation, Info.plist, provisioning via `security cms`, `codesign --verify`) | `ipa_inspector.py` | Native ZIP reader + validated extraction, `CMSDecoder` (Security.framework) for provisioning, `SecStaticCode` for signature; install via CoreDevice | Security.framework | No | ⏳ |
-| 23 | Evidence Capture (guided case intake, 15 snapshots, syslog/OSLog/PCAP streams, screenshot, crash pull, manifest, SHA256SUMS) | `collector.py`, `case_workflow.py` | Ported collection engine over native services / CoreDevice | Yes | No | ⏳ |
-| 24 | Network PCAP | `pmd3 pcap` | Native `com.apple.pcapd` client writing libpcap files | Lockdown service | No | ⏳ |
-| 25 | Screenshot | `pmd3 developer dvt screenshot` | CoreDevice `capture screenshot`; Simulator `simctl io screenshot` | Yes | No | ⏳ |
-| 26 | Crash report list / pull | `pmd3 crash ls/pull` | CoreDevice `info files` / `copy from --domain-type systemCrashLogs` | Yes | No | ⏳ |
-| 27 | Processes | `pmd3 processes ps`, DVT proclist, CoreDevice list-processes | CoreDevice `info processes` | Yes | No | ⏳ |
-| 28 | Launch app / open URL | DVT launch, Web Inspector launch | CoreDevice `process launch` / `process openURL`; Simulator `simctl launch` / `openurl` | Yes | No | ⏳ |
-| 29 | Configuration / provisioning profiles | `pmd3 profile list`, `provision list` | CoreDevice `profile list`; native `misagent` | Yes | No | ⏳ |
-| 30 | Diagnostics, battery, IORegistry, MobileGestalt | `pmd3 diagnostics …` | Native `diagnostics_relay` | Lockdown service | No | ⏳ |
-| 31 | SpringBoard orientation / icon metrics | `pmd3 springboard …` | Native `springboardservices`; CoreDevice `orientation get` | Yes | No | ⏳ |
-| 32 | Activation state, personalization identifiers | `pmd3 activation state`, `mounter query-personalization-identifiers` | Native lockdown / `mobile_image_mounter` | Lockdown | No | ⏳ |
-| 33 | DVT telemetry (sysmon, energy, graphics, netstat, notifications, KDebug/CoreProfile) | `pmd3 developer dvt …` | 🔁 Instruments recordings via `xcrun xctrace record --device` (Activity Monitor, Network, Power Profiler, System Trace, Time Profiler…) | xctrace | No | ⏳ |
-| 34 | RSD / RemoteXPC Bonjour discovery | `pmd3 bonjour rsd`, `remote browse` | Network.framework `NWBrowser` for `_remotepairing._tcp` / `_apple-mobdev2._tcp` | Network.framework | No | ⏳ |
-| 35 | Safari/WebView tab list | `pmd3 webinspector opened-tabs` | ❌ Not migrated in 1.0 (see §6) | — | No | ⏳ |
-| 36 | Bluetooth HCI capture | `pmd3 btlogger` | ❌ Not migrated in 1.0 (see §6) | — | No | ⏳ |
-| 37 | DVT filesystem listing (`dvt ls /`), AFC media listing | `pmd3 developer dvt ls`, `afc ls` | AFC via native `com.apple.afc`; DVT listing ❌ (see §6) | Lockdown | No | ⏳ |
-| 38 | Session Activity journal + manifest export | `operation_history.py` | Ported (`OperationJournal` actor) | Foundation | No | ⏳ |
-| 39 | Workspace profiles import/export | `workspace_profile.py` | Ported (Codable + validation) | Foundation | No | ⏳ |
-| 40 | Sanitized support bundle | `support_bundle.py` | Ported; native ZIP writer; includes redacted OSLog export | OSLog, Foundation | No | ⏳ |
-| 41 | Action Palette (⌘K), keyboard shortcuts | `action_palette.py` | SwiftUI command palette + `Commands` | SwiftUI | No | ⏳ |
-| 42 | Demo Mode | `demo_mode.py` | Ported; also drives deterministic UI tests | — | No | ⏳ |
-| 43 | Connection diagnostics / Reconnect & Retry | `connection_diagnostics.py` | Ported to usbmuxd states; guided reconnect sheet | — | No | ⏳ |
-| 44 | Scope & Safety page, Home page | GUI text | Redesigned in SwiftUI | — | No | ⏳ |
-| 45 | Ecosystem Tools: go-ios adapter | `external_tools.py` | ❌ **Removed by request** — capability covered by #1 | — | **go-ios** | ⏳ |
-| 46 | Ecosystem Tools: blacktop ipsw adapter | `external_tools.py` | ❌ **Removed by request** — capability covered by #1 | — | **ipsw** | ⏳ |
-| 47 | Ecosystem Tools: idb Companion adapter | `external_tools.py` | Kept as an optional external provider | — | No | ⏳ |
-| 48 | CLI: evidence collector, IPA inspector, local DDI | argparse scripts | `idt` Swift command-line tool (`collect`, `inspect-ipa`, `devices`, `ddi`) | — | No | ⏳ |
-| 49 | Simulators | Not supported | **New**: simulator discovery, boot/shutdown, install, launch, screenshot, location, logs, open URL — clearly separated from physical devices | simctl | No | ⏳ |
+| 1 | Device discovery | `pmd3 usbmux list` polled every 3 s | usbmuxd `Listen` event stream (event-driven) + CoreDevice `list devices` + `simctl list` | usbmuxd socket, devicectl, simctl | No | ✅ simulators · 🟡 physical |
+| 2 | Device identity (name, model, iOS, build, UDID, connection) | `usbmux list` / `lockdown info` | Native lockdown `GetValue` + CoreDevice details, with plain-language explanations | Yes | No | 🟡 |
+| 3 | Developer Mode status + on-device guide | `pmd3 amfi developer-mode-status` | Native lockdown (`com.apple.security.mac.amfi`) and CoreDevice `developerModeStatus`; guide sheet | Yes | No | 🟡 |
+| 4 | Personalized DDI mount (iOS 17+) | `pmd3 mounter auto-mount` (TSS) | 🔁 CoreDevice `device info ddiServices --auto-mount-ddis` (Apple mounts the correct personalized DDI) | devicectl | No | 🔁 🟡 |
+| 5 | Local Xcode DDI Cryptex install | `hdiutil` + `pmd3 cryptex auto-install` | 🔁 `devicectl manage ddis update` + `list preferredDDI` (host DDI store managed by Apple) | devicectl | No | 🔁 🟡 (route checked by Toolchain Check; not run) |
+| 6 | Mounted image list / unmount | `pmd3 mounter list/umount` | Native `mobile_image_mounter` (`CopyDevices`, `UnmountImage`) | Lockdown service | No | 🟡 |
+| 7 | CoreDevice details, RVI list, open project (`xed`), open .xcresult/.trace | `xcrun`, `rvictl`, `xed`, `open` | Same Apple tools through the central `CommandRunner` | Yes | No | 🟡 |
+| 8 | Capability Matrix | Worker running `pmd3` probes | Native probes (usbmuxd, pair record, lockdown session, AMFI, image mounter) + CoreDevice probes (details, lock state, DDI services) + Xcode tools | Yes | No | ✅ simulators · 🟡 physical |
+| 9 | Real-device compatibility history + sanitized JSON/Markdown export | `device_compatibility.py` | Ported (`CompatibilityStore`) | Foundation, CryptoKit | No | ✅ |
+| 10 | Location Lab (coordinate, nudge, saved places, offline map, map-link parsing, route generator, GPX inspection/replay, evidence log, clear) | `pmd3 developer dvt simulate-location` | Physical: CoreDevice `simulate location coordinate/route/clear`; Simulator: `simctl location`; GPX replay driven by the app; offline MapKit-free world map | devicectl, simctl | No | ✅ simulators · 🟡 physical |
+| 11 | Live Logs — Unified | `pmd3 syslog live --format json` (os_trace_relay) | Native `com.apple.os_trace_relay` client; Simulator: `simctl spawn log stream --style ndjson` | Lockdown service / simctl | No | ✅ simulators · 🟡 physical |
+| 12 | Live Logs — Classic syslog | `pmd3 syslog live-old` | Native `com.apple.syslog_relay` client | Lockdown service | No | 🟡 |
+| 13 | Live Logs — DVT OSLog | `pmd3 developer dvt oslog` | 🔁 Covered by #11 (os_trace_relay needs no DDI); DVT/DTX is not an Apple-public interface | — | No | 🔁 🟡 |
+| 14 | Live log spool, pause, filter (literal/regex/case), findings, review, raw/filtered save, evidence bundle, metadata sidecar | `live_logs.py` | Ported (`LogCapture`, `FindingsStore`, `InvestigationReport`) | Foundation | No | ✅ |
+| 15 | Command Center — 49 `pmd3` presets + Advanced Mode + risk classes + typed confirmation | `command_catalog.py`, `action_safety.py` | 🔁 Guided **Actions** catalog backed by native services / devicectl / simctl / xctrace, same risk classes and device-bound `RUN XXXXXX` / `IRREVERSIBLE XXXXXX` phrases; Advanced Mode for `devicectl` with safety classification | Yes | No | 🔁 ✅ simulators · 🟡 physical |
+| 16 | Guided Command Drift | `pmd3 <route> --help` probes | 🔁 **Toolchain Check**: verifies every devicectl/simctl/xctrace route the app uses is present in the installed Xcode | Yes | No | 🔁 ✅ |
+| 17 | Man Pages (59 `pmd3` routes) | `pmd3 --help` | 🔁 Help browser for the Apple tools actually used (`devicectl help …`, `simctl help …`, `xctrace help …`) | Yes | No | 🔁 ✅ |
+| 18 | Installed Apps (search, sort, sizes, copy bundle ID, uninstall) | `pmd3 apps list/uninstall` | Native `installation_proxy` (sizes) with CoreDevice `info apps` fallback; uninstall via native `installation_proxy` over USB, CoreDevice for network-only devices, `simctl` for simulators | Yes | No | ✅ simulators (list) · 🟡 physical |
+| 19 | MobileBackup2 (encryption status, require encryption + new password, full/incremental, progress, cancel) | `pmd3` backup2 worker | Native `com.apple.mobilebackup2` DeviceLink client + `notification_proxy` sync lock; password never in argv | Lockdown service | No | 🟡 |
+| 20 | UFADE external launch | `ufade_connector.py` | Kept as optional external provider through `CommandRunner` | — | No | 🟡 (stand-in executables) |
+| 21 | MVT analysis handoff | `mvt_connector.py` | Kept as optional external provider through `CommandRunner` | — | No | 🟡 (stand-in executables) |
+| 22 | Sideload IPA (safe archive validation, Info.plist, provisioning via `security cms`, `codesign --verify`) | `ipa_inspector.py` | Native ZIP reader + validated extraction, `CMSDecoder` (Security.framework) for provisioning, `SecStaticCode` for signature; install via CoreDevice when Xcode is available, otherwise native AFC upload + `installation_proxy`; simulators via `simctl install` | Security.framework | No | ✅ inspection · 🟡 install |
+| 23 | Evidence Capture (guided case intake, 15 snapshots, syslog/OSLog/PCAP streams, screenshot, crash pull, manifest, SHA256SUMS) | `collector.py`, `case_workflow.py` | Ported collection engine over native services / CoreDevice | Yes | No | 🟡 |
+| 24 | Network PCAP | `pmd3 pcap` | Native `com.apple.pcapd` client writing libpcap files | Lockdown service | No | 🟡 |
+| 25 | Screenshot | `pmd3 developer dvt screenshot` | CoreDevice `capture screenshot`; Simulator `simctl io screenshot` | Yes | No | ✅ simulators · 🟡 physical |
+| 26 | Crash report list / pull | `pmd3 crash ls/pull` | Native AFC over `com.apple.crashreportcopymobile` (after `crashreportmover`), no Xcode needed | Yes | No | 🟡 |
+| 27 | Processes | `pmd3 processes ps`, DVT proclist, CoreDevice list-processes | CoreDevice `info processes` | Yes | No | 🟡 |
+| 28 | Launch app / open URL | DVT launch, Web Inspector launch | CoreDevice `process launch` / `process openURL`; Simulator `simctl launch` / `openurl` | Yes | No | ✅ simulators · 🟡 physical |
+| 29 | Configuration / provisioning profiles | `pmd3 profile list`, `provision list` | CoreDevice `profile list`; native `misagent` | Yes | No | 🟡 |
+| 30 | Diagnostics, battery, IORegistry, MobileGestalt | `pmd3 diagnostics …` | Native `diagnostics_relay` | Lockdown service | No | 🟡 |
+| 31 | SpringBoard orientation / icon metrics | `pmd3 springboard …` | Native `springboardservices`; CoreDevice `orientation get` | Yes | No | 🟡 |
+| 32 | Activation state, personalization identifiers | `pmd3 activation state`, `mounter query-personalization-identifiers` | Native lockdown / `mobile_image_mounter` | Lockdown | No | 🟡 |
+| 33 | DVT telemetry (sysmon, energy, graphics, netstat, notifications, KDebug/CoreProfile) | `pmd3 developer dvt …` | 🔁 Instruments recordings via `xcrun xctrace record --device` (Activity Monitor, Network, Power Profiler, System Trace, Time Profiler…) | xctrace | No | 🔁 🟡 |
+| 34 | RSD / RemoteXPC Bonjour discovery | `pmd3 bonjour rsd`, `remote browse` | Network.framework `NWBrowser` for `_remotepairing._tcp` / `_apple-mobdev2._tcp` | Network.framework | No | 🟡 |
+| 35 | Safari/WebView tab list | `pmd3 webinspector opened-tabs` | ❌ Not migrated in 1.0 (see §6) | — | No | ❌ |
+| 36 | Bluetooth HCI capture | `pmd3 btlogger` | ❌ Not migrated in 1.0 (see §6) | — | No | ❌ |
+| 37 | DVT filesystem listing (`dvt ls /`), AFC media listing | `pmd3 developer dvt ls`, `afc ls` | AFC via native `com.apple.afc`; DVT listing ❌ (see §6) | Lockdown | No | 🟡 AFC · ❌ DVT |
+| 38 | Session Activity journal + manifest export | `operation_history.py` | Ported (`OperationJournal` actor) | Foundation | No | ✅ |
+| 39 | Workspace profiles import/export | `workspace_profile.py` | Ported (Codable + validation) | Foundation | No | ✅ |
+| 40 | Sanitized support bundle | `support_bundle.py` | Ported; native ZIP writer; includes redacted OSLog export | OSLog, Foundation | No | ✅ |
+| 41 | Action Palette (⌘K), keyboard shortcuts | `action_palette.py` | SwiftUI command palette + `Commands` | SwiftUI | No | ✅ (UI test runs in CI) |
+| 42 | Demo Mode | `demo_mode.py` | Ported; also drives deterministic UI tests | — | No | ✅ |
+| 43 | Connection diagnostics / Reconnect & Retry | `connection_diagnostics.py` | Ported to usbmuxd states; guided reconnect sheet | — | No | ✅ |
+| 44 | Scope & Safety page, Home page | GUI text | Redesigned in SwiftUI | — | No | ✅ |
+| 45 | Ecosystem Tools: go-ios adapter | `external_tools.py` | ❌ **Removed by request** — capability covered by #1 | — | **go-ios** | ❌ removed |
+| 46 | Ecosystem Tools: blacktop ipsw adapter | `external_tools.py` | ❌ **Removed by request** — capability covered by #1 | — | **ipsw** | ❌ removed |
+| 47 | Ecosystem Tools: idb Companion adapter | `external_tools.py` | Kept as an optional external provider | — | No | 🟡 (stand-in executable) |
+| 48 | CLI: evidence collector, IPA inspector, local DDI | argparse scripts | `idt` Swift command-line tool (`collect`, `inspect-ipa`, `devices`, `ddi`) | — | No | ✅ |
+| 49 | Simulators | Not supported | **New**: simulator discovery, boot/shutdown, install, launch, screenshot, location, logs, open URL — clearly separated from physical devices | simctl | No | ✅ |
 
 ## 3. Architecture decisions
 
@@ -152,14 +153,95 @@ Swift device discovery (usbmuxd + CoreDevice + simctl), so nothing is lost.
 
 ## 5. Test results
 
-(Updated during migration — see §7.)
+Environment: MacBook Pro (Apple silicon), macOS 27.0, Xcode 27.0 (Swift 6.4). No physical iPhone
+or iPad was connected during the migration.
+
+### 5.1 Automated tests
+
+| Suite | Tests | What it exercises | Result |
+|---|---:|---|---|
+| `ToolkitCoreTests` | 29 | `CommandRunner` (argument vectors, timeouts, cancellation, output draining, minimal environment), `ToolkitError`, secure file I/O (owner-only, no overwrite, path traversal), sanitizer, hashing, journal, ZIP writer | ✅ pass |
+| `DeviceKitTests` | 62 | usbmuxd framing and `Listen` events, pairing-record handling, lockdown TLS with certificate pinning and UDID check, the lockdown service clients (syslog, os_trace, pcapd, MobileBackup2, diagnostics, installation proxy, AFC, image mounter, springboard) against an in-process **fake usbmuxd + lockdownd device**; CoreDevice JSON parsing; `simctl` parsing | ✅ pass |
+| `ToolkitFeaturesTests` | 54 | Location Lab, GPX, location mechanism routing and legacy-service message encoding, provisioning profiles (misagent) and packet capture through the action executor, IPA inspection (fixtures incl. malicious archives), live-log capture/findings/export, action catalog and safety policy, actions and readiness against the fake device, evidence collection, workspace profiles, support bundle, external-tool validation | ✅ pass |
+| Real simulator (opt-in, `IDT_SIMULATOR_TESTS=1`) | 1 | Boots an iOS 26.3.1 iPhone simulator; sets, routes, and clears location; screenshot; app list; live unified log capture with hash; launches an app; Open URL action; readiness | ✅ pass (9.6 s) |
+| XCUITest smoke tests (`App/UITests`) | 7 | Window size, Demo Mode labelling, every workspace, disabled demo actions, command palette, Location Lab validation, minimum size | ⚠️ not run locally: macOS requires an interactive Automation Mode authorization. Runs in CI (`.github/workflows/ci.yml`) |
+
+Totals: 145 package tests pass with `-warnings-as-errors`; the app and UI-test targets build with
+`SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` and zero warnings.
+
+### 5.2 GUI verification
+
+The app's screenshot harness (`-capture-screenshots`, see `scripts/check-layout.sh`) rendered all
+14 workspaces in Demo Mode at 1180×700 (default) and 900×560 (minimum): no page is squeezed or
+overflows the window. The same harness rendered the Device, Live Logs (real simulator log stream,
+about 35,000 lines in 6 s), Location Lab, and Actions pages with a booted simulator. The README
+screenshots come from these renders.
+
+### 5.3 Release packaging
+
+`scripts/build-release.sh` produced a universal (arm64 + x86_64) app, ad-hoc signed with the
+hardened runtime (`flags=0x10002(adhoc,runtime)`), with `idt`, dependency licenses, and the SPDX
+SBOM inside, and verified it again from the ZIP. The release build launched and rendered, and its
+`idt` listed devices. The x86_64 slice is present (`lipo`) but was **not executed**: this Mac has
+no Rosetta. `spctl` rejects the app, as expected for an app that is not notarized.
+
+### 5.4 Physical devices
+
+**Not tested on hardware.** No iPhone or iPad was available. Discovery, trust, live logs, backup,
+packet capture, app installation, diagnostics, and multi-device handling are verified only against
+the fake device (byte-level protocol tests) and against macOS's real usbmuxd with zero devices.
+Everything marked 🟡 in §2 needs a pass of
+[docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md).
+
+| Device | iOS | Connection | Stage 1 | Stage 2 | Stage 3 | Stage 4 | Tester, date |
+|---|---|---|---|---|---|---|---|
+| — | — | — | not tested | not tested | not tested | not tested | — |
 
 ## 6. Known limitations and features not reproduced
 
-(Updated during migration.)
+### 6.1 Features not migrated
+
+| Feature (Python) | Why not in 1.0 | Alternatives investigated | Native implementation possible? |
+|---|---|---|---|
+| **Safari/WebView tab listing** (`pmd3 webinspector opened-tabs`) | Needs the undocumented WebKit remote-inspector RPC protocol (`com.apple.webinspector`: `_rpc_reportIdentifier:`, `_rpc_getConnectedApplications:`, `_rpc_forwardGetListing:`), plus *Web Inspector* enabled on the device. Without a device the protocol cannot be verified, and shipping an unverified reverse-engineered protocol conflicts with the "do not claim it works" rule. | Safari › Develop menu on the Mac (Apple-supported, lists and inspects tabs on a connected device); `ios_webkit_debug_proxy` (third-party executable — rejected: no hidden shell-outs to third-party tools); CoreDevice has no web-inspector command. | **Yes.** The service is reachable through lockdown with the existing `DeviceSession`; it needs a plist RPC client and hardware verification. Candidate for 1.1. |
+| **Bluetooth HCI capture** (`pmd3 btlogger`) | `com.apple.bluetooth.BTPacketLogger` only streams after Apple's *Bluetooth logging profile* is installed on the device, and there was no device to verify the record format. | Apple **PacketLogger** (Additional Tools for Xcode) captures from a connected iOS device with the same profile — the documented route, recommended in the meantime; a sysdiagnose taken with the profile installed also contains the HCI log. | **Yes**, over lockdown with the existing service plumbing (framing is similar to pcapd). Needs the profile and a device to verify. |
+| **DVT file-system listing** (`pmd3 developer dvt ls`) | DVT uses Apple's private DTX protocol (NSKeyedArchiver messages over `com.apple.instruments.remoteserver*`). On iOS 17+ it is only reachable through the RemoteXPC tunnel that CoreDevice owns; creating that tunnel needs a utun interface (root) or CoreDevice's private frameworks — both excluded (no `sudo`, no private frameworks). | AFC (`com.apple.afc`, Media folder — implemented as *List Media folder*); `devicectl device info files` and `device copy from` for app containers and supported domains (available through Advanced Mode); crash reports through `crashreportcopymobile` (implemented). | **Not for iOS 17+** without privileges or private frameworks. For iOS 16 and earlier, DTX over lockdown is possible but serves only legacy devices and is not planned. |
+| **Mounting a developer disk image on iOS 16 and earlier** (`pmd3 mounter auto-mount` with a version-specific DDI) | The image mounter protocol (`UploadImage`/`MountImage`) is simple, and listing/unmounting are implemented natively. The blocker is the image: current Xcode (27.0 here) ships no per-version `DeviceSupport` images for iOS 16 and earlier, and redistributing Apple's DDIs is not permitted. `devicectl`'s DDI services (`--auto-mount-ddis`) apply to iOS 17+ personalized images only. | Connect the device to an Xcode version that supports it once (Xcode mounts the image); user-supplied images from an older Xcode (would need a file picker and signature validation — deferred); third-party DDI repositories (rejected: licensing and provenance). | **Yes, technically** (upload + mount with a user-supplied `DeveloperDiskImage.dmg` and `.signature`), but only useful with an image the user already has. Deferred until there is demand. |
+
+### 6.2 Verification gaps
+
+- **Native lockdown services need physical-device verification.** usbmuxd, lockdown TLS, and all
+  service clients pass byte-level tests against the fake device, which reproduces Apple's framing
+  (plist headers, TLS upgrade, DeviceLink, AFC packets, pcapd records, os_trace records) from
+  public protocol documentation and prior implementations. Real devices can differ in details
+  (record versions, error codes, timing). Until the protocol in §5.4 has been run, treat 🟡 rows
+  as unverified.
+- **CoreDevice commands** are verified for argument construction, JSON parsing (from recorded
+  output shapes), and presence in the installed Xcode (Toolchain Check), not against a device.
+- **UI tests** run only in CI (Automation Mode authorization cannot be granted non-interactively).
+- **Intel Macs:** the universal build is produced and signed, but the x86_64 slice has not been run.
+- **CI** has not run yet: the workflows were validated as YAML and their scripts were run locally
+  with Xcode 27. GitHub's `macos-26` image ships an older Xcode; if the Swift 6.4 toolchain is
+  required, set the `XCODE_VERSION` repository variable.
+- **Simulator app installation** (`simctl install`) is covered by argument tests only; the
+  end-to-end test does not install an app.
+
+### 6.3 Behaviour differences from 0.3.x
+
+- Release builds are universal instead of separate Apple silicon and Intel downloads; minimum
+  macOS is 14 (was 13).
+- Guided actions replace the 49 raw `pymobiledevice3` presets; Advanced Mode runs `devicectl`
+  instead of arbitrary `pymobiledevice3` subcommands.
+- DVT telemetry streams are replaced by Instruments recordings (`xctrace`); the DVT OSLog stream by
+  the Unified Logging stream, which needs no developer image.
+- Features that need a developer tunnel (iOS 17+) now require Xcode, which owns the tunnel.
 
 ## 7. Migration log
 
 - 2026-09-26 — Audit complete; migration branch `swift-native-migration` created.
-- 2026-09-26 — Swift package (ToolkitCore, DeviceKit, ToolkitFeatures, idt CLI) complete with 170+ passing tests, including an end-to-end fake usbmuxd/lockdownd device, a real-Xcode toolchain check, and an opt-in real-simulator test. SwiftUI app builds with zero warnings; GUI verified by in-app window rendering (Demo Mode) at default and minimum sizes. XCUITests written but blocked locally by macOS Automation Mode authentication.
-- Remaining: README/docs rewrite, GitHub Actions for Swift/Xcode, release packaging, physical-device verification of the native lockdown services, removal of the Python implementation and go-ios/ipsw references, final verification pass.
+- 2026-09-26 — Swift package (ToolkitCore, DeviceKit, ToolkitFeatures, idt CLI) complete with an end-to-end fake usbmuxd/lockdownd device, a real-Xcode toolchain check, and an opt-in real-simulator test. SwiftUI app and XCUITests written.
+- 2026-09-26 — GUI layout fixed at the minimum size; documentation screenshot mode added.
+- 2026-09-26 — Standalone packet capture action (parity with the Python app); warnings are errors in every target.
+- 2026-09-26 — README and documentation rewritten for the Swift app; mkdocs removed.
+- 2026-09-26 — GitHub Actions replaced (CI, release, CodeQL for Swift, dependency review); `scripts/build-release.sh` verified locally.
+- 2026-09-27 — Test results and known limitations recorded (§5, §6); feature statuses set (§2).
