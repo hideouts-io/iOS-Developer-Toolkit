@@ -332,3 +332,91 @@ personalization uses `URLSession`. The private service and the TSS request are i
 Not reproduced: downloading images from the third-party mirror (the app uses Xcode's images or a
 folder you choose), and the RemoteXPC Cryptex install (`devicectl` covers it without a privileged
 tunnel).
+
+## 9. Full parity audit (against `origin/main`, Python 0.3.4)
+
+Scope: all 40 modules in `ios_developer_toolkit/`, the 253 named GUI controls and 130 user actions
+in `app.py`/`gui_pages.py`, the smoke-test button list in `entrypoint.py`, all 49 Command Center
+presets, the 17 evidence snapshots and man-page routes in `catalog.py`, the 11 Capability Matrix
+rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours asserted in
+`tests/`. Classification: **=** equivalent · **🔁** replaced by a better Apple mechanism ·
+**◐** partial · **✗** missing · **—** intentionally excluded.
+
+### 9.1 Command Center presets (49)
+
+| Python preset (`pymobiledevice3 …`) | Swift | Class | Evidence |
+|---|---|---|---|
+| devices (`usbmux list`) | usbmuxd discovery, `idt devices` | = | `LockdownStackTests`, `idt devices` run |
+| lockdown, activation, developer-mode | Actions `lockdown-values`, `activation-state`, `developer-mode-status` (native) | = | `nativeActionsRunAgainstTheCapturedTarget` |
+| diagnostics, battery, ioregistry, mobilegestalt | Actions (native `diagnostics_relay`) | = | same |
+| processes (`processes ps`, os_trace `PidList`, no Xcode) | Actions `processes` via CoreDevice only (needs Xcode) | ◐ → **G1** | code review |
+| profiles (`profile list`, MCInstall, no Xcode) | Actions `configuration-profiles` via CoreDevice only | ◐ → **G2** | code review |
+| provisioning, orientation, icon-metrics | Actions (native misagent, springboardservices) | = | `ServiceTests.springBoardServicesAnswerQueries` |
+| apps-list, apps-query | Apps page; Action `app-query` (native installation_proxy) | = | `ServiceTests` |
+| afc-list | Action `media-list` (path parameter) | = | `nativeActionsRunAgainstTheCapturedTarget` |
+| dvt-list (`developer dvt ls`) | — | — | §6.1: DTX over RemoteXPC on iOS 17+ |
+| crash-list, crash-pull | Actions (native AFC) | = | `BackupAndAFCTests` |
+| syslog | Live Logs · Classic syslog | = | `ServiceTests` |
+| oslog (DVT) | Live Logs · Unified (os_trace_relay, no DDI) | 🔁 | `ServiceTests`, real-simulator test |
+| pcap | Action `packet-capture`, Evidence stream | = | `nativeActionsRunAgainstTheCapturedTarget` |
+| btlogger (`--format pcapng`) | — | ✗ → **G4** | §6.1 said possible |
+| dvt-device, dvt-proclist, dvt-applist | device details / processes / apps | 🔁 | — |
+| dvt-netstat, dvt-energy, sysmon-system, sysmon-process, graphics, core-profile | Action `instruments` (xctrace templates) | 🔁 | `instrumentsRequestsAreBounded` |
+| dvt-pid-check | Action `processes` (the list shows whether a pid runs) | 🔁 | — |
+| notifications (DVT app-state notifications) | — | — | DTX-only; Instruments “App Launch”/“Activity Monitor” cover app state |
+| screenshot, core-device-info, core-display, core-lock, core-processes, core-apps | Actions via CoreDevice (and simctl) | = | real-simulator test (screenshot) |
+| mounted-images, personalization | Actions (native image mounter) | = | `DeveloperImageTests` |
+| bonjour-rsd | Action `bonjour` (Network.framework) | = | — |
+| remote-browse (RSD service list) | — | — | needs RemoteXPC (HTTP/2 + XPC over the device's USB network link); `devicectl device info details` lists capabilities instead |
+| web-tabs (`webinspector opened-tabs`) | — | ✗ → **G3** | §6.1 said possible |
+| launch-app, location-set, location-clear | Actions via CoreDevice / simctl / legacy service | = | real-simulator test |
+| open-url (`webinspector launch`, Safari automation) | Action `open-url` via CoreDevice / simctl | ◐ | the Web Inspector route needs a WebDriver automation session and Settings › Safari › Remote Automation; kept on CoreDevice |
+
+### 9.2 Workspaces, controls, and workflows
+
+| Area | Python | Swift | Class |
+|---|---|---|---|
+| Device & DDI | device info, Developer Mode check and guide, DDI source choice, mount/unmount, list images, CoreDevice details, RVI list, open project/artifact | Device page, Developer image card (§8), handoffs | = |
+| Connection | banner, **Reconnect & Retry…** (guided 30-second reconnect window) | sidebar summary, Connection diagnostics, Next-step card | ◐ → **G5** |
+| Capability Matrix | 11 rows incl. `rsd-tunnel`, `dvt`, `webinspector`; copy report; per-preset and per-case readiness buttons | Readiness Check (15 rows; tunnel state in the CoreDevice row); copy report | ◐ → **G3** (Web Inspector row), **G8** (Instruments row replacing DVT), **G12** (readiness shortcuts) |
+| Compatibility history | table, refresh, JSON/Markdown export with preview | Readiness history and exports | = |
+| Location Lab | coordinates, map links, map, nudge, saved places, routes (speed presets, interval, traversals), **add current coordinate as waypoint**, GPX (ignore timing, randomness), evidence log, clear on stop | all except the waypoint button | ◐ → **G9** |
+| Live Logs | streams, reference, regex/case filter, pause, follow, stop, findings, **findings register with Copy**, copy visible, save raw/filtered, evidence bundle, pop-out | all except copying the register | ◐ → **G10** |
+| Command Center / Man Pages / Drift | presets, console, prerequisites, risk badge, man pages, **use man-page command in console**, drift check | Actions, Advanced Mode, Tool Reference, Toolchain Check | ◐ → **G12** |
+| Installed Apps | table, filter, sizes, copy bundle ID, uninstall, stop | Apps page | = |
+| Backup | encryption check/enable, destination, require encryption, full, progress, stop, open folder | Backup page | = |
+| Sideload IPA | choose, inspect, developer package, install, stop | Install App | = |
+| Evidence | guided case, authorization, streams, screenshot, crash pull, open last case, readiness | Evidence Capture | = (readiness shortcut: **G12**) |
+| MVT | executable, backup, IOC files, output, fast, hashes, network, acknowledgements, guides | External Tools · MVT | = |
+| UFADE | checkout, Python, output, validation incl. **developer-image submodule status**, guides, launch | External Tools · UFADE | ◐ → **G13** |
+| Ecosystem tools | go-ios, ipsw, idb | idb Companion | = (go-ios/ipsw removed by request) |
+| Workspace profiles | export/import with preview; fields incl. **`ddi_source`, `command_preset`**; imports schema-1 files | export/import; no DDI/action fields; **rejects 0.3.x files** | ◐ → **G6** |
+| Support bundle, Session Activity, Demo Mode, Action Palette | — | ported | = |
+| Shortcuts | ⌘1–9, ⌘0, ⌘R, ⌘K, ⌘L, ⌘F, **⌘/ reference**, **⌥⌘←/→ previous/next workspace** | ⌘1–9, ⌘R, ⇧⌘R, ⌘K | ◐ → **G11** |
+
+### 9.3 Command-line tools, evidence snapshots, tests
+
+| Item | Swift | Class |
+|---|---|---|
+| `ios-developer-collect` (all options) | `idt collect` — `--include-oslog` renamed `--include-unified-logs` | ◐ → **G7** (accept the old flag) |
+| `ios-ipa-inspect`, `ios-local-ddi` | `idt inspect-ipa`, `idt ddi` | = / 🔁 |
+| Evidence snapshots (17) | lockdown, images, diagnostics ×4, apps, provisioning, crashes, AFC root, CoreDevice details; **processes and configuration profiles only with Xcode**; cryptex list and DVT ×3 excluded (RemoteXPC/DTX) | ◐ → **G1**, **G2** |
+| `tests/` behaviours | ported to Swift tests (see §5.1); packaging/runtime tests replaced by `scripts/build-release.sh` checks | = |
+
+### 9.4 Gap list (priority order)
+
+| # | Gap | Priority | Why |
+|---|---|---|---|
+| G1 | Native process list (`os_trace_relay` `PidList`) for actions and evidence | P1 | worked without Xcode in 0.3.x |
+| G2 | Native configuration profiles (`com.apple.mobile.MCInstall` `GetProfileList`) | P1 | worked without Xcode in 0.3.x |
+| G3 | Safari/WebView tab listing (`com.apple.webinspector`) + Web Inspector readiness row | P1 | previously “not migrated”; native is possible |
+| G4 | Bluetooth HCI capture (`com.apple.bluetooth.BTPacketLogger`) to `.pklg` | P1 | previously “not migrated”; native is possible |
+| G5 | Guided reconnect | P2 | user-facing help in 0.3.x |
+| G6 | Import 0.3.x workspace profiles; profile fields for the developer-image mechanism and selected action | P2 | migration path for existing users |
+| G7 | `idt collect --include-oslog` accepted as an alias | P2 | existing scripts |
+| G8 | Instruments readiness row (replaces the DVT row) | P2 | readiness coverage |
+| G9 | Add current coordinate as a route waypoint | P3 | convenience |
+| G10 | Copy the findings register | P3 | convenience |
+| G11 | Keyboard shortcut reference (⌘/) and previous/next workspace (⌥⌘← / ⌥⌘→) | P3 | convenience |
+| G12 | “Use in Advanced Mode” from Tool Reference; readiness shortcuts on Actions and Evidence | P3 | convenience |
+| G13 | UFADE developer-image submodule status | P3 | diagnostic detail |
