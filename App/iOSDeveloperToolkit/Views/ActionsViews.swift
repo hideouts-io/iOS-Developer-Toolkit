@@ -88,6 +88,12 @@ struct ActionListRow: View {
                 .help(action.risk.label)
         }
         .opacity(available ? 1 : 0.5)
+        // One element per row: otherwise the identifier is copied onto the title, summary, and
+        // risk icon, and VoiceOver reads them as three separate items.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(action.title)
+        .accessibilityValue(available ? action.risk.label : "\(action.risk.label), not available for this device")
+        .accessibilityHint(action.summary)
         .accessibilityIdentifier("action-\(action.id)")
     }
 }

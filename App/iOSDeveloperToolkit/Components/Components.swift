@@ -192,6 +192,7 @@ struct TargetHeader: View {
             }
             .padding(12)
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+            .accessibilityElement(children: .combine)
             .accessibilityIdentifier("target-header")
         } else {
             NoDeviceView()
