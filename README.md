@@ -102,7 +102,7 @@ Features that use Xcode's developer tools need Xcode installed (open it once to 
 | Live Logs from physical devices (Unified and classic syslog) | Location simulation on iOS 17 and later |
 | Packet capture; checking the developer image, and mounting it over USB from an image Xcode installed or a folder you choose ([Developer images](#developer-images)) | Xcode's device service (`devicectl`) route for the developer image |
 | Encrypted backups and encryption setup | Screenshots, launch app, open URL, stop a process |
-| Diagnostics, battery, IORegistry, MobileGestalt | Running processes, lock state, displays, configuration profiles |
+| Diagnostics, battery, IORegistry, MobileGestalt, running processes | Lock state, displays, configuration profiles |
 | Installed apps (with sizes), removing apps, installing `.ipa` packages | Sysdiagnose and Instruments recordings |
 | Provisioning profiles, crash reports, Media folder listing | Restart device, Advanced Mode (`devicectl`), Tool Reference |
 | IPA inspection, Evidence Capture (without the Xcode-only steps) | Readiness rows for Xcode's device service |

@@ -118,6 +118,13 @@ struct ServiceTests {
         #expect(OSTraceRecordParser.parse(truncated).level == "Undecoded")
     }
 
+    @Test func processListParsesPidListReplies() throws {
+        let processes = try OSTraceRelay.parseProcessList(["Status": "RequestSuccessful", "Payload": ["250": ["ProcessName": "SpringBoard"], "1": ["ProcessName": "launchd"], "7": [:], "not-a-pid": ["ProcessName": "x"]]])
+        #expect(processes.map(\.pid) == [1, 7, 250])
+        #expect(processes.map(\.name) == ["launchd", "PID 7", "SpringBoard"])
+        #expect(throws: ToolkitError.self) { try OSTraceRelay.parseProcessList(["Status": "RequestFailed"]) }
+    }
+
     @Test func springBoardServicesAnswerQueries() async throws {
         let png = Data([0x89, 0x50, 0x4E, 0x47])
         try await runWithServer({ _ in }) { server in

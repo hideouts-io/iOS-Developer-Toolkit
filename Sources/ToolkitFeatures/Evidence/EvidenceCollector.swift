@@ -212,8 +212,14 @@ public actor EvidenceCollector {
             let apps = try await proxy.browse(includeSizes: true)
             return String(decoding: try JSONOutput.encode(apps.map { ["bundle_identifier": $0.bundleIdentifier, "name": $0.name, "version": $0.version ?? "", "build": $0.build ?? "", "type": $0.applicationType, "total_bytes": $0.totalBytes.map(String.init) ?? ""] }), as: UTF8.self)
         })
-        await snapshot("processes", "Running processes", "devicectl device info processes", file: "snapshots/processes.txt", unavailableUnless: coreDeviceAvailable, events: events) {
-            try await coreDevice.processes(target).map { "\($0.pid)\t\($0.executablePath ?? "")" }.joined(separator: "\n") + "\n"
+        if device.supportsLockdownServices {
+            await snapshot("processes", "Running processes", "os_trace_relay PidList (native)", file: "snapshots/processes.txt", events: events, lockdown { session in
+                try await OSTraceRelay.processList(session).map { "\($0.pid)\t\($0.name)" }.joined(separator: "\n") + "\n"
+            })
+        } else {
+            await snapshot("processes", "Running processes", "devicectl device info processes", file: "snapshots/processes.txt", unavailableUnless: coreDeviceAvailable, events: events) {
+                try await coreDevice.processes(target).map { "\($0.pid)\t\($0.executablePath ?? "")" }.joined(separator: "\n") + "\n"
+            }
         }
         await snapshot("configuration-profiles", "Configuration profiles", "devicectl device profile list", file: "snapshots/configuration-profiles.json", unavailableUnless: coreDeviceAvailable, events: events) {
             try await coreDevice.profiles(target).json.prettyString()

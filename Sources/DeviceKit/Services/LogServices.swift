@@ -188,6 +188,31 @@ public enum OSTraceRelay {
         }
     }
 
+    /// The device's running processes (`PidList`). Works over lockdown on any trusted device,
+    /// without Xcode or a developer image. The reply is one leading byte, then a 4-byte big-endian
+    /// length and a plist whose `Payload` maps each process ID to details such as `ProcessName`.
+    public static func processList(_ session: DeviceSession) async throws -> [DeviceProcessInfo] {
+        let service = try await session.openService(serviceName)
+        defer { Task { await service.close() } }
+        try await service.messages.send(["Request": "PidList"])
+        _ = try await service.channel.read(exactly: 1, timeout: 30)
+        let length = Int(try await service.channel.read(exactly: 4, timeout: 30).readBigEndianUInt32(at: 0))
+        guard length > 0, length <= 16 << 20 else {
+            throw ToolkitError(.protocolViolation, message: "The device sent an invalid process list.", technicalDetail: "length=\(length)")
+        }
+        return try parseProcessList(PlistValue.decode(try await service.channel.read(exactly: length, timeout: 60)))
+    }
+
+    static func parseProcessList(_ reply: PlistValue) throws -> [DeviceProcessInfo] {
+        guard let payload = reply["Payload"]?.dictionaryValue else {
+            throw ToolkitError(.serviceUnavailable, message: "The device did not return its process list.", recovery: "Unlock the device and try again.", technicalDetail: reply.prettyJSONString())
+        }
+        return payload.compactMap { key, value -> DeviceProcessInfo? in
+            guard let pid = Int(key) else { return nil }
+            return DeviceProcessInfo(pid: pid, name: value["ProcessName"]?.stringValue ?? "PID \(pid)")
+        }.sorted { $0.pid < $1.pid }
+    }
+
     /// The start reply is a plist preceded by a 4-byte little-endian size-of-length field and
     /// a little-endian length of that size.
     static func readStartReply(_ channel: DeviceChannel) async throws -> PlistValue {
@@ -329,5 +354,17 @@ public enum SimulatorLogParser {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSSZ"
         return formatter.date(from: value)
+    }
+}
+
+/// A process reported by the device's `os_trace_relay` process list.
+public struct DeviceProcessInfo: Sendable, Hashable, Codable, Identifiable {
+    public var id: Int { pid }
+    public var pid: Int
+    public var name: String
+
+    public init(pid: Int, name: String) {
+        self.pid = pid
+        self.name = name
     }
 }

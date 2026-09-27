@@ -7,6 +7,15 @@ import ToolkitCore
 
 /// Registers the lockdown services used by collection and readiness checks on a fake device.
 func registerStandardServices(_ server: FakeDeviceServer, afc: FakeAFCFileSystem, crashes: FakeAFCFileSystem) {
+    server.register(service: OSTraceRelay.serviceName) { channel in
+        // PidList: one leading byte, then a big-endian length and the plist.
+        let request = try await PlistMessageConnection(channel: channel).receive(timeout: 5)
+        guard request["Request"]?.stringValue == "PidList" else { return }
+        let reply = try PlistValue.dictionary(["Status": "RequestSuccessful", "Payload": ["1": ["ProcessName": "launchd"], "250": ["ProcessName": "SpringBoard"]]]).encoded(format: .binary)
+        var header = Data([0x01])
+        header.appendBigEndian(UInt32(reply.count))
+        try await channel.write(header + reply)
+    }
     server.domainValues["com.apple.security.mac.amfi"] = ["DeveloperModeStatus": true]
     server.domainValues["com.apple.mobile.backup"] = ["WillEncrypt": false]
     server.register(service: DiagnosticsRelay.serviceName) { channel in
@@ -94,11 +103,13 @@ struct EvidenceTests {
         #expect(status["media-root"] == .succeeded)
         #expect(status["stream-syslog"] == .succeeded)
         #expect(status["crash-reports"] == .succeeded)
+        #expect(status["processes"] == .succeeded, "processes are read natively, without Xcode")
         #expect(status["coredevice-details"] == .unavailable)
         #expect(status["screenshot"] == .unavailable)
         #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("artifacts/crashes/JetsamEvent-2026.ips").path))
         #expect(try String(contentsOf: folder.appendingPathComponent("streams/syslog.log"), encoding: .utf8).contains("collected line"))
         #expect(try String(contentsOf: folder.appendingPathComponent("snapshots/crash-list.txt"), encoding: .utf8).contains("JetsamEvent"))
+        #expect(try String(contentsOf: folder.appendingPathComponent("snapshots/processes.txt"), encoding: .utf8).contains("250\tSpringBoard"))
         #expect(try HashManifest.verify(folder: folder, fileName: "SHA256SUMS").isEmpty)
         let manifestJSON = try JSONValue.parse(Data(contentsOf: folder.appendingPathComponent("manifest.json")))
         #expect(manifestJSON["target_udid"]?.string == server.udid)
@@ -173,8 +184,10 @@ struct ReadinessAndActionTests {
 
         let battery = try #require(ActionCatalog.descriptor("battery"))
         #expect(ActionReadiness.evaluate(battery, results: results, device: device) == .ready)
-        let processes = try #require(ActionCatalog.descriptor("processes"))
-        guard case .needsAttention(let problems) = ActionReadiness.evaluate(processes, results: results, device: device) else {
+        // The process list no longer needs Xcode (it did in 1.0 before the parity audit); lock state still does.
+        #expect(ActionReadiness.evaluate(try #require(ActionCatalog.descriptor("processes")), results: results, device: device) == .ready)
+        let lockState = try #require(ActionCatalog.descriptor("lock-state"))
+        guard case .needsAttention(let problems) = ActionReadiness.evaluate(lockState, results: results, device: device) else {
             Issue.record("expected attention")
             return
         }
@@ -212,6 +225,9 @@ struct ReadinessAndActionTests {
         #expect(media.details.map(\.0) == ["Downloads"])
         let query = try await executor.execute(try #require(ActionCatalog.descriptor("app-query")), target: target, values: ["bundle": "com.example.demo"])
         #expect(query.summary.hasPrefix("Demo"))
+        let processes = try await executor.execute(try #require(ActionCatalog.descriptor("processes")), target: target, values: [:])
+        #expect(processes.summary == "2 processes running.")
+        #expect(processes.details.map(\.1) == ["launchd", "SpringBoard"])
 
         // A pcapd record with no link-layer header: 95-byte header + a 20-byte IPv4 packet.
         var record = [UInt8](repeating: 0, count: 95)

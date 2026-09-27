@@ -152,6 +152,10 @@ public struct ActionExecutor: Sendable {
 
         case "processes":
             let target = try requireTarget(target)
+            if target.usbmuxDeviceID != nil {
+                let processes = try await session(target) { try await OSTraceRelay.processList($0) }
+                return make(action, target, summary: "\(processes.count) processes running.", details: processes.prefix(500).map { ("\($0.pid)", $0.name) }, raw: processes.map { "\($0.pid)\t\($0.name)" }.joined(separator: "\n"))
+            }
             let processes = try await coreDevice.processes(target)
             return make(action, target, summary: "\(processes.count) processes running.", details: processes.prefix(500).map { ("\($0.pid)", $0.name) }, raw: processes.map { "\($0.pid)\t\($0.executablePath ?? "")" }.joined(separator: "\n"))
 
