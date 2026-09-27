@@ -133,7 +133,7 @@ The Command Line Tools alone are not enough for the Xcode column: `devicectl`, `
    **System Settings › Privacy & Security** and choose **Open Anyway**. Do not disable Gatekeeper.
 
 Nothing else needs to be installed. The release also contains `idt`, the command-line tool, at
-`iOS Developer Toolkit.app/Contents/Resources/idt`.
+`iOS Developer Toolkit.app/Contents/MacOS/idt`.
 
 ### Build it yourself
 
@@ -262,7 +262,7 @@ swift build -c release --product idt          # the command-line tool
 xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
   -configuration Release -destination 'platform=macOS' build
 
-scripts/build-release.sh 1.0.0                # universal, ad-hoc-signed release ZIP + checksums
+scripts/build-release.sh                      # universal, ad-hoc-signed release ZIP, SBOM, checksums in build-output/release/
 ```
 
 The Xcode project is generated from `project.yml` with [XcodeGen](https://github.com/yonaskolb/XcodeGen)

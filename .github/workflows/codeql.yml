@@ -14,20 +14,32 @@ on:
 permissions:
   contents: read
 
+env:
+  XCODE_VERSION: ${{ vars.XCODE_VERSION }}
+
 jobs:
   analyze:
-    name: Analyze Python
-    runs-on: macos-15
-    timeout-minutes: 30
+    name: Analyze Swift
+    runs-on: macos-26
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: read
       security-events: write
     steps:
       - uses: actions/checkout@v7
+      - name: Select Xcode
+        run: scripts/ci-select-xcode.sh
       - uses: github/codeql-action/init@v4
         with:
-          languages: python
+          languages: swift
+          build-mode: manual
+      - name: Build the package and the app
+        run: |
+          swift build
+          xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
+            -configuration Debug -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" build
       - uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:python"
+          category: "/language:swift"

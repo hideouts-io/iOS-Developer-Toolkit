@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  XCODE_VERSION: ${{ vars.XCODE_VERSION }}
+
+jobs:
+  build:
+    name: Build universal app
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode
+        run: scripts/ci-select-xcode.sh
+      - name: Test before packaging
+        run: swift test -Xswiftc -warnings-as-errors
+      - name: Build, sign, and verify the release
+        # Fails unless the tag (without "v") matches ToolkitVersion.current and MARKETING_VERSION.
+        run: scripts/build-release.sh "${GITHUB_REF_NAME#v}" release-assets
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish:
+    name: Attest and publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: release-assets
+      - name: Verify checksums and name the release files
+        id: files
+        working-directory: release-assets
+        run: |
+          sha256sum -c SHA256SUMS.txt
+          version="${GITHUB_REF_NAME#v}"
+          zip="release-assets/iOS-Developer-Toolkit-$version-macOS-universal.zip"
+          sbom="release-assets/iOS-Developer-Toolkit-$version.spdx.json"
+          test -f "../$zip" && test -f "../$sbom"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "sbom=$sbom" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: ${{ steps.files.outputs.zip }}
+      - name: Attest SBOM
+        uses: actions/attest@v4.2.2
+        with:
+          subject-path: ${{ steps.files.outputs.zip }}
+          sbom-path: ${{ steps.files.outputs.sbom }}
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "iOS Developer Toolkit $GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes "Universal (Apple silicon and Intel) macOS app, ad-hoc signed with the hardened runtime and not notarized. Verify SHA256SUMS.txt and the GitHub attestation before opening; see docs/release-verification.md."

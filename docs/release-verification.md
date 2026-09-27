@@ -7,7 +7,7 @@ a GitHub-hosted macOS runner:
 
 | File | Contents |
 |---|---|
-| `iOS-Developer-Toolkit-VERSION-macOS-universal.zip` | The app (arm64 + x86_64), ad-hoc signed with the hardened runtime, with `idt` in `Contents/Resources` |
+| `iOS-Developer-Toolkit-VERSION-macOS-universal.zip` | The app (arm64 + x86_64), ad-hoc signed with the hardened runtime, with `idt` in `Contents/MacOS` and dependency licenses in `Contents/Resources/Licenses` |
 | `SHA256SUMS.txt` | SHA-256 of every release file |
 | `iOS-Developer-Toolkit-VERSION.spdx.json` | SPDX 2.3 SBOM of the Swift package dependencies, generated from `Package.resolved` |
 

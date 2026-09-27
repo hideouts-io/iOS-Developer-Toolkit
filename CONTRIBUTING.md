@@ -68,19 +68,19 @@ xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
 Also, when relevant:
 
 - **UI changes:** run the UI tests (`xcodebuild … test`; macOS asks once to allow UI
-  automation) and render every page at the minimum size:
+  automation) and render every page at the default and minimum sizes, as CI does:
 
   ```bash
-  "…/iOS Developer Toolkit.app/Contents/MacOS/iOS Developer Toolkit" \
-    -demo-mode YES -window-size 900x560 -capture-screenshots /tmp/shots
+  scripts/check-layout.sh "…/iOS Developer Toolkit.app/Contents/MacOS/iOS Developer Toolkit" /tmp/layout
   ```
 
-  `/tmp/shots/window-geometry.txt` must contain no `SQUEEZED` or `OVERFLOW` lines.
+  It fails if any page is squeezed, overflows the window, or does not render; the PNGs are in
+  `/tmp/layout` for review.
 - **Simulator code:** `IDT_SIMULATOR_TESTS=1 swift test --filter RealSimulator`.
 - **Device protocol code:** add a test against the fake device in `Tests/DeviceTestSupport`, and
   if you can, run the relevant part of [docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md).
   State the device family, iOS version, and connection you tested — no identifiers.
-- **Release packaging:** `scripts/build-release.sh 0.0.0-test` must succeed.
+- **Release packaging:** `scripts/build-release.sh` must succeed (it builds the version in `ToolkitVersion.swift` into `build-output/release/`).
 
 ## Pull requests
 
