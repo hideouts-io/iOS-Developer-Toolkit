@@ -67,7 +67,11 @@ APP="$WORK/app.xcarchive/Products/Applications/iOS Developer Toolkit.app"
 [[ -d "$APP" ]] || fail "the archive does not contain the app"
 
 step "Building idt (arm64 + x86_64, release)"
-swift build -c release --product idt --arch arm64 --arch x86_64 --scratch-path "$CACHE/spm" --quiet
+if ! swift build -c release --product idt --arch arm64 --arch x86_64 --scratch-path "$CACHE/spm" > "$WORK/idt-build.log" 2>&1; then
+    grep -E "error:|warning:" "$WORK/idt-build.log" | sort -u | head -40 >&2
+    tail -40 "$WORK/idt-build.log" >&2
+    fail "the universal idt build failed (output above)"
+fi
 BIN="$(swift build -c release --product idt --arch arm64 --arch x86_64 --scratch-path "$CACHE/spm" --show-bin-path)"
 cp "$BIN/idt" "$APP/Contents/MacOS/idt"
 

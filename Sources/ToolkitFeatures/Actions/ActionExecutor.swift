@@ -64,7 +64,7 @@ public struct ActionExecutor: Sendable {
             throw ToolkitError.invalidInput("Select a device first.")
         }
         let started = Date()
-        var result = try await perform(action, target: target, parameters: parameters)
+        var result = try await perform(action, target: target, parameters: parameters, values: values)
         result.startedAt = started
         result.finishedAt = Date()
         return result
@@ -84,7 +84,7 @@ public struct ActionExecutor: Sendable {
     }
 
     // swiftlint:disable:next cyclomatic_complexity function_body_length
-    private func perform(_ action: ActionDescriptor, target: DeviceTarget?, parameters: [String: String]) async throws -> ActionResult {
+    private func perform(_ action: ActionDescriptor, target: DeviceTarget?, parameters: [String: String], values: [String: String]) async throws -> ActionResult {
         switch action.id {
         case "device-details":
             let target = try requireTarget(target)
@@ -425,7 +425,12 @@ public struct ActionExecutor: Sendable {
 
         case "open-url":
             let target = try requireTarget(target)
-            guard let url = URL(string: parameters["url"] ?? "") else { throw ToolkitError.invalidInput("Enter a valid URL.") }
+            // Validated on its own rather than read from the combined parameters, so no other
+            // parameter's data (for example coordinates) can flow into the URL handed to the device.
+            guard let urlParameter = action.parameters.first(where: { $0.id == "url" }),
+                  let url = URL(string: try urlParameter.validate(values["url"] ?? urlParameter.defaultValue)) else {
+                throw ToolkitError.invalidInput("Enter a valid URL.")
+            }
             if target.kind == .simulator {
                 try await simulators.openURL(url, on: target)
             } else {

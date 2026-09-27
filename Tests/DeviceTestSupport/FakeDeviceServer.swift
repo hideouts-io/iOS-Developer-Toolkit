@@ -147,11 +147,19 @@ public final class FakeDeviceServer: @unchecked Sendable {
                     try await send(["MessageType": "Result", "Number": 2], on: connection)
                     return
                 }
-                try await send(["MessageType": "Result", "Number": 0], on: connection)
+                let serviceHandler = port == LockdownClient.port ? nil : lock.withLock { servicePorts[port].flatMap { services[$0] } }
+                let connected = try USBMuxProtocol.encode(["MessageType": "Result", "Number": 0], tag: 1)
+                if serviceHandler != nil, serviceTLS {
+                    // The client starts TLS as soon as it reads the reply, so the reply and the TLS
+                    // handler go in together (see replyThenStartTLS); otherwise, under load, the
+                    // ClientHello could reach the plaintext reader first and the handshake would stall.
+                    try await writeThenStartTLS(connected, on: connection, source: "fake service")
+                } else {
+                    try await connection.write(connected)
+                }
                 if port == LockdownClient.port {
                     try await handleLockdown(connection)
-                } else if let name = lock.withLock({ servicePorts[port] }), let handler = lock.withLock({ services[name] }) {
-                    if serviceTLS { try await acceptTLS(on: connection) }
+                } else if let handler = serviceHandler {
                     try await handler(connection)
                 }
             default:
@@ -177,8 +185,11 @@ public final class FakeDeviceServer: @unchecked Sendable {
     /// Writes the plaintext reply and inserts the TLS handler in the same event-loop tick, so
     /// the client's ClientHello cannot be read before TLS is in place.
     private func replyThenStartTLS(_ reply: PlistValue, on connection: DeviceChannel) async throws {
+        try await writeThenStartTLS(try PlistMessageConnection.frame(reply), on: connection, source: "fake server")
+    }
+
+    private func writeThenStartTLS(_ frame: Data, on connection: DeviceChannel, source: String) async throws {
         let context = try serverTLSContext()
-        let frame = try PlistMessageConnection.frame(reply)
         connection.inbound.prepareForTLS()
         let channel = connection.channel
         try await channel.eventLoop.submit {
@@ -187,17 +198,7 @@ public final class FakeDeviceServer: @unchecked Sendable {
             channel.writeAndFlush(buffer, promise: nil)
             try channel.pipeline.syncOperations.addHandler(NIOSSLServerHandler(context: context), position: .first)
         }.get()
-        try await connection.inbound.waitForTLSHandshake(source: "fake server")
-    }
-
-    private func acceptTLS(on connection: DeviceChannel) async throws {
-        let context = try serverTLSContext()
-        connection.inbound.prepareForTLS()
-        let channel = connection.channel
-        try await channel.eventLoop.submit {
-            try channel.pipeline.syncOperations.addHandler(NIOSSLServerHandler(context: context), position: .first)
-        }.get()
-        try await connection.inbound.waitForTLSHandshake(source: "fake service")
+        try await connection.inbound.waitForTLSHandshake(source: source)
     }
 
     private func handleLockdown(_ connection: DeviceChannel) async throws {
