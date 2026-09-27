@@ -2,4 +2,6 @@
 
 /.github/ @hideouts-io
 /scripts/ @hideouts-io
-/packaging/ @hideouts-io
+/project.yml @hideouts-io
+/Package.swift @hideouts-io
+/Package.resolved @hideouts-io
