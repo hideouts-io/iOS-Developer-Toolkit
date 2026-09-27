@@ -35,8 +35,8 @@ func makeTraceRecord(pid: UInt32, seconds: UInt32, microseconds: UInt32, level: 
     let messageBytes = Array(message.utf8) + [0]
     put16(UInt16(imageBytes.count), 107)
     put16(UInt16(messageBytes.count), 109)
-    let subsystemBytes = subsystem.map { Array($0.utf8) + [0] } ?? []
-    let categoryBytes = category.map { Array($0.utf8) + [0] } ?? []
+    let subsystemBytes: [UInt8] = subsystem.map { Array($0.utf8) + [0] } ?? []
+    let categoryBytes: [UInt8] = category.map { Array($0.utf8) + [0] } ?? []
     put32(UInt32(subsystemBytes.count), 117)
     put32(UInt32(categoryBytes.count), 121)
     bytes += Array(filename.utf8) + [0]
