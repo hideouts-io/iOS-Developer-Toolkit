@@ -163,8 +163,8 @@ or iPad was connected during the migration.
 | `ToolkitCoreTests` | 30 | `CommandRunner` (argument vectors, timeouts, cancellation, output draining, minimal environment), `ToolkitError`, secure file I/O (owner-only, no overwrite, path traversal), sanitizer, hashing, journal, ZIP writer | ✅ pass |
 | `DeviceKitTests` | 76 | usbmuxd framing and `Listen` events, developer images (image mounter, image library, TSS request, state evaluation, personalized and legacy mount/unmount), pairing-record handling, lockdown TLS with certificate pinning and UDID check, the lockdown service clients (syslog, os_trace, pcapd, MobileBackup2, diagnostics, installation proxy, AFC, image mounter, springboard) against an in-process **fake usbmuxd + lockdownd device**; CoreDevice JSON parsing; `simctl` parsing | ✅ pass |
 | `ToolkitFeaturesTests` | 55 | Location Lab, GPX, location mechanism routing and legacy-service message encoding, provisioning profiles (misagent) and packet capture through the action executor, IPA inspection (fixtures incl. malicious archives), live-log capture/findings/export, action catalog and safety policy, actions and readiness against the fake device, evidence collection, workspace profiles, support bundle, external-tool validation | ✅ pass |
-| Real simulator (opt-in, `IDT_SIMULATOR_TESTS=1`) | 1 | Boots an iOS 26.3.1 iPhone simulator; sets, routes, and clears location; screenshot; app list; live unified log capture with hash; launches an app; Open URL action; readiness | ✅ pass (9.6 s) |
-| XCUITest smoke tests (`App/UITests`) | 8 | Window size, Demo Mode labelling, every workspace, disabled demo actions, command palette, Location Lab validation, minimum size, developer-image card | ✅ the original 7 pass locally (2026-09-27, run by the maintainer). The first run failed `testDemoActionsAreBlockedWithExplanation`: each Actions row exposed its identifier on three child elements, so the click was ambiguous (and VoiceOver read three items). Rows are now single accessibility elements; the three affected tests were re-run and pass. The developer-image card test (added in §8) has not been run yet. Also run in CI |
+| Real simulator (opt-in, `IDT_SIMULATOR_TESTS=1`) | 1 | Boots an iOS 26.3.1 iPhone simulator; waits for boot to complete; sets, routes, and clears location; screenshot; app list; live unified log capture with hash; launches an app; Open URL action; readiness; compiles, installs, lists, launches, and uninstalls a minimal simulator app | ✅ pass locally (about 24 s) |
+| XCUITest smoke tests (`App/UITests`) | 8 | Window size, Demo Mode labelling, every workspace, disabled demo actions, command palette, Location Lab validation, minimum size, developer-image card | ✅ the original 7 pass locally (2026-09-27, run by the maintainer). The first run failed `testDemoActionsAreBlockedWithExplanation`: each Actions row exposed its identifier on three child elements, so the click was ambiguous (and VoiceOver read three items). Rows are now single accessibility elements; the three affected tests were re-run and pass. All 8 (including the developer-image card test added in §8) pass in CI on Xcode 26.6 (PR #13). |
 
 Totals: 161 package tests pass with `-warnings-as-errors`; the app and UI-test targets build with
 `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` and zero warnings.
@@ -242,14 +242,14 @@ Everything marked 🟡 in §2 needs a pass of
   as unverified.
 - **CoreDevice commands** are verified for argument construction, JSON parsing (from recorded
   output shapes), and presence in the installed Xcode (Toolchain Check), not against a device.
-- **UI tests** run only in CI (Automation Mode authorization cannot be granted non-interactively).
+- **UI tests** run in CI and when the maintainer runs them locally (macOS asks once to allow UI
+  automation); all 8 pass in both.
 - **Intel Macs:** the x86_64 slice is verified under Rosetta 2 on Apple silicon (tests, CLI, and
   rendering), not on Intel hardware.
-- **CI** has not run yet: the workflows were validated as YAML and their scripts were run locally
-  with Xcode 27. GitHub's `macos-26` image ships an older Xcode; if the Swift 6.4 toolchain is
-  required, set the `XCODE_VERSION` repository variable.
-- **Simulator app installation** (`simctl install`) is covered by argument tests only; the
-  end-to-end test does not install an app.
+- **CI** (PR #13, `macos-26`, Xcode 26.6 / Swift 6.3.3): the app build with the zero-warning check,
+  all 8 UI tests, the layout check, and dependency review pass. Two fixes came out of the first
+  runs: an array-type inference difference in Swift 6.3 (test code), and waiting for simulators to
+  finish booting (`simctl bootstatus -b`) before launching apps.
 
 ### 6.3 Behaviour differences from 0.3.x
 

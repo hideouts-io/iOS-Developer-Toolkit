@@ -69,6 +69,42 @@ struct RealSimulatorTests {
         #expect(readiness.first { $0.id == "simulator-running" }?.state == .ready)
         #expect(readiness.first { $0.id == "xcode-tools" }?.state == .ready)
 
+        // Install, list, launch, and remove a real (minimal) simulator app.
+        let fixture = try await Self.buildFixtureApp(in: directory)
+        try await client.install(appAt: fixture, on: target)
+        #expect(try await client.apps(target).contains { $0.bundleIdentifier == Self.fixtureBundleID })
+        let launched = try await client.launch(bundleIdentifier: Self.fixtureBundleID, on: target, terminateExisting: true)
+        #expect(launched.contains(Self.fixtureBundleID))
+        try await client.uninstall(bundleIdentifier: Self.fixtureBundleID, on: target)
+        #expect(try await !client.apps(target).contains { $0.bundleIdentifier == Self.fixtureBundleID })
+
         if !wasBooted { try await client.shutdown(target) }
+    }
+
+    static let fixtureBundleID = "io.hideouts.idt.simulator-fixture"
+
+    /// Compiles a minimal iOS-simulator app with Xcode's swiftc and signs it ad hoc.
+    static func buildFixtureApp(in directory: URL) async throws -> URL {
+        let runner = ProcessCommandRunner()
+        let app = directory.appendingPathComponent("Fixture.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        let source = directory.appendingPathComponent("main.swift")
+        try Data("import Foundation\nwhile true { sleep(1) }\n".utf8).write(to: source)
+        #if arch(arm64)
+        let triple = "arm64-apple-ios17.0-simulator"
+        #else
+        let triple = "x86_64-apple-ios17.0-simulator"
+        #endif
+        let compile = try await runner.run(CommandRequest(executable: try AppleTool.xcrun.locate(), arguments: ["--sdk", "iphonesimulator", "swiftc", "-target", triple, "-o", app.appendingPathComponent("Fixture").path, source.path], timeout: 300))
+        try #require(compile.succeeded, "swiftc failed: \(compile.standardErrorText)")
+        let info: PlistValue = [
+            "CFBundleIdentifier": .string(fixtureBundleID), "CFBundleExecutable": "Fixture", "CFBundleName": "Fixture",
+            "CFBundlePackageType": "APPL", "CFBundleVersion": "1", "CFBundleShortVersionString": "1.0",
+            "MinimumOSVersion": "17.0", "CFBundleSupportedPlatforms": ["iPhoneSimulator"], "UIDeviceFamily": [1, 2],
+        ]
+        try info.encoded(format: .xml).write(to: app.appendingPathComponent("Info.plist"))
+        let sign = try await runner.run(CommandRequest(executable: try AppleTool.codesign.locate(), arguments: ["--force", "--sign", "-", app.path], timeout: 60))
+        try #require(sign.succeeded, "codesign failed: \(sign.standardErrorText)")
+        return app
     }
 }
