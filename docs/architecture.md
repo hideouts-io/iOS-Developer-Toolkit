@@ -25,7 +25,7 @@ App/iOSDeveloperToolkit (SwiftUI views and view state)      Sources/idt (command
 | Path | Used for | Needs |
 |---|---|---|
 | **usbmuxd** (`/var/run/usbmuxd`) | Discovery events, pairing records, connections to device services | A trusted device over USB or Wi-Fi sync |
-| **Lockdown** (TLS, swift-nio-ssl) | Identity, Developer Mode status, syslog and os_trace relays, pcapd, MobileBackup2, diagnostics, installation proxy, AFC, misagent, image mounter, legacy location | Trust; nothing from Xcode |
+| **Lockdown** (TLS, swift-nio-ssl) | Identity, Developer Mode status, syslog and os_trace relays, pcapd, MobileBackup2, diagnostics, installation proxy, AFC, misagent, image mounter (check, personalize, upload, mount, unmount developer images), legacy location | Trust; nothing from Xcode except the developer image files it installs |
 | **CoreDevice** (`xcrun devicectl`, JSON output) | Developer services (personalized DDI), screenshots, location on iOS 17+, processes, launch, profiles, sysdiagnose, network-only devices | Xcode |
 | **Simulators** (`xcrun simctl`) | Everything in the Simulators section | Xcode |
 | **Instruments** (`xcrun xctrace`) | Recordings | Xcode |
@@ -34,6 +34,23 @@ Each lockdown session pins the device certificate from the pairing record and ch
 device answering has the requested UDID. Pairing records come from usbmuxd's `ReadPairRecord`,
 which macOS allows without administrator rights. The app never reads `/var/db/lockdown` and never
 creates pairing records.
+
+## Developer images
+
+Developer-image support lives in `Sources/DeviceKit/DeveloperImage` and is the only code that
+talks to the private `com.apple.mobile.mobile_image_mounter` service or to Apple's signing server:
+
+| Type | Role |
+|---|---|
+| `ImageMounter` | The image-mounter protocol (lookup, list, nonce, personalization identifiers and manifest, upload, mount, unmount) and the mapping of its errors to plain language |
+| `DeveloperImageLibrary` | Images on this Mac: Xcode's `/Library/Developer/DeveloperDiskImages/iOS_DDI`, user folders, legacy `DeveloperDiskImage.dmg` + `.signature`; build-identity selection by chip and board |
+| `ImagePersonalization` | Builds the TSS request and reads the ticket; the network call is behind `PersonalizationTransport` so tests never reach Apple |
+| `DeveloperImageManager` | Reads device facts, evaluates the state (a pure function), and mounts or unmounts — through Xcode's `devicectl` or the built-in client |
+
+The rest of the app sees only `DeveloperImageStatus` (state, explanation, next step, details).
+The private service and TSS formats follow the open-source implementations the 0.3.x app used;
+they are covered by tests against a stateful fake image mounter, and still need verification on
+physical devices ([PHYSICAL_DEVICE_TEST_PROTOCOL.md](PHYSICAL_DEVICE_TEST_PROTOCOL.md), Stage 3).
 
 ## Processes
 

@@ -9,10 +9,11 @@
 | Listed, but “not trusted” | Pairing | Unlock, reconnect, tap **Trust**. If no prompt appears: *Settings › General › Transfer or Reset › Reset › Reset Location & Privacy* |
 | Developer features unavailable | Developer Mode | *Settings › Privacy & Security › Developer Mode*. If the switch is missing, connect the device to Xcode once |
 | “Needs Xcode” | Xcode | Install Xcode, open it once, and select it in *Xcode › Settings › Locations › Command Line Tools*. Run **Tool Reference › Toolchain Check** |
-| Developer services not prepared | CoreDevice / DDI | Keep the device unlocked and on USB, make sure the Mac is online, then **Prepare Developer Services** on the Device page |
+| Developer image not mounted | Developer image | The **Developer image** card on the Device page names the problem and the fix. Keep the device unlocked and on USB; on iOS 17 and later keep the Mac online (Apple personalizes the image). If one route fails, try the other under **Options › Mount with** |
+| Developer image “Missing” or “Incompatible” | Host image | iOS 17+: update Xcode and open it once (it installs `/Library/Developer/DeveloperDiskImages/iOS_DDI`). iOS 16 and earlier: add a folder with `DeveloperDiskImage.dmg` and `.signature` for the exact version (**Options › Add Image Folder…**) |
 | Network device missing | CoreDevice | Pair it with Xcode over USB first, keep it on the same network, and refresh (⌘R) |
 | Simulator missing | simctl | Install a simulator runtime in *Xcode › Settings › Components* |
-| Location simulation fails on iOS 16 or earlier | Legacy service | Connect the device to Xcode once so Xcode mounts its developer disk image; this app does not mount images for iOS 16 and earlier |
+| Location simulation fails on iOS 16 or earlier | Legacy service | Mount the developer image for that exact iOS version first (see the developer-image rows above) |
 
 The **Readiness Check** runs these checks in order and stops at the first one that fails.
 

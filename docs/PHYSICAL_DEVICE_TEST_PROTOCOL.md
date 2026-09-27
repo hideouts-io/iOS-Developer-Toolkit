@@ -44,11 +44,19 @@ of issues and pull requests. Report results as **passed**, **failed**, **not app
 
 ## Stage 3 — with Xcode and Developer Mode
 
-1. **Prepare Developer Services** on the Device page; expect the status to become prepared.
-2. Screenshot, running processes, lock state, launch an app, open a URL.
-3. An Instruments recording of 10 seconds; open the `.trace` in Instruments.
-4. On iOS 16 or earlier (after Xcode has mounted the developer disk image): set and clear a
-   location through the legacy service.
+1. **Developer image** card: note the state and details (iOS, build, model, chip/board). Expect
+   *Personalization required* or *Available* on iOS 17+, *Available* or *Missing* on iOS 16 and earlier.
+2. **Mount Developer Image** with *Mount with: Built-in*. Expect *Mounted*. Record whether Apple
+   personalization was needed. Then **Mount Developer Image** again: nothing should be uploaded.
+3. **Unmount**, then mount again with *Xcode device service*. Expect *Mounted*.
+4. Lock the device and mount: expect “The device is locked.” With Developer Mode off: expect
+   *Needs attention* and no upload.
+5. iOS 16 or earlier: add a folder with the matching `DeveloperDiskImage.dmg` and `.signature`,
+   mount, and confirm *Mounted* at `/Developer`.
+6. Screenshot, running processes, lock state, launch an app, open a URL.
+7. An Instruments recording of 10 seconds; open the `.trace` in Instruments.
+8. On iOS 16 or earlier (after mounting the developer image): set and clear a location through
+   the legacy service.
 
 ## Stage 4 — changes (opt in, one at a time)
 

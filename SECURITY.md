@@ -46,6 +46,10 @@ The app:
 - starts external processes only through one runner, from fixed paths, with an argument vector
   and a minimal environment, never through a shell;
 - keeps passwords (backup encryption) in memory only and never passes them as process arguments;
+- connects to the internet from its own code only to personalize a developer image (iOS 17 and
+  later), after the user confirms: it sends the device's chip, board, and ECID with a one-time
+  nonce to Apple's signing server over HTTPS, as Xcode does, and never downloads images from
+  third parties;
 - writes captures, backups, and reports with owner-only permissions and never overwrites files.
 
 It does not jailbreak iOS, bypass a passcode or activation, defeat code signing, disable the

@@ -56,9 +56,9 @@ Swift device discovery (usbmuxd + CoreDevice + simctl), so nothing is lost.
 | 1 | Device discovery | `pmd3 usbmux list` polled every 3 s | usbmuxd `Listen` event stream (event-driven) + CoreDevice `list devices` + `simctl list` | usbmuxd socket, devicectl, simctl | No | ✅ simulators · 🟡 physical |
 | 2 | Device identity (name, model, iOS, build, UDID, connection) | `usbmux list` / `lockdown info` | Native lockdown `GetValue` + CoreDevice details, with plain-language explanations | Yes | No | 🟡 |
 | 3 | Developer Mode status + on-device guide | `pmd3 amfi developer-mode-status` | Native lockdown (`com.apple.security.mac.amfi`) and CoreDevice `developerModeStatus`; guide sheet | Yes | No | 🟡 |
-| 4 | Personalized DDI mount (iOS 17+) | `pmd3 mounter auto-mount` (TSS) | 🔁 CoreDevice `device info ddiServices --auto-mount-ddis` (Apple mounts the correct personalized DDI) | devicectl | No | 🔁 🟡 |
-| 5 | Local Xcode DDI Cryptex install | `hdiutil` + `pmd3 cryptex auto-install` | 🔁 `devicectl manage ddis update` + `list preferredDDI` (host DDI store managed by Apple) | devicectl | No | 🔁 🟡 (route checked by Toolchain Check; not run) |
-| 6 | Mounted image list / unmount | `pmd3 mounter list/umount` | Native `mobile_image_mounter` (`CopyDevices`, `UnmountImage`) | Lockdown service | No | 🟡 |
+| 4 | Developer image mount — personalized (iOS 17+) and DeveloperDiskImage (iOS ≤ 16) | `pmd3 mounter auto-mount` (TSS; images from a third-party mirror) | Native `mobile_image_mounter` client + Apple TSS personalization, using the image Xcode installs or a user folder; or CoreDevice `ddiServices --auto-mount-ddis`. State model, no remount, error mapping (§8) | Yes (devicectl) + private lockdown service | No | 🟡 |
+| 5 | Local Xcode DDI Cryptex install | `hdiutil` + `pmd3 cryptex auto-install` | 🔁 `devicectl manage ddis update` + `list preferredDDI` (host DDI store managed by Apple) | devicectl | No | 🔁 🟡 (Cryptex route replaced by devicectl and the native personalized mount of the same Xcode image) |
+| 6 | Mounted image list / lookup / unmount | `pmd3 mounter list/lookup/umount` | Native `mobile_image_mounter` (`CopyDevices`, `LookupImage`, `UnmountImage` for `/System/Developer` and `/Developer`) | Lockdown service | No | 🟡 |
 | 7 | CoreDevice details, RVI list, open project (`xed`), open .xcresult/.trace | `xcrun`, `rvictl`, `xed`, `open` | Same Apple tools through the central `CommandRunner` | Yes | No | 🟡 |
 | 8 | Capability Matrix | Worker running `pmd3` probes | Native probes (usbmuxd, pair record, lockdown session, AMFI, image mounter) + CoreDevice probes (details, lock state, DDI services) + Xcode tools | Yes | No | ✅ simulators · 🟡 physical |
 | 9 | Real-device compatibility history + sanitized JSON/Markdown export | `device_compatibility.py` | Ported (`CompatibilityStore`) | Foundation, CryptoKit | No | ✅ |
@@ -161,12 +161,12 @@ or iPad was connected during the migration.
 | Suite | Tests | What it exercises | Result |
 |---|---:|---|---|
 | `ToolkitCoreTests` | 30 | `CommandRunner` (argument vectors, timeouts, cancellation, output draining, minimal environment), `ToolkitError`, secure file I/O (owner-only, no overwrite, path traversal), sanitizer, hashing, journal, ZIP writer | ✅ pass |
-| `DeviceKitTests` | 62 | usbmuxd framing and `Listen` events, pairing-record handling, lockdown TLS with certificate pinning and UDID check, the lockdown service clients (syslog, os_trace, pcapd, MobileBackup2, diagnostics, installation proxy, AFC, image mounter, springboard) against an in-process **fake usbmuxd + lockdownd device**; CoreDevice JSON parsing; `simctl` parsing | ✅ pass |
+| `DeviceKitTests` | 76 | usbmuxd framing and `Listen` events, developer images (image mounter, image library, TSS request, state evaluation, personalized and legacy mount/unmount), pairing-record handling, lockdown TLS with certificate pinning and UDID check, the lockdown service clients (syslog, os_trace, pcapd, MobileBackup2, diagnostics, installation proxy, AFC, image mounter, springboard) against an in-process **fake usbmuxd + lockdownd device**; CoreDevice JSON parsing; `simctl` parsing | ✅ pass |
 | `ToolkitFeaturesTests` | 55 | Location Lab, GPX, location mechanism routing and legacy-service message encoding, provisioning profiles (misagent) and packet capture through the action executor, IPA inspection (fixtures incl. malicious archives), live-log capture/findings/export, action catalog and safety policy, actions and readiness against the fake device, evidence collection, workspace profiles, support bundle, external-tool validation | ✅ pass |
 | Real simulator (opt-in, `IDT_SIMULATOR_TESTS=1`) | 1 | Boots an iOS 26.3.1 iPhone simulator; sets, routes, and clears location; screenshot; app list; live unified log capture with hash; launches an app; Open URL action; readiness | ✅ pass (9.6 s) |
-| XCUITest smoke tests (`App/UITests`) | 7 | Window size, Demo Mode labelling, every workspace, disabled demo actions, command palette, Location Lab validation, minimum size | ✅ all 7 pass locally (2026-09-27, run by the maintainer). The first run failed `testDemoActionsAreBlockedWithExplanation`: each Actions row exposed its identifier on three child elements, so the click was ambiguous (and VoiceOver read three items). Rows are now single accessibility elements; the three affected tests were re-run and pass. Also run in CI |
+| XCUITest smoke tests (`App/UITests`) | 8 | Window size, Demo Mode labelling, every workspace, disabled demo actions, command palette, Location Lab validation, minimum size, developer-image card | ✅ the original 7 pass locally (2026-09-27, run by the maintainer). The first run failed `testDemoActionsAreBlockedWithExplanation`: each Actions row exposed its identifier on three child elements, so the click was ambiguous (and VoiceOver read three items). Rows are now single accessibility elements; the three affected tests were re-run and pass. The developer-image card test (added in §8) has not been run yet. Also run in CI |
 
-Totals: 147 package tests pass with `-warnings-as-errors`; the app and UI-test targets build with
+Totals: 161 package tests pass with `-warnings-as-errors`; the app and UI-test targets build with
 `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` and zero warnings.
 
 ### 5.2 GUI verification
@@ -224,10 +224,12 @@ Everything marked 🟡 in §2 needs a pass of
 | **Safari/WebView tab listing** (`pmd3 webinspector opened-tabs`) | Needs the undocumented WebKit remote-inspector RPC protocol (`com.apple.webinspector`: `_rpc_reportIdentifier:`, `_rpc_getConnectedApplications:`, `_rpc_forwardGetListing:`), plus *Web Inspector* enabled on the device. Without a device the protocol cannot be verified, and shipping an unverified reverse-engineered protocol conflicts with the "do not claim it works" rule. | Safari › Develop menu on the Mac (Apple-supported, lists and inspects tabs on a connected device); `ios_webkit_debug_proxy` (third-party executable — rejected: no hidden shell-outs to third-party tools); CoreDevice has no web-inspector command. | **Yes.** The service is reachable through lockdown with the existing `DeviceSession`; it needs a plist RPC client and hardware verification. Candidate for 1.1. |
 | **Bluetooth HCI capture** (`pmd3 btlogger`) | `com.apple.bluetooth.BTPacketLogger` only streams after Apple's *Bluetooth logging profile* is installed on the device, and there was no device to verify the record format. | Apple **PacketLogger** (Additional Tools for Xcode) captures from a connected iOS device with the same profile — the documented route, recommended in the meantime; a sysdiagnose taken with the profile installed also contains the HCI log. | **Yes**, over lockdown with the existing service plumbing (framing is similar to pcapd). Needs the profile and a device to verify. |
 | **DVT file-system listing** (`pmd3 developer dvt ls`) | DVT uses Apple's private DTX protocol (NSKeyedArchiver messages over `com.apple.instruments.remoteserver*`). On iOS 17+ it is only reachable through the RemoteXPC tunnel that CoreDevice owns; creating that tunnel needs a utun interface (root) or CoreDevice's private frameworks — both excluded (no `sudo`, no private frameworks). | AFC (`com.apple.afc`, Media folder — implemented as *List Media folder*); `devicectl device info files` and `device copy from` for app containers and supported domains (available through Advanced Mode); crash reports through `crashreportcopymobile` (implemented). | **Not for iOS 17+** without privileges or private frameworks. For iOS 16 and earlier, DTX over lockdown is possible but serves only legacy devices and is not planned. |
-| **Mounting a developer disk image on iOS 16 and earlier** (`pmd3 mounter auto-mount` with a version-specific DDI) | The image mounter protocol (`UploadImage`/`MountImage`) is simple, and listing/unmounting are implemented natively. The blocker is the image: current Xcode (27.0 here) ships no per-version `DeviceSupport` images for iOS 16 and earlier, and redistributing Apple's DDIs is not permitted. `devicectl`'s DDI services (`--auto-mount-ddis`) apply to iOS 17+ personalized images only. | Connect the device to an Xcode version that supports it once (Xcode mounts the image); user-supplied images from an older Xcode (would need a file picker and signature validation — deferred); third-party DDI repositories (rejected: licensing and provenance). | **Yes, technically** (upload + mount with a user-supplied `DeveloperDiskImage.dmg` and `.signature`), but only useful with an image the user already has. Deferred until there is demand. |
 
 ### 6.2 Verification gaps
 
+- **Developer images** (§8): the image-mounter protocol and Apple personalization are verified
+  against a stateful fake image mounter and a fake signing server, and the request is built from
+  the real image Xcode installed on this Mac. No device has mounted an image through this code yet.
 - **Native lockdown services need physical-device verification.** usbmuxd, lockdown TLS, and all
   service clients pass byte-level tests against the fake device, which reproduces Apple's framing
   (plist headers, TLS upgrade, DeviceLink, AFC packets, pcapd records, os_trace records) from
@@ -265,6 +267,7 @@ Everything marked 🟡 in §2 needs a pass of
 - 2026-09-27 — Test results and known limitations recorded (§5, §6); feature statuses set (§2).
 - 2026-09-27 — Python implementation, packaging, and go-ios/ipsw references removed.
 - 2026-09-27 — Final verification (§5.5): fresh clone, clean builds, every screen rendered, no-Xcode / no-usbmuxd / no-device states, unified log review. Fixed on the way: UI-test concurrency warnings (and a CI check for them), Toolchain Check message without Xcode, identifiers in public log fields. Physical-device verification remains open.
+- 2026-09-27 — Developer-image (DDI) capability audited and restored natively (§8): detection, state model, personalized and legacy mounting, unmount, GUI, readiness, actions, and `idt ddi`. Physical-device verification remains open.
 
 ## 8. Developer image (DDI) audit and restoration
 
@@ -292,3 +295,35 @@ Everything marked 🟡 in §2 needs a pass of
 | G9 | Readiness row and `idt ddi` depended on CoreDevice only. |
 
 Not reproduced by design: downloading Apple's images from the third-party mirror (redistributed Apple binaries — the Swift app uses the images Xcode installs in `/Library/Developer/DeveloperDiskImages`, or a folder the user chooses), and the RemoteXPC Cryptex install (needs a privileged tunnel; `devicectl` covers it).
+
+### 8.3 What the Swift app does now
+
+| Gap | Resolution |
+|---|---|
+| G1, G5 | `ImageMounter.lookup` (`LookupImage`) and `CopyDevices` decide whether a compatible image is mounted; mounting returns immediately (no upload, no Apple request) when one is. |
+| G2 | Facts from lockdown (`ProductVersion`, `BuildVersion`, `ProductType`, `CPUArchitecture`, `HardwareModel`, `ChipID`, `BoardId`, Developer Mode), falling back to the image mounter's personalization identifiers for chip and board. ECID is read only for the signing request and never displayed. |
+| G3 | Native personalized mount, as `pymobiledevice3` did: pick the build identity for the chip and board from the image Xcode installs (`/Library/Developer/DeveloperDiskImages/iOS_DDI/Restore`, 140 identities for 24 chip families with Xcode 27) or a user folder; reuse a manifest the device already holds (`QueryPersonalizationManifest`, SHA-384); otherwise `QueryPersonalizationIdentifiers` + `QueryNonce` + Apple TSS over HTTPS; then `ReceiveBytes` and `MountImage` with the trust cache. Alternatively (and by default when CoreDevice can reach the device) Xcode's `devicectl … ddiServices --auto-mount-ddis`. |
+| G4 | Native legacy mount of `DeveloperDiskImage.dmg` + `.signature` for the exact iOS `major.minor`, found in any installed Xcode's DeviceSupport folder or a user folder. |
+| G6 | Unmount handles `/System/Developer` and `/Developer`. |
+| G7 | `DeveloperImageState`: not required, mounted, available, personalization required, missing, incompatible, needs attention (trust, Developer Mode, lock, USB), failed — each with a headline, explanation, next step, and details, shown on the Device page's **Developer image** card. |
+| G8 | Image-mounter and TSS replies are classified (locked, Developer Mode off, already mounted, not mounted, signature rejected, unsupported, Apple refused, offline) into plain-language errors; raw replies go only to technical details. |
+| G9 | Readiness Check, the Actions catalog, and `idt ddi status|mount|unmount` use the same `DeveloperImageManager`. |
+
+No runtime dependency was added: the image-mounter client uses the existing lockdown stack, and
+personalization uses `URLSession`. The private service and the TSS request are isolated in
+`Sources/DeviceKit/DeveloperImage` (see [docs/architecture.md](docs/architecture.md#developer-images)).
+
+### 8.4 Verification
+
+| Check | Result |
+|---|---|
+| Unit and fake-device tests (`DeveloperImageTests`, 14 tests) | ✅ every state; TSS request fields and restore-request rules; reply parsing and Apple's refusal codes; personalized mount end to end (identifiers, nonce, TSS, upload size and signature, trust cache); no remount when mounted; reuse of a stored personalization without contacting Apple; unmount; legacy mount without personalization; Developer Mode off and locked device; identifier fallback; simulators and network-only devices |
+| The image Xcode 27 installed on this Mac | ✅ parsed: build identity for iPhone18,1 found, image and trust cache readable, a complete TSS request built |
+| Apple's signing endpoint | ✅ `https://gs.apple.com/TSS/controller?action=2` reachable with valid TLS (plain GET, no device data). A real signing request needs a device nonce and was **not** sent |
+| App | ✅ Developer image card rendered in Demo Mode at 1180×700 and 900×560 (no overflow); all pages pass `scripts/check-layout.sh`; a UI test checks the card and that demo mounting is blocked |
+| `idt ddi` | ✅ `status` (text and JSON, exit codes), `mount`/`unmount` confirmation, hidden `prepare` alias |
+| **Physical devices** | ❌ **Not tested.** No iPhone or iPad was connected. Still to verify on hardware: the real image-mounter replies, Apple's acceptance of the TSS request, the mount itself, and error wording on real failures — [docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md) Stage 3, steps 1–5 |
+
+Not reproduced: downloading images from the third-party mirror (the app uses Xcode's images or a
+folder you choose), and the RemoteXPC Cryptex install (`devicectl` covers it without a privileged
+tunnel).

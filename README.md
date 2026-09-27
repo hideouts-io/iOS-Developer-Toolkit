@@ -30,6 +30,7 @@ Instruments. It needs no Python, no Homebrew packages, and no administrator righ
 - [Install](#install)
 - [First steps](#first-steps)
 - [Workspaces](#workspaces)
+- [Developer images](#developer-images)
 - [Command-line tool](#command-line-tool)
 - [Security and privacy](#security-and-privacy)
 - [Troubleshooting](#troubleshooting)
@@ -98,8 +99,8 @@ Features that use Xcode's developer tools need Xcode installed (open it once to 
 | Works without Xcode | Needs Xcode |
 |---|---|
 | Device discovery (USB and Wi-Fi sync), identity, trust, Developer Mode status | Simulators (everything in the Simulators section) |
-| Live Logs from physical devices (Unified and classic syslog) | Preparing developer services (the Developer Disk Image) |
-| Packet capture | Location simulation on iOS 17 and later |
+| Live Logs from physical devices (Unified and classic syslog) | Location simulation on iOS 17 and later |
+| Packet capture; checking the developer image, and mounting it over USB from an image Xcode installed or a folder you choose ([Developer images](#developer-images)) | Xcode's device service (`devicectl`) route for the developer image |
 | Encrypted backups and encryption setup | Screenshots, launch app, open URL, stop a process |
 | Diagnostics, battery, IORegistry, MobileGestalt | Running processes, lock state, displays, configuration profiles |
 | Installed apps (with sizes), removing apps, installing `.ipa` packages | Sysdiagnose and Instruments recordings |
@@ -148,8 +149,9 @@ See [Build from source](#build-from-source).
 3. **Run the Readiness Check.** It tells you exactly what works and what to fix next.
 4. **Turn on Developer Mode if needed** (iOS 16+): *Settings › Privacy & Security › Developer
    Mode*, then restart and confirm. **Device › Developer Mode Guide** walks through it.
-5. **Prepare developer services** for screenshots, location simulation, and launching apps:
-   **Prepare Developer Services** on the Device page. Xcode installs the correct, personalized image.
+5. **Mount the developer image** for screenshots, location simulation, and launching apps: the
+   **Developer image** card on the Device page shows its state; click **Mount Developer Image**.
+   See [Developer images](#developer-images).
 6. **Clean up** when finished: stop streams and clear simulated locations. Quitting the app
    clears a location this session simulated.
 
@@ -158,7 +160,7 @@ No device handy? Turn on **Device › Demo Mode** to explore every workspace wit
 ## Workspaces
 
 - **Overview** — status of the selected device, a suggested next step, and entry points.
-- **Device** — identity and status with explanations, developer services (check, prepare,
+- **Device** — identity and status with explanations, the developer image (state, mount,
   unmount), Apple developer tool handoffs (open a project in Xcode, open an `.xcresult` or
   `.trace`, list Remote Virtual Interfaces), simulator controls, raw records, and connection
   diagnostics.
@@ -194,6 +196,45 @@ Because the code comes from the target's UDID, a confirmation can never apply to
 device. Each operation also captures its target when it starts, and lockdown sessions verify
 that the device answering is the one you selected.
 
+## Developer images
+
+Screenshots, location simulation, launching apps, and Instruments need Apple's developer image
+(Developer Disk Image) mounted on the device. The **Developer image** card on the Device page
+checks it automatically and shows one of these states:
+
+[![Developer image card](docs/screenshots/developer-image.png)](docs/screenshots/developer-image.png)
+
+
+| State | Meaning |
+|---|---|
+| Mounted | A compatible image is mounted. Nothing is mounted again. |
+| Available | A compatible image is on this Mac and can be mounted now (the device already holds Apple's personalization for it, or it is an iOS 16-or-earlier image). |
+| Personalization required | A compatible image is on this Mac; Apple must sign it for this device first (iOS 17 and later, needs the internet). |
+| Missing | No compatible image is on this Mac. |
+| Incompatible | The image on this Mac (or the one mounted) does not fit this device or iOS version. |
+| Needs attention | Trust, Developer Mode, unlocking, or a USB connection is needed first. |
+| Failed | The check or the last mount attempt failed; the card shows why and what to do. |
+| Not required | Simulators and the demo device. |
+
+The details list the iOS version and build, model, architecture, chip and board used to choose the
+image, where it is mounted, and which image on this Mac would be used.
+
+**iOS 17 and later** use a *personalized* image. Xcode installs it in
+`/Library/Developer/DeveloperDiskImages/iOS_DDI`. Mounting picks the build identity for the
+device's chip and board and, unless the device already holds a personalization for that image,
+asks Apple's signing server (`gs.apple.com`) for one — sending the device's chip, board, and ECID
+with a one-time nonce, exactly as Xcode does. The confirmation says so before anything is sent.
+
+**iOS 16 and earlier** use `DeveloperDiskImage.dmg` and its `.signature` for the exact iOS
+`major.minor` version. Current Xcode versions no longer include them; add a folder that contains
+them (for example an older Xcode's `Platforms/iPhoneOS.platform/DeviceSupport/16.4`) with
+**Options › Add Image Folder…**.
+
+**How it mounts** (Options › Mount with): *Automatic* uses Xcode's device service (`devicectl`)
+when it can reach the device on iOS 17 and later, and otherwise the built-in client, which talks
+to the device's image-mounter service over USB and works without Xcode's device service. The app
+never downloads images from third parties.
+
 ## Command-line tool
 
 `idt` provides the automation-friendly parts of the app:
@@ -203,8 +244,9 @@ idt devices --simulators                      # list devices and simulators
 idt readiness --udid <UDID>                   # read-only readiness check
 idt inspect-ipa App.ipa [--json]              # inspect a package
 idt collect --udid <UDID> --output-root ~/Cases --duration 120 --include-unified-logs
-idt ddi status --udid <UDID>                  # developer services status
-idt ddi prepare --udid <UDID> --confirm "RUN ABC123"
+idt ddi status --udid <UDID> [--json]         # developer image state (exit 0 mounted, 2 mountable)
+idt ddi mount --udid <UDID> --confirm "RUN ABC123" [--mechanism automatic|core-device|native]
+idt ddi unmount --udid <UDID> --confirm "RUN ABC123"
 idt toolchain                                 # check the installed Xcode
 ```
 
@@ -224,7 +266,9 @@ device could not be identified.
 - **Untrusted input.** Device responses, backup file paths, IPA archives, GPX files, and workspace
   profiles are validated; path traversal, symbolic links, encrypted or oversized archive entries,
   and XML entities are rejected.
-- **Local only.** Nothing is uploaded. Captures, backups, cases, and reports are written with
+- **Local only.** Nothing is uploaded, with one confirmed exception: mounting a developer image on
+  iOS 17 and later asks Apple's signing server (`gs.apple.com`) to personalize it, sending the
+  device's chip, board, and ECID with a one-time nonce — as Xcode does. Captures, backups, cases, and reports are written with
   owner-only permissions. The app's own log records outcomes rather than device content, and marks
   identifiers as private.
 - **Sanitized sharing.** **iOS Developer Toolkit › Create Support Bundle…** and the readiness
@@ -240,7 +284,7 @@ device could not be identified.
 | “This device has not trusted this Mac” | Unlock the device and reconnect it; tap **Trust**. If no prompt appears, reset *Settings › General › Transfer or Reset › Reset › Reset Location & Privacy*. |
 | Developer Mode is missing on the device | Connect it and open Xcode › *Window › Devices and Simulators* once. |
 | Developer features say they need Xcode | Install Xcode, open it once, and check *Xcode › Settings › Locations › Command Line Tools*. |
-| “Developer services could not be prepared” | Keep the device unlocked and connected by USB, make sure the Mac is online (Apple personalizes the image), and try **Prepare Developer Services** again. |
+| The developer image will not mount | Read the Developer image card: it names the problem (Developer Mode, lock, missing or incompatible image) and the fix. On iOS 17 and later keep the Mac online (Apple personalizes the image); if one route fails, switch **Options › Mount with**. |
 | A backup stops with “must stay unlocked” | Unlock the device and keep it awake until the backup finishes. |
 | An `.ipa` cannot be installed | Check the inspection: the signature must be valid and the profile must include the device. |
 | Live logs are very busy | Filter the view or pause it; capture continues in the background. |
@@ -295,12 +339,12 @@ Version 1.0 is a complete rewrite of the earlier Python/PySide6 app (0.3.x), whi
 `pymobiledevice3`. See [MIGRATION.md](MIGRATION.md) for the feature-by-feature mapping.
 
 - The native lockdown services (logs, packet capture, backup, diagnostics, app installation over
-  USB) are tested end to end against a protocol-accurate simulated device and against macOS's real
-  device service, but **not yet against physical iPhones or iPads**. Please report results using
-  the [physical-device test protocol](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md).
-- Not available in 1.0: Safari/WebView tab listing, Bluetooth HCI capture, the developer-service
-  file listing, and mounting developer images on iOS 16 and earlier (connect the device to Xcode
-  once instead). Details and alternatives are in [MIGRATION.md](MIGRATION.md#6-known-limitations-and-features-not-reproduced).
+  USB, developer-image checking and mounting including Apple personalization) are tested end to
+  end against a protocol-accurate simulated device and against macOS's real device service, but
+  **not yet against physical iPhones or iPads**. Please report results using the
+  [physical-device test protocol](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md).
+- Not available in 1.0: Safari/WebView tab listing, Bluetooth HCI capture, and the
+  developer-service file listing. Details and alternatives are in [MIGRATION.md](MIGRATION.md#6-known-limitations-and-features-not-reproduced).
 - Release builds are ad-hoc signed and not notarized.
 
 ## Contributing, support, and license
