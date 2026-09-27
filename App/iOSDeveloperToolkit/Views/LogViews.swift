@@ -1,3 +1,4 @@
+import AppKit
 import DeviceKit
 import SwiftUI
 import ToolkitCore
@@ -47,6 +48,7 @@ struct LiveLogsView: View {
                 .labelsHidden()
                 if let session = model.logs.selectedSession {
                     LogSessionView(session: session)
+                        .frame(maxHeight: .infinity)
                         .toolbar {
                             ToolbarItem {
                                 Button {
@@ -60,6 +62,7 @@ struct LiveLogsView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(20)
     }
 }
@@ -106,28 +109,42 @@ struct LogSessionView: View {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
             }
-            ScrollViewReader { proxy in
-                List(selection: $selection) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                         LogLineRow(line: line)
-                            .tag(index)
-                            .id(index)
-                    }
-                }
-                .listStyle(.plain)
-                .font(.caption.monospaced())
-                .environment(\.defaultMinListRowHeight, 16)
-                .onChange(of: lines.count) {
-                    if session.followTail, !session.isPaused, let last = lines.indices.last {
-                        proxy.scrollTo(last, anchor: .bottom)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(selection.contains(index) ? Color.accentColor.opacity(0.22) : Color.clear)
+                            .contentShape(Rectangle())
+                            .onTapGesture { select(index) }
                     }
                 }
             }
+            .frame(minHeight: 120, maxHeight: .infinity)
+            .font(.caption.monospaced())
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
+            // Keeps the newest line in view without scrolling any enclosing view.
+            .defaultScrollAnchor(session.followTail && !session.isPaused ? .bottom : .top)
+            .accessibilityLabel("Log lines")
             .overlay {
                 if lines.isEmpty {
                     Text(session.state == .starting ? "Connecting…" : (session.filter.isEmpty ? "Waiting for log messages…" : "No lines match the filter."))
                         .foregroundStyle(.secondary)
                 }
+            }
+            if let index = selection.max(), lines.indices.contains(index) {
+                ScrollView {
+                    Text(lines[index].rendered)
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: 54)
+                .padding(6)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
             }
             HStack {
                 TextField("Case or ticket reference", text: $session.investigationReference)
@@ -159,6 +176,18 @@ struct LogSessionView: View {
         }
         .sheet(isPresented: $isReviewingFindings) {
             FindingsReviewSheet(findings: session.findings)
+        }
+    }
+
+    /// Click selects one line; Shift-click extends; Command-click toggles.
+    private func select(_ index: Int) {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.shift), let anchor = selection.min() {
+            selection = Set(min(anchor, index)...max(anchor, index))
+        } else if flags.contains(.command) {
+            if selection.contains(index) { selection.remove(index) } else { selection.insert(index) }
+        } else {
+            selection = [index]
         }
     }
 
@@ -212,10 +241,13 @@ struct LogLineRow: View {
     }
 
     var body: some View {
+        // Fixed single-line rows keep very busy streams fast to lay out; the full text of the
+        // selected line is shown below the list.
         Text(line.rendered)
             .foregroundStyle(color)
-            .lineLimit(3)
-            .textSelection(.enabled)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .help(line.rendered)
     }
 }
 

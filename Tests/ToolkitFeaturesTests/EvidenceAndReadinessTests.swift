@@ -116,7 +116,7 @@ struct EvidenceTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let device = physicalDevice(server)
         let folder = try CaseWorkflow.createCaseFolder(in: root, target: device.target)
-        let manifest = await try EvidenceCollector(device: device, caseFolder: folder, options: CollectionOptions(durationSeconds: 0), usbmux: server.client).run { _ in }
+        let manifest = try await EvidenceCollector(device: device, caseFolder: folder, options: CollectionOptions(durationSeconds: 0), usbmux: server.client).run { _ in }
         #expect(manifest.outcome == .failed)
         #expect(manifest.outcome.exitCode == 1)
         #expect(manifest.steps.count == 1)

@@ -71,7 +71,7 @@ struct ToolReferenceView: View {
     @State private var loading = false
 
     var body: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             List(selection: $selection) {
                 Section("Apple tools used by this app") {
                     ForEach(ToolReference.roots) { root in
@@ -87,7 +87,8 @@ struct ToolReferenceView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .frame(minWidth: 240, idealWidth: 280, maxWidth: 360)
+            .frame(width: 240)
+            Divider()
             VStack(alignment: .leading, spacing: 10) {
                 if let selection {
                     HStack {
@@ -105,7 +106,7 @@ struct ToolReferenceView: View {
                 }
             }
             .padding(16)
-            .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onChange(of: selection) { _, topic in
             guard let topic, helpText[topic] == nil else { return }

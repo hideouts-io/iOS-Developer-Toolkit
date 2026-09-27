@@ -14,11 +14,12 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
             VStack(spacing: 0) {
-                if model.demoMode {
+                if model.selectedDevice?.kind == .demo {
                     DemoBanner()
                 }
                 WorkspaceView(workspace: model.workspace)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Zero ideal size: pages fill the window but can never make it grow.
+                    .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, minHeight: 0, idealHeight: 0, maxHeight: .infinity)
             }
             .navigationTitle(model.workspace.title)
             .navigationSubtitle(model.selectedDevice.map { "\($0.name) · \($0.kind.label)" } ?? "No device selected")
@@ -72,6 +73,7 @@ struct SidebarView: View {
 
     var body: some View {
         @Bindable var model = model
+        VStack(spacing: 0) {
         List(selection: Binding(get: { model.workspace }, set: { if let value = $0 { model.workspace = value } })) {
             ForEach(Workspace.Group.allCases, id: \.self) { group in
                 Section(group.rawValue) {
@@ -84,10 +86,11 @@ struct SidebarView: View {
                 }
             }
         }
-        .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom) {
-            ConnectionSummaryView()
-                .padding(10)
+        .modifier(SidebarListStyle())
+        // The list scrolls within whatever height remains; it must never set the window height.
+        .frame(minHeight: 0, idealHeight: 0, maxHeight: .infinity)
+        ConnectionSummaryView()
+            .padding(10)
         }
     }
 }
@@ -302,6 +305,21 @@ struct StatusToast: View {
         .task(id: message) {
             try? await Task.sleep(for: .seconds(6))
             dismiss()
+        }
+    }
+}
+
+/// The standard vibrant sidebar, or a plain list while the screenshot harness is capturing
+/// (vibrancy cannot be rendered into an offscreen image).
+struct SidebarListStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        if ScreenshotHarness.isCapturing {
+            content
+                .listStyle(.inset)
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: .windowBackgroundColor))
+        } else {
+            content.listStyle(.sidebar)
         }
     }
 }

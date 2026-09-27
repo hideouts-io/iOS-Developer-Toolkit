@@ -18,7 +18,7 @@ struct ActionsView: View {
     }
 
     var body: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             VStack(spacing: 8) {
                 TextField("Search actions", text: $search)
                     .textFieldStyle(.roundedBorder)
@@ -46,7 +46,8 @@ struct ActionsView: View {
                 .frame(maxWidth: .infinity)
             }
             .padding(12)
-            .frame(minWidth: 250, idealWidth: 290, maxWidth: 360)
+            .frame(width: 270)
+            Divider()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -62,7 +63,7 @@ struct ActionsView: View {
                 .padding(20)
                 .frame(maxWidth: 900, alignment: .leading)
             }
-            .frame(minWidth: 420)
+            .frame(maxWidth: .infinity)
         }
         .sheet(isPresented: $showsAdvanced) {
             AdvancedModeView()

@@ -35,7 +35,11 @@ final class LocationModel {
     let evidenceDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/iOS Developer Toolkit Location Logs")
 
     init() {
-        savedLocations = (try? LocationLab.loadSavedLocations()) ?? []
+        // Screenshot mode shows sample places so personal saved places never appear in docs.
+        savedLocations = ScreenshotHarness.isCapturing
+            ? [SavedLocation(name: "Apple Park", coordinates: Coordinates(latitude: 37.3349, longitude: -122.0090)),
+               SavedLocation(name: "London Eye", coordinates: Coordinates(latitude: 51.5033, longitude: -0.1196))]
+            : (try? LocationLab.loadSavedLocations()) ?? []
     }
 
     var coordinates: Coordinates? {

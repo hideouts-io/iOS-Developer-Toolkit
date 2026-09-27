@@ -8,7 +8,7 @@ final class SmokeUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-ui-testing", "-demo-mode", "-ApplePersistenceIgnoreState", "YES"]
+        app.launchArguments = ["-ui-testing", "YES", "-demo-mode", "YES", "-ApplePersistenceIgnoreState", "YES"]
         app.launch()
     }
 

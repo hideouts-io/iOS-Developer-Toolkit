@@ -25,6 +25,17 @@ public struct SimulatorRecord: Sendable, Hashable, Identifiable {
     public var logPath: String?
     /// The device type's display name, such as "iPad Air 11-inch (M4)".
     public var deviceTypeName: String?
+    /// The hardware identifier the simulator models, such as "iPhone18,1".
+    public var modelIdentifier: String? = nil
+
+    /// Simulators run natively on the Mac's processor.
+    static var hostArchitecture: String {
+        #if arch(arm64)
+        return "arm64 (this Mac)"
+        #else
+        return "x86_64 (this Mac)"
+        #endif
+    }
 
     public var device: Device {
         let typeName = deviceTypeName ?? deviceTypeIdentifier?.components(separatedBy: ".").last?.replacingOccurrences(of: "-", with: " ")
@@ -32,13 +43,13 @@ public struct SimulatorRecord: Sendable, Hashable, Identifiable {
             kind: .simulator,
             udid: udid,
             name: name,
-            productType: nil,
+            productType: modelIdentifier,
             marketingName: typeName,
             family: DeviceFamily.from(productType: typeName),
             osName: runtime?.platform ?? SimulatorClient.platform(fromRuntimeIdentifier: runtimeIdentifier),
             osVersion: runtime?.version ?? SimulatorClient.version(fromRuntimeIdentifier: runtimeIdentifier),
             buildVersion: runtime?.buildVersion,
-            architecture: nil,
+            architecture: SimulatorRecord.hostArchitecture,
             transports: [.local],
             pairingState: .notApplicable,
             developerMode: .notApplicable,
@@ -81,10 +92,11 @@ public struct SimulatorClient: Sendable {
 
     public static func parse(devices: JSONValue, runtimes: JSONValue?, deviceTypes: JSONValue? = nil) -> [SimulatorRecord] {
         var typeNames: [String: String] = [:]
+        var typeModels: [String: String] = [:]
         for item in deviceTypes?["devicetypes"]?.array ?? [] {
-            if let identifier = item["identifier"]?.nonEmptyString, let name = item["name"]?.nonEmptyString {
-                typeNames[identifier] = name
-            }
+            guard let identifier = item["identifier"]?.nonEmptyString else { continue }
+            typeNames[identifier] = item["name"]?.nonEmptyString
+            typeModels[identifier] = item["modelIdentifier"]?.nonEmptyString
         }
         var runtimeTable: [String: SimulatorRuntime] = [:]
         for item in runtimes?["runtimes"]?.array ?? [] {
@@ -113,7 +125,8 @@ public struct SimulatorClient: Sendable {
                     runtimeIdentifier: runtimeIdentifier,
                     dataPath: item["dataPath"]?.nonEmptyString,
                     logPath: item["logPath"]?.nonEmptyString,
-                    deviceTypeName: item["deviceTypeIdentifier"]?.nonEmptyString.flatMap { typeNames[$0] }
+                    deviceTypeName: item["deviceTypeIdentifier"]?.nonEmptyString.flatMap { typeNames[$0] },
+                    modelIdentifier: item["deviceTypeIdentifier"]?.nonEmptyString.flatMap { typeModels[$0] }
                 ))
             }
         }

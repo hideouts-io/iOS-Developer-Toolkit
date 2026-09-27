@@ -288,7 +288,7 @@ public actor EvidenceCollector {
                 events(.streaming(secondsRemaining: remaining))
                 try? await Task.sleep(for: .seconds(1))
                 remaining = max(0, Int((deadline - ContinuousClock.now).components.seconds))
-                if await self.stopRequested { stopFlag.withLock { $0 = true } }
+                if self.stopRequested { stopFlag.withLock { $0 = true } }
             }
         }
         let results = await withTaskGroup(of: CollectionStep.self) { group in

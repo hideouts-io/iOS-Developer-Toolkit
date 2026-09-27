@@ -7,6 +7,7 @@ import ToolkitFeatures
 struct LocationLabView: View {
     @Environment(AppModel.self) private var model
     @State private var confirmation: PendingConfirmation?
+    @State private var contentWidth: CGFloat = 0
 
     var body: some View {
         @Bindable var location = model.location
@@ -19,33 +20,49 @@ struct LocationLabView: View {
             if let device = model.selectedDevice, device.kind != .demo {
                 mechanismNote(device)
             }
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 16) {
-                    Card(title: "Choose a point", systemImage: "map") {
-                        WorldMapView(selection: location.coordinates) { coordinates in
-                            location.show(coordinates)
-                        }
-                        .frame(height: 230)
-                        HStack {
-                            TextField("Paste latitude,longitude or a map link", text: $location.linkText)
-                                .textFieldStyle(.roundedBorder)
-                                .onSubmit { location.importLink(app: model) }
-                            Button("Use") { location.importLink(app: model) }.disabled(location.linkText.isEmpty)
-                        }
+            Group {
+                // Two columns when the page is wide enough; one column otherwise.
+                if contentWidth >= 720 {
+                    HStack(alignment: .top, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 16) { mapCard; routeCard; gpxCard }
+                        VStack(alignment: .leading, spacing: 16) { coordinateCard; savedPlacesCard }
+                            .frame(width: 320)
                     }
-                    routeCard
-                    gpxCard
+                } else {
+                    VStack(alignment: .leading, spacing: 16) {
+                        coordinateCard
+                        mapCard
+                        savedPlacesCard
+                        routeCard
+                        gpxCard
+                    }
                 }
-                .frame(minWidth: 330)
-                VStack(alignment: .leading, spacing: 16) {
-                    coordinateCard
-                    savedPlacesCard
-                }
-                .frame(minWidth: 280, maxWidth: 380)
             }
+            .background(GeometryReader { proxy in
+                Color.clear
+                    .onAppear { contentWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, width in contentWidth = width }
+            })
         }
         .sheet(item: $confirmation) { pending in
             ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: nil, onConfirm: pending.action)
+        }
+    }
+
+    private var mapCard: some View {
+        @Bindable var location = model.location
+        return Card(title: "Choose a point", systemImage: "map") {
+            WorldMapView(selection: location.coordinates) { coordinates in
+                location.show(coordinates)
+            }
+            .aspectRatio(2, contentMode: .fit)
+            .frame(maxWidth: 560)
+            HStack {
+                TextField("Paste latitude,longitude or a map link", text: $location.linkText)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { location.importLink(app: model) }
+                Button("Use") { location.importLink(app: model) }.disabled(location.linkText.isEmpty)
+            }
         }
     }
 

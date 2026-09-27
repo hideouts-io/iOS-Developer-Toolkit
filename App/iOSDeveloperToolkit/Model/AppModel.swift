@@ -108,8 +108,14 @@ final class AppModel {
     private var journalTask: Task<Void, Never>?
 
     init(arguments: [String] = ProcessInfo.processInfo.arguments) {
-        let uiTesting = arguments.contains("-ui-testing")
-        let forceDemo = arguments.contains("-demo-mode")
+        // Launch flags are `-flag YES|NO` pairs (AppKit parses arguments as key/value pairs).
+        func flag(_ name: String) -> Bool? {
+            guard let index = arguments.firstIndex(of: name) else { return nil }
+            let value = arguments.indices.contains(index + 1) ? arguments[index + 1].uppercased() : "YES"
+            return !(value == "NO" || value == "0" || value == "FALSE")
+        }
+        let uiTesting = flag("-ui-testing") ?? false
+        let forceDemo = flag("-demo-mode") ?? false
         demoMode = forceDemo || (!uiTesting && UserDefaults.standard.bool(forKey: "demoMode"))
         selectedDeviceID = forceDemo ? DemoMode.device.id : UserDefaults.standard.string(forKey: "selectedDeviceID")
         // UI tests run without touching real discovery sources.

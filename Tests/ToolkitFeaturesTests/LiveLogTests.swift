@@ -51,7 +51,7 @@ struct LiveLogTests {
         #expect(metadata.endReason == "Stopped by user")
         #expect(metadata.findingsCount == 1)
         #expect(metadata.investigationReference == "CASE-42")
-        let spoolPermissions = try FileManager.default.attributesOfItem(atPath: await capture.spoolURL.path)[.posixPermissions] as? NSNumber
+        let spoolPermissions = try FileManager.default.attributesOfItem(atPath: capture.spoolURL.path)[.posixPermissions] as? NSNumber
         #expect(spoolPermissions?.intValue == 0o600)
 
         let filtered = directory.appendingPathComponent("filtered.log")

@@ -140,7 +140,9 @@ struct DeviceDetailView: View {
             InfoRow(.name, value: device.name)
             InfoRow(.model, value: device.marketingName)
             InfoRow(.hardwareIdentifier, value: device.productType)
-            InfoRow(.hardwareModel, value: device.hardwareModel)
+            if device.kind != .simulator {
+                InfoRow(.hardwareModel, value: device.hardwareModel)
+            }
             InfoRow(.osVersion, value: device.osVersion.map { "\(device.osName ?? "iOS") \($0)" })
             InfoRow(.buildNumber, value: device.buildVersion)
             InfoRow(.architecture, value: device.architecture)
