@@ -186,6 +186,69 @@ struct ServiceTests {
         #expect(state.result.first?.pages.map(\.title) == ["Two"])
     }
 
+    static func packetLoggerRecord(type: UInt8, seconds: UInt32, payload: [UInt8]) -> Data {
+        var data = Data()
+        data.appendBigEndian(UInt32(8 + 1 + payload.count))
+        data.appendBigEndian(seconds)
+        data.appendBigEndian(UInt32(250))
+        data.append(type)
+        data.append(contentsOf: payload)
+        return data
+    }
+
+    static func serviceFrame(_ record: Data) -> Data {
+        Data([UInt8(record.count & 0xFF), UInt8(record.count >> 8)]) + record
+    }
+
+    @Test func bluetoothRecordsBecomeAPacketLoggerFile() async throws {
+        let command = Self.packetLoggerRecord(type: 0x00, seconds: 1_700_000_000, payload: [0x03, 0x0C, 0x00])
+        let event = Self.packetLoggerRecord(type: 0x01, seconds: 1_700_000_001, payload: [0x0E, 0x04, 0x01, 0x03, 0x0C, 0x00])
+        #expect(PacketLoggerRecord(Data([0, 1, 2])) == nil)
+        let parsed = try #require(PacketLoggerRecord(command))
+        #expect(parsed.seconds == 1_700_000_000 && parsed.microseconds == 250 && parsed.typeLabel == "HCI command" && parsed.payload == Data([0x03, 0x0C, 0x00]))
+        try await runWithServer({ _ in }) { server in
+            server.register(service: BluetoothPacketLogger.serviceName) { channel in
+                try await channel.write(Data([0, 0]) + Self.serviceFrame(command) + Self.serviceFrame(event))
+            }
+            let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "bt")
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let file = directory.appendingPathComponent("capture.pklg")
+            let writer = try PacketLoggerFileWriter(creatingNewFileAt: file)
+            try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                for try await record in try await BluetoothPacketLogger.records(session) { try writer.write(record) }
+            }
+            let digest = try writer.finish()
+            let written = try Data(contentsOf: file)
+            #expect(written == command + event, "a .pklg file is the records back to back")
+            #expect(digest == SecureFileIO.sha256(of: written))
+            #expect(writer.countsByType == [0x00: 1, 0x01: 1])
+        }
+    }
+
+    @Test func bluetoothStreamRejectsDesynchronizedRecordsAndExplainsMissingProfile() async throws {
+        try await runWithServer({ _ in }) { server in
+            server.register(service: BluetoothPacketLogger.serviceName) { channel in
+                try await channel.write(Data([5, 0, 1, 2, 3, 4, 5]))
+            }
+            await #expect(throws: ToolkitError.self) {
+                try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                    for try await _ in try await BluetoothPacketLogger.records(session) {}
+                }
+            }
+        }
+        try await runWithServer({ _ in }) { server in
+            do {
+                try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                    _ = try await BluetoothPacketLogger.records(session)
+                }
+                Issue.record("expected the service to be unavailable")
+            } catch let error as ToolkitError {
+                #expect(error.message == "The device did not start Bluetooth logging.")
+                #expect(error.recovery?.contains("Bluetooth logging profile") == true)
+            }
+        }
+    }
+
     @Test func springBoardServicesAnswerQueries() async throws {
         let png = Data([0x89, 0x50, 0x4E, 0x47])
         try await runWithServer({ _ in }) { server in

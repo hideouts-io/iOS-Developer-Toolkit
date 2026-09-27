@@ -323,6 +323,41 @@ public struct ActionExecutor: Sendable {
             }
             return make(action, target, summary: "Recording saved. Open it in Instruments.", details: [("File", output.path)], raw: result.standardOutputText, files: [output], argv: request.arguments)
 
+        case "bluetooth-capture":
+            let target = try requireTarget(target)
+            let output = URL(fileURLWithPath: parameters["output"] ?? "")
+            let seconds = Int(parameters["duration"] ?? "") ?? 30
+            let writer = try PacketLoggerFileWriter(creatingNewFileAt: output)
+            let ending: String
+            do {
+                ending = try await session(target) { session -> String in
+                    let records = try await BluetoothPacketLogger.records(session)
+                    return try await withThrowingTaskGroup(of: String.self) { group in
+                        group.addTask {
+                            for try await record in records { try writer.write(record) }
+                            return "The device ended the capture early."
+                        }
+                        group.addTask {
+                            try await Task.sleep(for: .seconds(seconds))
+                            return "Captured for \(seconds) seconds."
+                        }
+                        let first = try await group.next() ?? ""
+                        group.cancelAll()
+                        return first
+                    }
+                }
+            } catch {
+                _ = try? writer.finish()
+                throw error
+            }
+            let digest = try writer.finish()
+            let count = writer.recordCount
+            let summary = count == 0
+                ? "\(ending) No Bluetooth packets arrived — check that the Bluetooth logging profile is installed and Bluetooth is in use."
+                : "\(ending) \(count == 1 ? "1 packet" : "\(count) packets") saved."
+            let byType = writer.countsByType.sorted { $0.key < $1.key }.map { (PacketLoggerRecord.label(for: $0.key), "\($0.value)") }
+            return make(action, target, summary: summary, details: [("File", output.path), ("Packets", "\(count)"), ("SHA-256", digest)] + byType, raw: output.path, files: [output])
+
         case "packet-capture":
             let target = try requireTarget(target)
             let output = URL(fileURLWithPath: parameters["output"] ?? "")

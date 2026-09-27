@@ -88,7 +88,7 @@ Swift device discovery (usbmuxd + CoreDevice + simctl), so nothing is lost.
 | 33 | DVT telemetry (sysmon, energy, graphics, netstat, notifications, KDebug/CoreProfile) | `pmd3 developer dvt …` | 🔁 Instruments recordings via `xcrun xctrace record --device` (Activity Monitor, Network, Power Profiler, System Trace, Time Profiler…) | xctrace | No | 🔁 🟡 |
 | 34 | RSD / RemoteXPC Bonjour discovery | `pmd3 bonjour rsd`, `remote browse` | Network.framework `NWBrowser` for `_remotepairing._tcp` / `_apple-mobdev2._tcp` | Network.framework | No | 🟡 |
 | 35 | Safari/WebView tab list | `pmd3 webinspector opened-tabs` | Native `com.apple.webinspector` client (Action “Safari and web view tabs”, Readiness row) — §9 G3 | Private lockdown service | No | 🟡 |
-| 36 | Bluetooth HCI capture | `pmd3 btlogger` | ❌ Not migrated in 1.0 (see §6) | — | No | ❌ |
+| 36 | Bluetooth HCI capture | `pmd3 btlogger` | Native `com.apple.bluetooth.BTPacketLogger` client writing `.pklg` (Action “Bluetooth capture”) — §9 G4 | Private lockdown service | No | 🟡 |
 | 37 | DVT filesystem listing (`dvt ls /`), AFC media listing | `pmd3 developer dvt ls`, `afc ls` | AFC via native `com.apple.afc`; DVT listing ❌ (see §6) | Lockdown | No | 🟡 AFC · ❌ DVT |
 | 38 | Session Activity journal + manifest export | `operation_history.py` | Ported (`OperationJournal` actor) | Foundation | No | ✅ |
 | 39 | Workspace profiles import/export | `workspace_profile.py` | Ported (Codable + validation) | Foundation | No | ✅ |
@@ -226,7 +226,7 @@ Everything marked 🟡 in §2 needs a pass of
 | Feature (Python) | Why not in 1.0 | Alternatives investigated | Native implementation possible? |
 |---|---|---|---|
 | **Safari/WebView tab listing** (`pmd3 webinspector opened-tabs`) | ✅ Implemented after the parity audit (§9 G3): native `com.apple.webinspector` client, retrying refusals until a deadline. Opening a URL through Web Inspector (automation) is still not reproduced — it needs a WebDriver session and Safari’s Remote Automation setting; Open URL uses CoreDevice. | — | — |
-| **Bluetooth HCI capture** (`pmd3 btlogger`) | `com.apple.bluetooth.BTPacketLogger` only streams after Apple's *Bluetooth logging profile* is installed on the device, and there was no device to verify the record format. | Apple **PacketLogger** (Additional Tools for Xcode) captures from a connected iOS device with the same profile — the documented route, recommended in the meantime; a sysdiagnose taken with the profile installed also contains the HCI log. | **Yes**, over lockdown with the existing service plumbing (framing is similar to pcapd). Needs the profile and a device to verify. |
+| **Bluetooth HCI capture** (`pmd3 btlogger`) | ✅ Implemented after the parity audit (§9 G4): native `com.apple.bluetooth.BTPacketLogger` client; records are written as Apple PacketLogger `.pklg` (opened by PacketLogger and Wireshark) instead of 0.3.x's pcapng. Needs Apple's Bluetooth logging profile on the device. | — | — |
 | **DVT file-system listing** (`pmd3 developer dvt ls`) | DVT uses Apple's private DTX protocol (NSKeyedArchiver messages over `com.apple.instruments.remoteserver*`). On iOS 17+ it is only reachable through the RemoteXPC tunnel that CoreDevice owns; creating that tunnel needs a utun interface (root) or CoreDevice's private frameworks — both excluded (no `sudo`, no private frameworks). | AFC (`com.apple.afc`, Media folder — implemented as *List Media folder*); `devicectl device info files` and `device copy from` for app containers and supported domains (available through Advanced Mode); crash reports through `crashreportcopymobile` (implemented). | **Not for iOS 17+** without privileges or private frameworks. For iOS 16 and earlier, DTX over lockdown is possible but serves only legacy devices and is not planned. |
 
 ### 6.2 Verification gaps
@@ -364,7 +364,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | syslog | Live Logs · Classic syslog | = | `ServiceTests` |
 | oslog (DVT) | Live Logs · Unified (os_trace_relay, no DDI) | 🔁 | `ServiceTests`, real-simulator test |
 | pcap | Action `packet-capture`, Evidence stream | = | `nativeActionsRunAgainstTheCapturedTarget` |
-| btlogger (`--format pcapng`) | — | ✗ → **G4** | §6.1 said possible |
+| btlogger (`--format pcapng`) | Action `bluetooth-capture` (native, `.pklg`) | 🔁 (**G4 resolved**; PacketLogger format instead of pcapng) | `bluetoothRecordsBecomeAPacketLoggerFile`, `nativeActionsRunAgainstTheCapturedTarget` |
 | dvt-device, dvt-proclist, dvt-applist | device details / processes / apps | 🔁 | — |
 | dvt-netstat, dvt-energy, sysmon-system, sysmon-process, graphics, core-profile | Action `instruments` (xctrace templates) | 🔁 | `instrumentsRequestsAreBounded` |
 | dvt-pid-check | Action `processes` (the list shows whether a pid runs) | 🔁 | — |
@@ -415,7 +415,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | G1 | Native process list (`os_trace_relay` `PidList`) for actions and evidence | P1 | ✅ resolved — no Xcode needed over USB |
 | G2 | Native configuration profiles (`com.apple.mobile.MCInstall` `GetProfileList`) | P1 | ✅ resolved — no Xcode needed over USB (also avoids `profile list --type`, missing in Xcode 26) |
 | G3 | Safari/WebView tab listing (`com.apple.webinspector`) + Web Inspector readiness row | P1 | ✅ resolved — action “Safari and web view tabs”, Readiness row “Safari Web Inspector” |
-| G4 | Bluetooth HCI capture (`com.apple.bluetooth.BTPacketLogger`) to `.pklg` | P1 | previously “not migrated”; native is possible |
+| G4 | Bluetooth HCI capture (`com.apple.bluetooth.BTPacketLogger`) to `.pklg` | P1 | ✅ resolved — action “Bluetooth capture” |
 | G5 | Guided reconnect | P2 | user-facing help in 0.3.x |
 | G6 | Import 0.3.x workspace profiles; profile fields for the developer-image mechanism and selected action | P2 | migration path for existing users |
 | G7 | `idt collect --include-oslog` accepted as an alias | P2 | existing scripts |

@@ -14,6 +14,7 @@
 | Network device missing | CoreDevice | Pair it with Xcode over USB first, keep it on the same network, and refresh (⌘R) |
 | Simulator missing | simctl | Install a simulator runtime in *Xcode › Settings › Components* |
 | “Safari Web Inspector did not answer” | Web Inspector | Turn on *Settings › Apps › Safari › Advanced › Web Inspector* (Settings › Safari › Advanced before iOS 18). If it is on, wait ten seconds: the device accepts a new inspection session only about every ten seconds |
+| “The device did not start Bluetooth logging” or no packets | Bluetooth logging profile | Install Apple's Bluetooth logging profile on the device (Apple Developer › Profiles and Logs), toggle Bluetooth off and on, and use a Bluetooth accessory during the capture |
 | Location simulation fails on iOS 16 or earlier | Legacy service | Mount the developer image for that exact iOS version first (see the developer-image rows above) |
 
 The **Readiness Check** runs these checks in order and stops at the first one that fails.

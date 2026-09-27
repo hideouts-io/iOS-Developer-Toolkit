@@ -41,7 +41,9 @@ of issues and pull requests. Report results as **passed**, **failed**, **not app
    `tcpdump -r`.
 6. **Actions › Safari and web view tabs** with Web Inspector on and a page open in Safari: the
    page title and address appear. With Web Inspector off: “Safari Web Inspector did not answer”.
-7. **Create Support Bundle…**: unzip it and confirm it has no names, identifiers, paths, or
+7. **Actions › Bluetooth capture** (with Apple's Bluetooth logging profile installed) for 30 seconds
+   while using a Bluetooth accessory; open the `.pklg` in PacketLogger or Wireshark.
+8. **Create Support Bundle…**: unzip it and confirm it has no names, identifiers, paths, or
    captured content.
 
 ## Stage 3 — with Xcode and Developer Mode

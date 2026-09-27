@@ -268,6 +268,23 @@ struct ReadinessAndActionTests {
             _ = try await executor.execute(try #require(ActionCatalog.descriptor("packet-capture")), target: target, values: ["duration": "5", "output": capture.path])
         }
 
+        // Bluetooth: one PacketLogger record (2-byte little-endian length prefix), then the device ends.
+        var btRecord = Data()
+        btRecord.appendBigEndian(UInt32(9 + 3))
+        btRecord.appendBigEndian(UInt32(1_700_000_000))
+        btRecord.appendBigEndian(UInt32(0))
+        btRecord.append(contentsOf: [0x01, 0x0E, 0x01, 0x00])
+        let framed = Data([UInt8(btRecord.count), 0]) + btRecord
+        server.register(service: BluetoothPacketLogger.serviceName) { channel in try await channel.write(framed) }
+        let bluetoothFile = directory.appendingPathComponent("bt.pklg")
+        let bluetooth = try await executor.execute(try #require(ActionCatalog.descriptor("bluetooth-capture")), target: target, values: ["duration": "5", "output": bluetoothFile.path])
+        #expect(bluetooth.summary == "The device ended the capture early. 1 packet saved.")
+        #expect(bluetooth.details.contains { $0.0 == "HCI event" && $0.1 == "1" })
+        #expect(try Data(contentsOf: bluetoothFile) == btRecord)
+        server.register(service: BluetoothPacketLogger.serviceName) { _ in }
+        let empty = try await executor.execute(try #require(ActionCatalog.descriptor("bluetooth-capture")), target: target, values: ["duration": "5", "output": directory.appendingPathComponent("empty.pklg").path])
+        #expect(empty.summary.contains("No Bluetooth packets arrived"))
+
         await #expect(throws: ToolkitError.self) {
             _ = try await executor.execute(try #require(ActionCatalog.descriptor("app-query")), target: target, values: ["bundle": "not valid!"])
         }
