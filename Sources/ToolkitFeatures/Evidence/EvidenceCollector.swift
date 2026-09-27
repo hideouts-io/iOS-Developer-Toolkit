@@ -221,8 +221,16 @@ public actor EvidenceCollector {
                 try await coreDevice.processes(target).map { "\($0.pid)\t\($0.executablePath ?? "")" }.joined(separator: "\n") + "\n"
             }
         }
-        await snapshot("configuration-profiles", "Configuration profiles", "devicectl device profile list", file: "snapshots/configuration-profiles.json", unavailableUnless: coreDeviceAvailable, events: events) {
-            try await coreDevice.profiles(target).json.prettyString()
+        if device.supportsLockdownServices {
+            await snapshot("configuration-profiles", "Configuration profiles", "MCInstall GetProfileList (native)", file: "snapshots/configuration-profiles.json", events: events, lockdown { session in
+                let service = try await ConfigurationProfileService.open(session)
+                defer { Task { await service.close() } }
+                return String(decoding: try JSONOutput.encode(try await service.profiles()), as: UTF8.self)
+            })
+        } else {
+            await snapshot("configuration-profiles", "Configuration profiles", "devicectl device profile list", file: "snapshots/configuration-profiles.json", unavailableUnless: coreDeviceAvailable, events: events) {
+                try await coreDevice.profiles(target).json.prettyString()
+            }
         }
         await snapshot("provisioning-profiles", "Provisioning profiles", "misagent CopyAll", file: "snapshots/provisioning-profiles.json", events: events, lockdown { session in
             let service = try await ProvisioningProfileService.open(session)

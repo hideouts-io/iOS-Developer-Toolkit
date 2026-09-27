@@ -154,7 +154,7 @@ public struct ActionExecutor: Sendable {
             let target = try requireTarget(target)
             if target.usbmuxDeviceID != nil {
                 let processes = try await session(target) { try await OSTraceRelay.processList($0) }
-                return make(action, target, summary: "\(processes.count) processes running.", details: processes.prefix(500).map { ("\($0.pid)", $0.name) }, raw: processes.map { "\($0.pid)\t\($0.name)" }.joined(separator: "\n"))
+                return make(action, target, summary: processes.count == 1 ? "1 process running." : "\(processes.count) processes running.", details: processes.prefix(500).map { ("\($0.pid)", $0.name) }, raw: processes.map { "\($0.pid)\t\($0.name)" }.joined(separator: "\n"))
             }
             let processes = try await coreDevice.processes(target)
             return make(action, target, summary: "\(processes.count) processes running.", details: processes.prefix(500).map { ("\($0.pid)", $0.name) }, raw: processes.map { "\($0.pid)\t\($0.executablePath ?? "")" }.joined(separator: "\n"))
@@ -169,7 +169,16 @@ public struct ActionExecutor: Sendable {
             return make(action, target, summary: "Display information received.", raw: response.json.prettyString())
 
         case "configuration-profiles":
-            let response = try await coreDevice.profiles(try requireTarget(target), type: "configuration")
+            let target = try requireTarget(target)
+            if target.usbmuxDeviceID != nil {
+                let profiles = try await session(target) { session -> [InstalledConfigurationProfile] in
+                    let service = try await ConfigurationProfileService.open(session)
+                    defer { Task { await service.close() } }
+                    return try await service.profiles()
+                }
+                return make(action, target, summary: profiles.isEmpty ? "No configuration profiles installed." : (profiles.count == 1 ? "1 configuration profile installed." : "\(profiles.count) configuration profiles installed."), details: profiles.map { ($0.displayName ?? $0.identifier, [$0.organization, $0.isActive == false ? "inactive" : nil, $0.removalDisallowed == true ? "cannot be removed by the user" : nil].compactMap { $0 }.joined(separator: " · ")) }, raw: String(decoding: (try? JSONOutput.encode(profiles)) ?? Data(), as: UTF8.self))
+            }
+            let response = try await coreDevice.profiles(target, type: "configuration")
             let profiles = response.result?["profiles"]?.array ?? []
             return make(action, target, summary: profiles.isEmpty ? "No configuration profiles reported." : "\(profiles.count) configuration profiles installed.", details: profiles.map { ($0["displayName"]?.string ?? $0["name"]?.string ?? "Profile", $0["identifier"]?.string ?? "") }, raw: response.json.prettyString())
 

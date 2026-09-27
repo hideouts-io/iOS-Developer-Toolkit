@@ -7,6 +7,16 @@ import ToolkitCore
 
 /// Registers the lockdown services used by collection and readiness checks on a fake device.
 func registerStandardServices(_ server: FakeDeviceServer, afc: FakeAFCFileSystem, crashes: FakeAFCFileSystem) {
+    server.register(service: ConfigurationProfileService.serviceName) { channel in
+        let messages = PlistMessageConnection(channel: channel)
+        guard (try await messages.receive(timeout: 5))["RequestType"]?.stringValue == "GetProfileList" else { return }
+        try await messages.send([
+            "Status": "Acknowledged",
+            "OrderedIdentifiers": ["com.example.wifi"],
+            "ProfileMetadata": ["com.example.wifi": ["PayloadDisplayName": "Office Wi-Fi", "PayloadOrganization": "Example Corp", "PayloadRemovalDisallowed": false]],
+            "ProfileManifest": ["com.example.wifi": ["IsActive": true]],
+        ])
+    }
     server.register(service: OSTraceRelay.serviceName) { channel in
         // PidList: one leading byte, then a big-endian length and the plist.
         let request = try await PlistMessageConnection(channel: channel).receive(timeout: 5)
@@ -104,6 +114,7 @@ struct EvidenceTests {
         #expect(status["stream-syslog"] == .succeeded)
         #expect(status["crash-reports"] == .succeeded)
         #expect(status["processes"] == .succeeded, "processes are read natively, without Xcode")
+        #expect(status["configuration-profiles"] == .succeeded, "configuration profiles are read natively, without Xcode")
         #expect(status["coredevice-details"] == .unavailable)
         #expect(status["screenshot"] == .unavailable)
         #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("artifacts/crashes/JetsamEvent-2026.ips").path))
@@ -228,6 +239,10 @@ struct ReadinessAndActionTests {
         let processes = try await executor.execute(try #require(ActionCatalog.descriptor("processes")), target: target, values: [:])
         #expect(processes.summary == "2 processes running.")
         #expect(processes.details.map(\.1) == ["launchd", "SpringBoard"])
+        let profiles = try await executor.execute(try #require(ActionCatalog.descriptor("configuration-profiles")), target: target, values: [:])
+        #expect(profiles.summary == "1 configuration profile installed.")
+        #expect(profiles.details.first?.0 == "Office Wi-Fi")
+        #expect(profiles.details.first?.1 == "Example Corp")
 
         // A pcapd record with no link-layer header: 95-byte header + a 20-byte IPv4 packet.
         var record = [UInt8](repeating: 0, count: 95)

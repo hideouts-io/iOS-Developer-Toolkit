@@ -212,6 +212,61 @@ public struct InstallationProxy: Sendable {
     public func close() async { await connection.close() }
 }
 
+// MARK: - Configuration profiles (MCInstall)
+
+/// An installed configuration profile, as reported by `com.apple.mobile.MCInstall`.
+public struct InstalledConfigurationProfile: Sendable, Hashable, Codable, Identifiable {
+    public var id: String { identifier }
+    public var identifier: String
+    public var displayName: String?
+    public var organization: String?
+    public var description: String?
+    public var uuid: String?
+    public var version: Int?
+    public var removalDisallowed: Bool?
+    public var isActive: Bool?
+}
+
+/// `com.apple.mobile.MCInstall`: lists installed configuration profiles (`GetProfileList`) over
+/// lockdown, without Xcode. Read-only use only; the toolkit never installs or removes profiles.
+public struct ConfigurationProfileService: Sendable {
+    public static let serviceName = "com.apple.mobile.MCInstall"
+    let connection: ServiceConnection
+
+    public static func open(_ session: DeviceSession) async throws -> ConfigurationProfileService {
+        ConfigurationProfileService(connection: try await session.openService(serviceName))
+    }
+
+    public func profiles() async throws -> [InstalledConfigurationProfile] {
+        try Self.parse(try await connection.messages.request(["RequestType": "GetProfileList"], timeout: 60))
+    }
+
+    static func parse(_ reply: PlistValue) throws -> [InstalledConfigurationProfile] {
+        guard reply["Status"]?.stringValue == "Acknowledged" else {
+            throw ToolkitError(.serviceUnavailable, message: "The device did not list its configuration profiles.", recovery: "Unlock the device and try again.", technicalDetail: reply.prettyJSONString())
+        }
+        let metadata = reply["ProfileMetadata"]?.dictionaryValue ?? [:]
+        let manifest = reply["ProfileManifest"]?.dictionaryValue ?? [:]
+        let ordered = (reply["OrderedIdentifiers"]?.arrayValue ?? []).compactMap(\.stringValue)
+        let identifiers = ordered + metadata.keys.filter { !ordered.contains($0) }.sorted()
+        return identifiers.map { identifier in
+            let item = metadata[identifier]
+            return InstalledConfigurationProfile(
+                identifier: identifier,
+                displayName: item?["PayloadDisplayName"]?.stringValue,
+                organization: item?["PayloadOrganization"]?.stringValue,
+                description: item?["PayloadDescription"]?.stringValue,
+                uuid: item?["PayloadUUID"]?.stringValue,
+                version: item?["PayloadVersion"]?.intValue,
+                removalDisallowed: item?["PayloadRemovalDisallowed"]?.boolValue,
+                isActive: manifest[identifier]?["IsActive"]?.boolValue
+            )
+        }
+    }
+
+    public func close() async { await connection.close() }
+}
+
 // MARK: - Provisioning profiles (misagent)
 
 /// `com.apple.misagent`: installed provisioning profiles (CMS-signed payloads).

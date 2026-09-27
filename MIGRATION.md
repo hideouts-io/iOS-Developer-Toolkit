@@ -355,7 +355,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | lockdown, activation, developer-mode | Actions `lockdown-values`, `activation-state`, `developer-mode-status` (native) | = | `nativeActionsRunAgainstTheCapturedTarget` |
 | diagnostics, battery, ioregistry, mobilegestalt | Actions (native `diagnostics_relay`) | = | same |
 | processes (`processes ps`, os_trace `PidList`, no Xcode) | Action `processes` and the evidence snapshot use native `PidList` over USB; CoreDevice only for network-only devices | = (**G1 resolved**) | `processListParsesPidListReplies`, `nativeActionsRunAgainstTheCapturedTarget`, `collectsSnapshotsStreamsAndHashes` |
-| profiles (`profile list`, MCInstall, no Xcode) | Actions `configuration-profiles` via CoreDevice only | ◐ → **G2** | code review |
+| profiles (`profile list`, MCInstall, no Xcode) | Action `configuration-profiles` and the evidence snapshot use native MCInstall `GetProfileList` over USB; CoreDevice only for network-only devices | = (**G2 resolved**) | `configurationProfileListParsesMCInstallReplies`, `nativeActionsRunAgainstTheCapturedTarget`, `collectsSnapshotsStreamsAndHashes` |
 | provisioning, orientation, icon-metrics | Actions (native misagent, springboardservices) | = | `ServiceTests.springBoardServicesAnswerQueries` |
 | apps-list, apps-query | Apps page; Action `app-query` (native installation_proxy) | = | `ServiceTests` |
 | afc-list | Action `media-list` (path parameter) | = | `nativeActionsRunAgainstTheCapturedTarget` |
@@ -413,7 +413,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | # | Gap | Priority | Why |
 |---|---|---|---|
 | G1 | Native process list (`os_trace_relay` `PidList`) for actions and evidence | P1 | ✅ resolved — no Xcode needed over USB |
-| G2 | Native configuration profiles (`com.apple.mobile.MCInstall` `GetProfileList`) | P1 | worked without Xcode in 0.3.x |
+| G2 | Native configuration profiles (`com.apple.mobile.MCInstall` `GetProfileList`) | P1 | ✅ resolved — no Xcode needed over USB (also avoids `profile list --type`, missing in Xcode 26) |
 | G3 | Safari/WebView tab listing (`com.apple.webinspector`) + Web Inspector readiness row | P1 | previously “not migrated”; native is possible |
 | G4 | Bluetooth HCI capture (`com.apple.bluetooth.BTPacketLogger`) to `.pklg` | P1 | previously “not migrated”; native is possible |
 | G5 | Guided reconnect | P2 | user-facing help in 0.3.x |

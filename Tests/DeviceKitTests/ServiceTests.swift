@@ -125,6 +125,24 @@ struct ServiceTests {
         #expect(throws: ToolkitError.self) { try OSTraceRelay.parseProcessList(["Status": "RequestFailed"]) }
     }
 
+    @Test func configurationProfileListParsesMCInstallReplies() throws {
+        let profiles = try ConfigurationProfileService.parse([
+            "Status": "Acknowledged",
+            "OrderedIdentifiers": ["b.profile", "a.profile"],
+            "ProfileMetadata": [
+                "a.profile": ["PayloadDisplayName": "A", "PayloadVersion": 1],
+                "b.profile": ["PayloadDisplayName": "B", "PayloadRemovalDisallowed": true, "PayloadUUID": "U"],
+                "c.profile": ["PayloadDisplayName": "C"],
+            ],
+            "ProfileManifest": ["b.profile": ["IsActive": false]],
+        ])
+        // Device order first, then any profile missing from the order, alphabetically.
+        #expect(profiles.map(\.identifier) == ["b.profile", "a.profile", "c.profile"])
+        #expect(profiles[0].removalDisallowed == true && profiles[0].isActive == false && profiles[0].uuid == "U")
+        #expect(profiles[1].version == 1 && profiles[1].isActive == nil)
+        #expect(throws: ToolkitError.self) { try ConfigurationProfileService.parse(["Status": "Error"]) }
+    }
+
     @Test func springBoardServicesAnswerQueries() async throws {
         let png = Data([0x89, 0x50, 0x4E, 0x47])
         try await runWithServer({ _ in }) { server in
