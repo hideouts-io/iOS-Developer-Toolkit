@@ -343,6 +343,14 @@ Version 1.0 is a complete rewrite of the earlier Python/PySide6 app (0.3.x), whi
 profiles exported by 0.3.x can be imported in **Settings › Profiles**; the preview explains how each
 setting carries over.
 
+### The Python app (0.3.x)
+
+The last Python/PySide6 version, **0.3.4**, is still available: download it from the
+[v0.3.4 release](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/tag/v0.3.4)
+(separate Apple silicon and Intel builds) or use the source on the
+[`python-0.3`](https://github.com/hideouts-io/iOS-Developer-Toolkit/tree/python-0.3) branch. It depends
+on `pymobiledevice3` and is no longer developed; new features and fixes go into 1.x.
+
 - The native lockdown services (logs, packet capture, backup, diagnostics, app installation over
   USB, developer-image checking and mounting including Apple personalization) are tested end to
   end against a protocol-accurate simulated device and against macOS's real device service. Their
