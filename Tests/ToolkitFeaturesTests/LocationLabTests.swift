@@ -109,6 +109,10 @@ struct LocationLabTests {
         #expect(throws: ToolkitError.self) {
             try LocationLab.buildRoute(waypoints: [Coordinates(latitude: 0, longitude: 0), Coordinates(latitude: 0, longitude: 179)], speedKmh: 1, intervalSeconds: 1, traversalCount: 20, startTime: Date())
         }
+        let appended = LocationLab.appendingWaypoint(Coordinates(latitude: 51.5033, longitude: -0.1196), to: "34.0522,-118.2437\n\n")
+        #expect(appended == "34.0522,-118.2437\n51.503300,-0.119600")
+        #expect(LocationLab.appendingWaypoint(Coordinates(latitude: 1, longitude: 2), to: "") == "1.000000,2.000000")
+        #expect(try LocationLab.parseRouteWaypoints(appended).count == 2)
         #expect(throws: ToolkitError.self) { try LocationLab.parseRouteWaypoints("1,2") }
         #expect(throws: ToolkitError.self) { try LocationLab.parseRouteWaypoints("1,2\n3") }
         #expect(throws: ToolkitError.self) {

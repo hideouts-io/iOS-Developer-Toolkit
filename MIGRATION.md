@@ -403,7 +403,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | Connection | banner, **Reconnect & Retry…** (guided 30-second reconnect window) | sidebar summary, Connection diagnostics, Next-step card, **Device › Reconnect a Device…** (guided 30-second window that watches discovery) | = (**G5 resolved**) |
 | Capability Matrix | 11 rows incl. `rsd-tunnel`, `dvt`, `webinspector`; copy report; per-preset and per-case readiness buttons | Readiness Check (16 rows for devices; tunnel state in the CoreDevice row; “Safari Web Inspector” and “Instruments (xctrace)” rows); copy report | ◐ → **G3**, **G8** resolved; **G12** (readiness shortcuts) |
 | Compatibility history | table, refresh, JSON/Markdown export with preview | Readiness history and exports | = |
-| Location Lab | coordinates, map links, map, nudge, saved places, routes (speed presets, interval, traversals), **add current coordinate as waypoint**, GPX (ignore timing, randomness), evidence log, clear on stop | all except the waypoint button | ◐ → **G9** |
+| Location Lab | coordinates, map links, map, nudge, saved places, routes (speed presets, interval, traversals), **add current coordinate as waypoint**, GPX (ignore timing, randomness), evidence log, clear on stop | all, including **Add Current Coordinate** on the Route card | = (**G9 resolved**) |
 | Live Logs | streams, reference, regex/case filter, pause, follow, stop, findings, **findings register with Copy**, copy visible, save raw/filtered, evidence bundle, pop-out | all except copying the register | ◐ → **G10** |
 | Command Center / Man Pages / Drift | presets, console, prerequisites, risk badge, man pages, **use man-page command in console**, drift check | Actions, Advanced Mode, Tool Reference, Toolchain Check | ◐ → **G12** |
 | Installed Apps | table, filter, sizes, copy bundle ID, uninstall, stop | Apps page | = |
@@ -438,7 +438,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | G6 | Import 0.3.x workspace profiles; profile fields for the developer-image mechanism and selected action | P2 | ✅ resolved — tested with a profile written by 0.3.4's own exporter |
 | G7 | `idt collect --include-oslog` accepted as an alias | P2 | ✅ resolved — hidden alias of `--include-unified-logs` |
 | G8 | Instruments readiness row (replaces the DVT row) | P2 | ✅ resolved — Readiness row “Instruments (xctrace)” from `xctrace list devices` (available / offline / not listed); the Instruments recording action waits for it |
-| G9 | Add current coordinate as a route waypoint | P3 | convenience |
+| G9 | Add current coordinate as a route waypoint | P3 | ✅ resolved — Location Lab › Route › Add Current Coordinate |
 | G10 | Copy the findings register | P3 | convenience |
 | G11 | Keyboard shortcut reference (⌘/) and previous/next workspace (⌥⌘← / ⌥⌘→) | P3 | convenience |
 | G12 | “Use in Advanced Mode” from Tool Reference; readiness shortcuts on Actions and Evidence | P3 | convenience |

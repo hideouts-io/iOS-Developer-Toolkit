@@ -164,6 +164,9 @@ struct LocationLabView: View {
                     .help("Traversals: repeat the route back and forth")
             }
             HStack {
+                Button("Add Current Coordinate") { location.addCurrentWaypoint(app: model) }
+                    .help("Add the latitude and longitude above as the last waypoint")
+                    .disabled(location.coordinates == nil)
                 Button("Start Moving") { confirmRoute() }.disabled(!canSimulate)
                 Button("Build GPX") { location.buildRoute(app: model) }
                 if let route = location.generatedRoute {

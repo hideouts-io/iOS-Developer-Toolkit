@@ -48,6 +48,17 @@ final class LocationModel {
 
     var speedKmh: Double { travelPreset.speedKmh ?? customSpeedKmh }
 
+    /// Adds the coordinate in the latitude and longitude fields to the end of the route.
+    func addCurrentWaypoint(app: AppModel) {
+        do {
+            let current = try LocationLab.validate(latitude: latitudeText, longitude: longitudeText)
+            waypointsText = LocationLab.appendingWaypoint(current, to: waypointsText)
+            generatedRoute = nil
+        } catch {
+            app.present(error)
+        }
+    }
+
     func show(_ coordinates: Coordinates) {
         latitudeText = String(format: "%.6f", coordinates.latitude)
         longitudeText = String(format: "%.6f", coordinates.longitude)

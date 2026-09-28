@@ -89,6 +89,14 @@ public enum LocationLab {
         ToolkitError.invalidInput("Enter latitude,longitude or an Apple Maps, Google Maps, or geo: link that contains coordinates.")
     }
 
+    /// The waypoint list with one more line for `coordinates` (trailing blank lines dropped).
+    public static func appendingWaypoint(_ coordinates: Coordinates, to text: String) -> String {
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeLast() }
+        lines.append(String(format: "%.6f,%.6f", coordinates.latitude, coordinates.longitude))
+        return lines.joined(separator: "\n")
+    }
+
     public static func parseRouteWaypoints(_ text: String) throws -> [Coordinates] {
         var points: [Coordinates] = []
         for (index, rawLine) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
