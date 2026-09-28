@@ -1,9 +1,11 @@
 name: Release
 
+# The Swift app is released as 1.x and later from main; v0.* tags belong to the Python app
+# on the python branch.
 on:
   push:
     tags:
-      - "v*"
+      - "v[1-9]*"
 
 permissions:
   contents: read

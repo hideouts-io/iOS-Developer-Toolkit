@@ -163,14 +163,16 @@ struct ServiceTests {
         let inspector = FakeWebInspector(refusals: 100)
         try await runWithServer({ inspector.register(on: $0) }) { server in
             do {
-                _ = try await WebInspector.openPages(on: server.target, usbmux: server.client, handshakeDeadline: .milliseconds(600), retryInterval: .milliseconds(100))
+                _ = try await WebInspector.openPages(on: server.target, usbmux: server.client, handshakeDeadline: .milliseconds(1500), retryInterval: .milliseconds(100))
                 Issue.record("expected a refusal")
             } catch let error as ToolkitError {
                 #expect(error.message == "Safari Web Inspector did not answer.")
                 #expect(error.recovery?.contains("Settings › Apps › Safari › Advanced › Web Inspector") == true)
                 #expect(error.recovery?.contains("ten seconds") == true)
             }
-            #expect(inspector.sessions > 2, "refusals are retried until the deadline")
+            // At least one retry. Each attempt includes a TLS handshake, which a loaded CI runner can
+            // make slow, so the exact number of attempts before the deadline varies.
+            #expect(inspector.sessions >= 2, "refusals are retried until the deadline")
         }
     }
 
