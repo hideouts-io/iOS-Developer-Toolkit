@@ -125,3 +125,28 @@ struct ActionSafetyTests {
         #expect(throws: ToolkitError.self) { try MVTConnector.resolveBackup(root.appendingPathComponent("missing")) }
     }
 }
+
+@Suite("UFADE connector (stand-in checkout)")
+struct UFADEConnectorTests {
+    @Test func validationReportsTheDeveloperImageSubmodule() async throws {
+        let checkout = try SecureFileIO.makeTemporaryDirectory(prefix: "ufade")
+        defer { try? FileManager.default.removeItem(at: checkout) }
+        try Data("import sys\nu_version = \"0.9.8\"\n".utf8).write(to: checkout.appendingPathComponent("ufade.py"))
+        try Data("GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n".utf8).write(to: checkout.appendingPathComponent("LICENSE"))
+        try Data("pymobiledevice3\n".utf8).write(to: checkout.appendingPathComponent("requirements.txt"))
+        // A stand-in interpreter: the runner answers for it, nothing is executed.
+        let runner = ScriptedRunner()
+        runner.reply = { request in request.displayName == "UFADE Python version" ? (0, "3.11.9\n") : (0, "") }
+
+        // Cloned without --recurse-submodules: the submodule folder exists but is empty.
+        try FileManager.default.createDirectory(at: checkout.appendingPathComponent("ufade_developer"), withIntermediateDirectories: true)
+        let withoutImages = try await UFADEConnector.validate(checkout: checkout, python: "/usr/bin/true", runner: runner)
+        #expect(withoutImages.ufadeVersion == "0.9.8")
+        #expect(withoutImages.python.version == "3.11.9")
+        #expect(!withoutImages.developerImagesAvailable)
+
+        try FileManager.default.createDirectory(at: checkout.appendingPathComponent("ufade_developer/Developer"), withIntermediateDirectories: true)
+        #expect(try await UFADEConnector.validate(checkout: checkout, python: "/usr/bin/true", runner: runner).developerImagesAvailable)
+        #expect(UFADEConnector.submoduleCommand == "git submodule update --init --recursive")
+    }
+}

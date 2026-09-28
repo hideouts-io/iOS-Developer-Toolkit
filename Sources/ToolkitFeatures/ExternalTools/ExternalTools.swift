@@ -183,6 +183,18 @@ public enum UFADEConnector {
         public var checkout: URL
         public var python: ValidatedExecutable
         public var ufadeVersion: String
+        /// Whether the checkout includes UFADE's developer-image submodule (`ufade_developer`).
+        public var developerImagesAvailable: Bool
+    }
+
+    public static let submoduleCommand = "git submodule update --init --recursive"
+
+    /// UFADE keeps developer images in a Git submodule; a clone without `--recurse-submodules`
+    /// leaves it empty. Logical acquisitions still work, but UFADE's Developer Options may not.
+    public static func developerImagesAvailable(in checkout: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        let folder = checkout.appendingPathComponent("ufade_developer/Developer", isDirectory: true)
+        return FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
     public static func validate(checkout: URL, python: String, runner: CommandRunning) async throws -> Installation {
@@ -209,7 +221,7 @@ public enum UFADEConnector {
         guard imports.succeeded else {
             throw ToolkitError(.commandFailed, message: "UFADE's Python environment is incomplete.", recovery: "Run the setup commands inside the UFADE folder, then validate again.", technicalDetail: imports.technicalSummary)
         }
-        return Installation(checkout: checkout, python: ValidatedExecutable(path: pythonURL.path, sha256: try SecureFileIO.sha256(of: pythonURL), version: pythonVersion), ufadeVersion: version)
+        return Installation(checkout: checkout, python: ValidatedExecutable(path: pythonURL.path, sha256: try SecureFileIO.sha256(of: pythonURL), version: pythonVersion), ufadeVersion: version, developerImagesAvailable: developerImagesAvailable(in: checkout))
     }
 
     /// Starts UFADE's own window. It controls device selection, passwords, and output.

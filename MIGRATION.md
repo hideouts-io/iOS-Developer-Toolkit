@@ -411,7 +411,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | Sideload IPA | choose, inspect, developer package, install, stop | Install App | = |
 | Evidence | guided case, authorization, streams, screenshot, crash pull, open last case, readiness | Evidence Capture, with the collection's own readiness status (screenshot adds Xcode's device service) | = |
 | MVT | executable, backup, IOC files, output, fast, hashes, network, acknowledgements, guides | External Tools · MVT | = |
-| UFADE | checkout, Python, output, validation incl. **developer-image submodule status**, guides, launch | External Tools · UFADE | ◐ → **G13** |
+| UFADE | checkout, Python, output, validation incl. **developer-image submodule status**, guides, launch | External Tools · UFADE, including the developer-image submodule status and the command to populate it | = (**G13 resolved**) |
 | Ecosystem tools | go-ios, ipsw, idb | idb Companion | = (go-ios/ipsw removed by request) |
 | Workspace profiles | export/import with preview; fields incl. **`ddi_source`, `command_preset`**; imports schema-1 files | export/import with preview; developer-image mechanism, Actions category, and selected action; imports 0.3.x (schema 1) files, translating workspaces, presets (§9.1), `ddi_source` (→ built-in mounter) and DVT OSLog (→ Unified Logging), with notes in the preview | = (**G6 resolved**) |
 | Support bundle, Session Activity, Demo Mode, Action Palette | — | ported | = |
@@ -442,4 +442,4 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | G10 | Copy the findings register | P3 | ✅ resolved — Live Logs › Findings › Copy Register (Markdown, same as the evidence bundle's report) |
 | G11 | Keyboard shortcut reference (⌘/) and previous/next workspace (⌥⌘← / ⌥⌘→) | P3 | ✅ resolved — Help › Keyboard Shortcuts; View › Previous/Next Workspace |
 | G12 | “Use in Advanced Mode” from Tool Reference; readiness shortcuts on Actions and Evidence | P3 | ✅ resolved |
-| G13 | UFADE developer-image submodule status | P3 | diagnostic detail |
+| G13 | UFADE developer-image submodule status | P3 | ✅ resolved — shown after Validate |

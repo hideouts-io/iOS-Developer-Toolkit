@@ -266,6 +266,22 @@ struct ExternalToolsView: View {
                     Button("Launch UFADE") { Task { await tools.launchUFADE(app: model) } }
                 }
             }
+            if let ufade = tools.ufade {
+                if ufade.developerImagesAvailable {
+                    Label("Developer-image submodule is populated.", systemImage: "checkmark.circle").font(.callout).foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("Developer-image submodule is not populated. Logical acquisitions still work, but UFADE's Developer Options may be limited.", systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("In the UFADE folder run `\(UFADEConnector.submoduleCommand)`, then validate again.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
             DisclosureGroup("Install UFADE") {
                 RawOutputView(text: UFADEConnector.setupCommands.joined(separator: "\n"), maxHeight: 110)
             }
