@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem with the toolkit.
+description: Report a reproducible problem with the app or idt.
 title: "[Bug]: "
 labels:
   - bug
@@ -8,7 +8,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve iOS Developer Toolkit. Remove UDIDs, serial numbers, account data, coordinates, backup contents, packet payloads, and case evidence before posting.
+        Thanks for helping improve iOS Developer Toolkit. Remove UDIDs, serial numbers, device names, account data, coordinates, backup contents, packet payloads, and evidence before posting.
 
   - type: checkboxes
     id: prerequisites
@@ -26,8 +26,8 @@ body:
     id: toolkit-version
     attributes:
       label: Toolkit version
-      description: For example, v0.3.1 or a commit SHA.
-      placeholder: v0.3.1
+      description: From iOS Developer Toolkit › About, or a commit SHA.
+      placeholder: 1.0.0
     validations:
       required: true
 
@@ -36,26 +36,26 @@ body:
     attributes:
       label: Installation type
       options:
-        - Apple Silicon release
-        - Intel release
-        - Source checkout
+        - Release download
+        - Built from source (Xcode)
+        - idt command-line tool
     validations:
       required: true
 
   - type: input
     id: host
     attributes:
-      label: Mac and macOS
-      description: Include Mac architecture and macOS version.
-      placeholder: Apple Silicon, macOS 26.3
+      label: Mac, macOS, and Xcode
+      description: Mac architecture, macOS version, and Xcode version (or "no Xcode").
+      placeholder: Apple silicon, macOS 26.3, Xcode 26.1
     validations:
       required: true
 
   - type: input
     id: device
     attributes:
-      label: Device and iOS or iPadOS
-      description: Give only the product family and OS version. Do not include a UDID, serial number, phone number, or device name.
+      label: Device or simulator and iOS/iPadOS version
+      description: Product family and OS version only. No UDID, serial number, phone number, or device name.
       placeholder: iPhone 16 family, iOS 26.3.1
     validations:
       required: true
@@ -63,12 +63,13 @@ body:
   - type: dropdown
     id: connection
     attributes:
-      label: Connection state
+      label: Connection
       options:
         - USB, trusted and unlocked
-        - USB, trust or pairing incomplete
-        - Wi-Fi or tunnel
-        - No device required
+        - USB, not trusted yet
+        - Wi-Fi sync or network (Xcode pairing)
+        - Simulator
+        - Demo Mode / no device
         - Other or unknown
     validations:
       required: true
@@ -76,20 +77,19 @@ body:
   - type: input
     id: workspace
     attributes:
-      label: Workspace or command
-      placeholder: Live Logs / DVT OSLog
+      label: Page, action, or command
+      placeholder: Live Logs / Unified, or idt collect
     validations:
       required: true
 
   - type: textarea
     id: reproduction
     attributes:
-      label: Reproduction steps
-      description: List the smallest reliable sequence, including the button or preset used.
+      label: Steps to reproduce
       placeholder: |
         1. Connect and select the device
         2. Open ...
-        3. Press ...
+        3. Click ...
     validations:
       required: true
 
@@ -103,19 +103,19 @@ body:
   - type: textarea
     id: actual
     attributes:
-      label: Actual behavior and sanitized error
-      description: Paste the complete error after removing private data. Do not attach raw backups, PCAPs, sysdiagnose archives, or evidence cases.
+      label: Actual behavior and message
+      description: The message shown, plus the technical details from Help › Diagnostic Log with private data removed. Do not attach backups, captures, sysdiagnose archives, or evidence.
     validations:
       required: true
 
   - type: textarea
-    id: capability
+    id: readiness
     attributes:
-      label: Relevant Capability Matrix result
-      description: Include the bounded state and remediation text, if the affected workflow has a capability row.
+      label: Readiness Check result
+      description: The rows that are not ready, with their explanation.
 
   - type: textarea
     id: additional
     attributes:
       label: Additional sanitized context
-      description: Add screenshots or logs only when they contain no sensitive identifiers or evidence.
+      description: Screenshots only if they contain no identifiers or evidence (Demo Mode or a simulator is ideal).

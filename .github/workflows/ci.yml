@@ -14,34 +14,113 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Optional repository variable, for example "26.2"; otherwise the newest non-beta Xcode.
+  XCODE_VERSION: ${{ vars.XCODE_VERSION }}
+
 jobs:
-  tests:
-    name: Tests
-    runs-on: macos-15
-    timeout-minutes: 25
+  package:
+    name: Swift package tests
+    runs-on: macos-26
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - name: Select Xcode
+        run: scripts/ci-select-xcode.sh
+      - uses: actions/cache@v6
         with:
-          python-version: "3.13"
-          cache: pip
-      - name: Install project
+          path: .build
+          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-${{ runner.arch }}-
+      - name: Build with warnings as errors
+        run: swift build --build-tests -Xswiftc -warnings-as-errors
+      - name: Test
+        run: swift test -Xswiftc -warnings-as-errors
+      - name: Command-line tool smoke test
         run: |
-          python -m pip install --disable-pip-version-check --upgrade pip
-          python -m pip install --disable-pip-version-check --editable .
-      - name: Run test suite
-        run: python -m unittest discover -s tests -v
-      - name: Validate Python modules
-        run: python -m compileall -q ios_developer_toolkit tests
-      - name: Validate command entry points
+          swift run idt --version
+          swift run idt toolchain
+          swift run idt devices --simulators
+      - name: Record the runner's devicectl syntax (diagnostic)
+        # Shows how this Xcode spells the commands whose syntax changed between Xcode versions.
+        if: always()
         run: |
-          python -m ios_developer_toolkit.collector --help
-          python -m ios_developer_toolkit.local_ddi --help
-          python -m ios_developer_toolkit.ipa_inspector --help
-          python -m ios_developer_toolkit --toolkit-internal-pymobiledevice3 version
-      - name: Verify guided command catalog
-        run: python scripts/verify_command_catalog.py
-      - name: Validate GUI actions
+          xcrun devicectl --version || true
+          for route in "device" "device capture" "device capture screenshot" "device process" "device process launch" "device profile" "device profile list" "device simulate location"; do
+            echo "::group::devicectl help $route"
+            xcrun devicectl help $route || true
+            echo "::endgroup::"
+          done
+
+  app:
+    name: App build, UI tests, and layout
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode
+        run: scripts/ci-select-xcode.sh
+      - name: Build the app and UI tests with zero warnings
+        # project.yml makes warnings errors, but Swift does not promote every diagnostic (for
+        # example actor-isolation warnings involving XCTest), so also fail on any warning in
+        # this repository's sources.
+        run: |
+          set -o pipefail
+          xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
+            -configuration Debug -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" build-for-testing 2>&1 | tee "$RUNNER_TEMP/build.log"
+          if grep -E "\.swift:[0-9]+:[0-9]+: warning:" "$RUNNER_TEMP/build.log" | grep -v -e /SourcePackages/ -e /checkouts/; then
+            echo "::error::The build has warnings."
+            exit 1
+          fi
+      - name: UI tests
+        run: |
+          xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
+            -configuration Debug -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/UITests.xcresult" \
+            test-without-building
+      - name: Render every page at the default and minimum window sizes
+        run: |
+          scripts/check-layout.sh \
+            "$RUNNER_TEMP/dd/Build/Products/Debug/iOS Developer Toolkit.app/Contents/MacOS/iOS Developer Toolkit" \
+            "$RUNNER_TEMP/layout"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ui-test-results
+          path: |
+            ${{ runner.temp }}/UITests.xcresult
+            ${{ runner.temp }}/layout
+          if-no-files-found: ignore
+
+  simulator:
+    name: Real simulator end-to-end test
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode
+        run: scripts/ci-select-xcode.sh
+      - uses: actions/cache@v6
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-${{ runner.arch }}-
+      - name: Boot, use, and shut down a simulator
         env:
-          QT_QPA_PLATFORM: offscreen
-        run: python -m ios_developer_toolkit --toolkit-internal-smoke-test
+          IDT_SIMULATOR_TESTS: "1"
+        run: swift test --filter RealSimulator
+
+  release-build:
+    name: Release packaging
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode
+        run: scripts/ci-select-xcode.sh
+      - name: Build, sign, and verify a release (not published)
+        # An empty VERSION means the version in ToolkitVersion.swift.
+        run: scripts/build-release.sh "" "$RUNNER_TEMP/release"

@@ -1,0 +1,17 @@
+{
+  "error" : {
+    "code" : 10002,
+    "domain" : "com.apple.dt.CoreDeviceError",
+    "userInfo" : {
+      "NSLocalizedDescription" : { "string" : "The operation couldn't be completed." },
+      "NSUnderlyingError" : {
+        "error" : {
+          "code" : 3,
+          "domain" : "com.apple.mobile.notification",
+          "userInfo" : { "NSLocalizedDescription" : { "string" : "Developer Mode is disabled on this device." } }
+        }
+      }
+    }
+  },
+  "info" : { "outcome" : "failed" }
+}

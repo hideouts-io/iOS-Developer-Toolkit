@@ -1,70 +1,91 @@
 # Physical-device test protocol
 
-Use this protocol only with an iPhone or iPad that you own or are authorized to test. Keep raw UDIDs, device names, logs, captures, backups, screenshots, coordinates, and case evidence out of issues, pull requests, and compatibility reports.
+The native lockdown services in version 1.0 are verified against a protocol-accurate simulated
+device and macOS's real device service. Their read-only protocol layer has been checked on one
+iPhone (see MIGRATION.md §5.4); the steps below have not yet been run end to end. This protocol is
+how to verify them. Use it only with an iPhone or iPad you own or are authorized to test.
 
-## Required test context
+Before the GUI steps, the read-only protocol checks can be run from a source checkout with the
+device connected by USB and trusted (nothing on the device is changed):
 
-Record these non-secret facts locally before testing:
+```bash
+IDT_DEVICE_TESTS=1 swift test --filter RealDeviceTests
+```
 
-* toolkit commit and application version;
-* source or packaged build and native architecture;
-* macOS, Xcode, Python, and `pymobiledevice3` versions;
-* iPhone or iPad model, iOS version, build, and USB or network connection;
-* whether Developer Mode, a DDI, and an RSD tunnel are expected for the tested workflow.
+The lines prefixed `[device]` summarize what the device reported, without identifiers.
 
-Do not record the raw UDID in a shared report. The application's Real-Device Compatibility view stores a one-way device fingerprint for local comparisons.
+Keep UDIDs, device names, logs, captures, backups, screenshots, coordinates, and case evidence out
+of issues and pull requests. Report results as **passed**, **failed**, **not applicable**, or
+**not tested** per step — never turn “not tested” into a compatibility claim.
 
-## Stage 1 — connection readiness
+## Record first (locally)
 
-1. Connect the unlocked device directly with a known data-capable cable. Avoid hubs for the first test.
-2. Accept **Allow accessory to connect** on macOS when shown.
-3. Tap **Trust** on the device and enter its passcode when shown.
-4. Confirm that Finder or Xcode lists the device.
-5. Run `pymobiledevice3 usbmux list` in the project environment. Expect one JSON device record.
-6. Run `xcrun devicectl list devices`. Expect the same device to be `available (paired)`.
-7. Open the toolkit. Expect the physical device in the picker, an **Authorized device connected** banner, and a **devices-available** Connection diagnostic.
-8. Disconnect and reconnect once. Expect the picker and banner to recover without restarting `usbmuxd`, deleting pairing records, or requiring `sudo`.
+- App version (**iOS Developer Toolkit › About**) and whether it is a release or a source build.
+- Mac model and architecture, macOS version, Xcode version (or “no Xcode”).
+- Device model, iOS version and build, USB or network connection.
+- Developer Mode on or off.
 
-Failure boundaries:
+## Stage 1 — discovery and trust (no Xcode needed)
 
-* absent from the macOS USB tree: cable, port, lock state, or accessory-authorization problem;
-* present in USB but absent from usbmux: pairing or Apple Mobile Device service problem;
-* present in usbmux but absent from CoreDevice: Xcode/CoreDevice state problem;
-* present in both CLIs but absent from the toolkit: application discovery regression; create a sanitized support bundle.
+1. Connect the unlocked device directly with a data cable; approve **Allow accessory** on the Mac.
+2. Tap **Trust** and enter the passcode on the device.
+3. Expect the device under **Physical Devices** within a few seconds, without pressing Refresh.
+4. Disconnect it. Expect it to disappear (or show as network-only if Wi-Fi sync is on) without a
+   restart. Reconnect and expect it back.
+5. Connect a second device. Expect both listed separately; switching the selection must never
+   redirect an operation that is already running.
+6. Before trusting a new device, expect the Device page to say it is not trusted, with steps.
 
-## Stage 2 — read-only application checks
+## Stage 2 — read-only checks
 
-1. Run the full **Capability Matrix** and save a local compatibility observation.
-2. Verify that each row distinguishes ready, needs attention, unavailable, blocked, not tested, and not applicable.
-3. Run finite read-only Command Center presets for device information, battery, date, mounted images, and installed applications.
-4. Open Unified Log, syslog, and DVT OSLog separately. Confirm that each stream starts, receives data, pauses, filters, stops, and offers an explicit raw-save decision.
-5. Run app inventory and local IPA inspection without installing or uninstalling an app.
-6. Create a sanitized support bundle. Inspect the ZIP and confirm that it contains no raw device identity, command output, capture, log, credential, or user-entered value.
+1. **Readiness Check**: every row shows ready, attention, unavailable, or not applicable, with a
+   next step.
+2. **Device** page: name, model, iOS version, build, Developer Mode status, and connection match
+   *Settings › General › About*.
+3. **Live Logs**: start **Unified** and **Classic syslog** separately. Each receives lines, pauses,
+   filters (literal and regex), stops, and exports raw and filtered logs. Mark a finding and export
+   an evidence bundle; verify it with `shasum -a 256 -c SHA256SUMS.txt`.
+4. **Apps**: the list includes sizes. **Actions**: battery, diagnostics, IORegistry,
+   provisioning profiles, crash report list, Media folder listing, mounted images.
+5. **Actions › Packet capture**: capture 30 seconds and open the `.pcap` in Wireshark or with
+   `tcpdump -r`.
+6. **Actions › Safari and web view tabs** with Web Inspector on and a page open in Safari: the
+   page title and address appear. With Web Inspector off: “Safari Web Inspector did not answer”.
+7. **Actions › Bluetooth capture** (with Apple's Bluetooth logging profile installed) for 30 seconds
+   while using a Bluetooth accessory; open the `.pklg` in PacketLogger or Wireshark.
+8. **Create Support Bundle…**: unzip it and confirm it has no names, identifiers, paths, or
+   captured content.
 
-Expected result: every command either completes with bounded output or remains visibly identified as a stream with an enabled Stop control. No read-only check changes device state.
+## Stage 3 — with Xcode and Developer Mode
 
-## Stage 3 — developer-service checks
+1. **Developer image** card: note the state and details (iOS, build, model, chip/board). Expect
+   *Personalization required* or *Available* on iOS 17+, *Available* or *Missing* on iOS 16 and earlier.
+2. **Mount Developer Image** with *Mount with: Built-in*. Expect *Mounted*. Record whether Apple
+   personalization was needed. Then **Mount Developer Image** again: nothing should be uploaded.
+3. **Unmount**, then mount again with *Xcode device service*. Expect *Mounted*.
+4. Lock the device and mount: expect “The device is locked.” With Developer Mode off: expect
+   *Needs attention* and no upload.
+5. iOS 16 or earlier: add a folder with the matching `DeveloperDiskImage.dmg` and `.signature`,
+   mount, and confirm *Mounted* at `/Developer`.
+6. Screenshot, running processes, lock state, launch an app, open a URL.
+7. An Instruments recording of 10 seconds; open the `.trace` in Instruments.
+8. On iOS 16 or earlier (after mounting the developer image): set and clear a location through
+   the legacy service.
 
-Perform this stage only when Developer Mode is intentionally enabled.
+## Stage 4 — changes (opt in, one at a time)
 
-1. Enable Developer Mode through iOS Settings and complete the required restart.
-2. Mount the appropriate personalized DDI or use the Xcode candidate DDI when the selected workflow explicitly calls for it.
-3. Re-run only the Developer Mode, DDI, RSD, DVT, and CoreDevice capability rows.
-4. Verify DVT directory listing, application listing, and one bounded developer-service snapshot.
-5. Start and stop DVT network activity. Confirm that the UI treats it as a stream rather than a finite snapshot.
+- **Location Lab**: set a harmless coordinate, confirm it in Maps, then **Clear**. Quit the app with
+  a location set and confirm it is cleared.
+- **Install App**: inspect a development-signed `.ipa`, install it (`RUN` confirmation), confirm it
+  launches, remove it (`IRREVERSIBLE` confirmation).
+- **Backup**: an encrypted backup to an empty folder, then an incremental one to the same folder.
+  Confirm it with Finder's backup list or a separate tool. Enabling encryption changes the device
+  setting permanently until turned off with the same password.
+- **Evidence Capture**: a 60-second collection with Unified Logs and packet capture; verify the
+  manifest and `SHA256SUMS.txt`.
 
-Expected result: readiness changes are attributed to the correct layer. A DDI success does not imply that an RSD tunnel or every DVT service is available.
+## Report
 
-## Stage 4 — opt-in state-changing checks
-
-These checks are not required for merge readiness. Run only when their device effect is acceptable and the displayed target is correct.
-
-* **Location Lab:** set a harmless test coordinate, verify the visible simulated state, then use Clear and confirm that no simulation process remains.
-* **IPA sideload:** inspect an eligible development-signed IPA first, install it with the device-bound acknowledgement, verify inventory, then uninstall only if planned.
-* **Encrypted backup:** use protected local storage, verify the existing encryption state, understand that enabling backup encryption persists on the device, and confirm the resulting backup independently.
-* **PCAP/RVI:** capture a short authorized trace, stop cleanly, open the file in an independent packet analyzer, and document encrypted-payload limitations.
-* **Evidence case:** create a disposable case, collect one bounded artifact, finalize it, and independently verify its SHA-256 manifest.
-
-## Completion record
-
-Mark each stage as **passed**, **failed**, **not applicable**, or **not tested**. For failures, record the exact layer, command or button, exit status, sanitized error, and whether the failure reproduces in both the source and packaged app. Never convert **not tested** into a compatibility claim.
+For each failure, record the step, the exact message, the technical details from **Help ›
+Diagnostic Log**, and whether it reproduces after reconnecting. Open an issue with the sanitized
+details, or add a row to the compatibility table in [MIGRATION.md](../MIGRATION.md#5-test-results).

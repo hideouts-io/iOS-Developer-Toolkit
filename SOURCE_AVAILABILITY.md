@@ -1,17 +1,20 @@
-# Source availability for distributed application bundles
+# Source availability
 
-Every published iOS Developer Toolkit release is built from a signed Git tag in [this public repository](https://github.com/hideouts-io/iOS-Developer-Toolkit). GitHub provides source archives for each release tag, and the complete project source can also be obtained with:
+Every published release of iOS Developer Toolkit is built from a Git tag in
+[this public repository](https://github.com/hideouts-io/iOS-Developer-Toolkit) by the release
+workflow, with a GitHub build-provenance attestation that links the archive to that workflow run
+and commit. GitHub provides source archives for each tag, or:
 
 ```bash
 git clone --branch vVERSION --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
 ```
 
-The prebuilt application is accompanied by an architecture-specific CycloneDX SBOM. It identifies the exact Python distribution versions used for that build, including the bundled `pymobiledevice3` component.
+The app is written in Swift. Its third-party dependencies are Swift packages resolved from their
+public repositories at the exact revisions recorded in [`Package.resolved`](Package.resolved) for
+that tag. They are listed with their licenses in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+and in the SPDX SBOM attached to each release. No binary-only third-party code is included.
 
-## Bundled third-party source
+Optional external tools (MVT, UFADE, idb Companion) are installed and managed by the user and are
+not part of the app or its SBOM.
 
-The release-critical upstream source locations and license information are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). In particular, the packaged `pymobiledevice3` release is available at its [matching upstream tag](https://github.com/doronz88/pymobiledevice3/tree/v11.15.1), including its GPL-3.0-or-later license. The project’s public tagged source, package inventory, and embedded notices are intended to make the source and license boundary inspectable before redistribution.
-
-PySide6/Qt, Nuitka, CPython, and every other dependency remain subject to their own terms. Consult the generated `Contents/Resources/Licenses/` inventory in the application and the matching SBOM for the exact package set. This document is an availability and attribution statement, not legal advice.
-
-Optional UFADE, MVT, go-ios, idb, and ipsw integrations launch user-managed external installations. Their source is not part of the application bundle or release SBOM; consult their upstream repositories and licenses for the exact external version selected by the operator. The Ecosystem Tools workspace records the resolved executable path, SHA-256, and reported version or build identity for go-ios, idb Companion, and ipsw before enabling a probe.
+This document is an availability and attribution statement, not legal advice.

@@ -1,0 +1,95 @@
+{
+  "info" : {
+    "arguments" : ["devicectl", "list", "devices", "--json-output", "/tmp/x.json"],
+    "commandType" : "devicectl.list.devices",
+    "environment" : {},
+    "jsonVersion" : 5,
+    "outcome" : "success",
+    "version" : "642.16"
+  },
+  "result" : {
+    "devices" : [
+      {
+        "capabilities" : [
+          { "featureIdentifier" : "com.apple.coredevice.feature.connectdevice", "name" : "Connect to Device" },
+          { "featureIdentifier" : "com.apple.coredevice.feature.installapp", "name" : "Install Application" }
+        ],
+        "connectionProperties" : {
+          "authenticationType" : "manualPairing",
+          "isMobileDeviceOnly" : false,
+          "lastConnectionDate" : "2026-09-25T18:04:11.000Z",
+          "localHostnames" : ["Test-iPhone.coredevice.local"],
+          "pairingState" : "paired",
+          "potentialHostnames" : ["00008110-001234560ABC801E.coredevice.local"],
+          "transportType" : "wired",
+          "tunnelIPAddress" : "fd2b:1d4c:5b33::1",
+          "tunnelState" : "connected",
+          "tunnelTransportProtocol" : "tcp"
+        },
+        "deviceProperties" : {
+          "bootState" : "booted",
+          "bootedFromSnapshot" : true,
+          "bootedSnapshotName" : "com.apple.os.update-ABCDEF",
+          "ddiServicesAvailable" : true,
+          "developerModeStatus" : "enabled",
+          "hasInternalOSBuild" : false,
+          "name" : "Test iPhone",
+          "osBuildUpdate" : "23A341",
+          "osVersionNumber" : "26.0",
+          "rootFileSystemIsWritable" : false
+        },
+        "hardwareProperties" : {
+          "cpuType" : { "name" : "arm64e", "subType" : 2, "type" : 16777228 },
+          "deviceType" : "iPhone",
+          "ecid" : 1234567890123456,
+          "hardwareModel" : "D83AP",
+          "internalStorageCapacity" : 256000000000,
+          "isProductionFused" : true,
+          "marketingName" : "iPhone 15 Pro",
+          "platform" : "iOS",
+          "productType" : "iPhone16,1",
+          "reality" : "physical",
+          "serialNumber" : "FAKESERIAL01",
+          "supportedCPUTypes" : [{ "name" : "arm64e", "subType" : 2, "type" : 16777228 }],
+          "supportedDeviceFamilies" : [1],
+          "thinningProductType" : "iPhone16,1",
+          "udid" : "00008110-001234560ABC801E"
+        },
+        "identifier" : "3C0B2B0A-6E1D-4F55-9F0B-111111111111",
+        "tags" : [],
+        "visibilityClass" : "default"
+      },
+      {
+        "connectionProperties" : {
+          "pairingState" : "unpaired",
+          "transportType" : "localNetwork",
+          "tunnelState" : "unavailable"
+        },
+        "deviceProperties" : {
+          "developerModeStatus" : "disabled",
+          "name" : "Office iPad",
+          "osVersionNumber" : "18.6"
+        },
+        "hardwareProperties" : {
+          "deviceType" : "iPad",
+          "marketingName" : "iPad Air 11-inch (M2)",
+          "platform" : "iOS",
+          "productType" : "iPad14,8",
+          "reality" : "physical"
+        },
+        "identifier" : "9F7A5E30-1111-4222-8333-444444444444",
+        "visibilityClass" : "default"
+      },
+      {
+        "properties" : {
+          "hardware" : { "udid" : "00008120-000000000000AAAA", "productType" : "iPhone17,3", "marketingName" : "iPhone 16", "platform" : "iOS", "reality" : "physical", "deviceType" : "iPhone" },
+          "device" : { "name" : "New Schema iPhone", "osVersionNumber" : "27.0", "osBuildUpdate" : "24A100", "developerModeStatus" : "enabled" },
+          "connection" : { "transportType" : "wired", "pairingState" : "paired", "tunnelState" : "disconnected" },
+          "state" : { "visibilityClass" : "default" }
+        },
+        "identifier" : "AAAAAAAA-0000-4000-8000-000000000003"
+      },
+      { "not" : "a device" }
+    ]
+  }
+}

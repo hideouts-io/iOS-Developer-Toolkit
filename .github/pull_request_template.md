@@ -4,24 +4,25 @@ Describe the user-visible problem and the smallest change that solves it.
 
 ## Verification
 
-- [ ] `python -m unittest discover -s tests -v`
-- [ ] `python -m compileall -q ios_developer_toolkit tests`
-- [ ] `QT_QPA_PLATFORM=offscreen python -m ios_developer_toolkit --toolkit-internal-smoke-test`
-- [ ] Relevant real-device or no-device behavior was exercised and is described below.
+- [ ] `swift build -Xswiftc -warnings-as-errors`
+- [ ] `swift test`
+- [ ] `xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit -destination 'platform=macOS' build`
+- [ ] UI changes: UI tests and a minimum-size (`-window-size 900x560`) render without `SQUEEZED`/`OVERFLOW`
+- [ ] Relevant device, simulator, or no-device behavior was exercised and is described below.
 
 Device and host coverage:
 
-<!-- Use product family and OS versions only. Do not include UDIDs, serial numbers, device names, account data, coordinates, or case identifiers. -->
+<!-- Device family and OS versions only. No UDIDs, serial numbers, device names, account data, coordinates, or case identifiers. -->
 
-## Safety and publication
+## Safety and privacy
 
-- [ ] The change preserves explicit device selection and authorization boundaries.
-- [ ] Mutating actions remain labeled, confirmed, bounded, and reversible where possible.
-- [ ] Errors remain visible and actionable; unsupported states are not reported as success.
-- [ ] No private device data, logs, PCAPs, backups, profiles, IPAs, DDIs, credentials, or evidence artifacts are included.
-- [ ] New subprocess arguments avoid shell interpretation and are validated at the boundary.
-- [ ] Documentation reflects current behavior without overstating iOS access or forensic coverage.
+- [ ] Operations still take an explicit target; physical devices and simulators stay separate.
+- [ ] Device-changing actions are classified correctly and confirmed.
+- [ ] No `Process` outside `CommandRunner`; arguments are a vector; no shell; no `sudo`.
+- [ ] Errors are actionable; unsupported states are not reported as success.
+- [ ] No private device data, logs, captures, backups, profiles, IPAs, credentials, or evidence are included.
+- [ ] Documentation matches the new behavior without overstating access or coverage.
 
 ## Notes
 
-List any capability, iOS-version, signing, packaging, or follow-up limitations.
+List limitations, iOS-version differences, or follow-up work.

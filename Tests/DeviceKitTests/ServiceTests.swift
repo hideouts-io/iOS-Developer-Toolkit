@@ -1,0 +1,409 @@
+import Foundation
+import Testing
+@testable import DeviceKit
+import DeviceTestSupport
+import ToolkitCore
+
+private func runWithServer(_ configure: (FakeDeviceServer) -> Void, _ body: (FakeDeviceServer) async throws -> Void) async throws {
+    let server = try FakeDeviceServer()
+    configure(server)
+    try await server.start()
+    do {
+        try await body(server)
+    } catch {
+        await server.stop()
+        throw error
+    }
+    await server.stop()
+}
+
+/// Builds an os_trace_relay record with the documented layout.
+func makeTraceRecord(pid: UInt32, seconds: UInt32, microseconds: UInt32, level: UInt8, filename: String, image: String, message: String, subsystem: String?, category: String?) -> Data {
+    var bytes = [UInt8](repeating: 0, count: 129)
+    func put32(_ value: UInt32, _ offset: Int) {
+        for index in 0..<4 { bytes[offset + index] = UInt8((value >> (8 * UInt32(index))) & 0xFF) }
+    }
+    func put16(_ value: UInt16, _ offset: Int) {
+        bytes[offset] = UInt8(value & 0xFF)
+        bytes[offset + 1] = UInt8(value >> 8)
+    }
+    put32(pid, 9)
+    put32(seconds, 55)
+    put32(microseconds, 63)
+    bytes[68] = level
+    let imageBytes = Array(image.utf8) + [0]
+    let messageBytes = Array(message.utf8) + [0]
+    put16(UInt16(imageBytes.count), 107)
+    put16(UInt16(messageBytes.count), 109)
+    let subsystemBytes: [UInt8] = subsystem.map { Array($0.utf8) + [0] } ?? []
+    let categoryBytes: [UInt8] = category.map { Array($0.utf8) + [0] } ?? []
+    put32(UInt32(subsystemBytes.count), 117)
+    put32(UInt32(categoryBytes.count), 121)
+    bytes += Array(filename.utf8) + [0]
+    bytes += imageBytes + messageBytes + subsystemBytes + categoryBytes
+    return Data(bytes)
+}
+
+@Suite("Lockdown services (fake device)", .serialized)
+struct ServiceTests {
+    @Test func syslogRelaySplitsRecordsAndKeepsRawBytes() async throws {
+        let raw = Data("Sep 26 10:00:00 iPhone kernel[0] <Notice>: one\u{0}Sep 26 10:00:01 iPhone SpringBoard[55] <Error>: two\nthree\u{0}".utf8)
+        try await runWithServer({ _ in }) { server in
+            server.register(service: SyslogRelay.serviceName) { channel in
+                try await channel.write(raw.prefix(20))
+                try await channel.write(raw.dropFirst(20))
+            }
+            try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                var spooled = Data()
+                var lines: [String] = []
+                for try await chunk in try await SyslogRelay.stream(session) {
+                    spooled.append(chunk.spoolBytes)
+                    lines += chunk.lines.map(\.message)
+                }
+                #expect(spooled == raw)
+                #expect(lines.count == 3)
+                #expect(lines[0].hasSuffix("<Notice>: one"))
+                #expect(lines[2] == "three")
+            }
+        }
+    }
+
+    @Test func syslogParserBoundsUnterminatedRecords() {
+        var parser = SyslogRecordParser()
+        parser.maximumRecordLength = 10
+        let lines = parser.consume(Data(repeating: 0x41, count: 25))
+        #expect(lines.count == 1)
+        #expect(parser.flush().isEmpty)
+    }
+
+    @Test func osTraceRelayDecodesStructuredRecords() async throws {
+        let record = makeTraceRecord(pid: 321, seconds: 1_700_000_000, microseconds: 250_000, level: 0x10, filename: "/usr/libexec/locationd", image: "CoreLocation", message: "Location updated", subsystem: "com.apple.locationd", category: "Core")
+        try await runWithServer({ _ in }) { server in
+            server.register(service: OSTraceRelay.serviceName) { channel in
+                let request = try await PlistMessageConnection(channel: channel).receive(timeout: 5)
+                #expect(request["Request"]?.stringValue == "StartActivity")
+                let reply = try PlistValue(dictionaryLiteral: ("Status", "RequestSuccessful")).encoded(format: .xml)
+                var header = Data()
+                header.appendLittleEndian(UInt32(4))
+                header.appendLittleEndian(UInt32(reply.count))
+                try await channel.write(header + reply)
+                var frame = Data([0x02])
+                frame.appendLittleEndian(UInt32(record.count))
+                try await channel.write(frame + record)
+            }
+            try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                var lines: [LogLine] = []
+                for try await chunk in try await OSTraceRelay.stream(session) {
+                    lines += chunk.lines
+                    #expect(!chunk.spoolBytes.isEmpty)
+                }
+                #expect(lines.count == 1)
+                let line = try #require(lines.first)
+                #expect(line.pid == 321)
+                #expect(line.process == "locationd")
+                #expect(line.level == "Error")
+                #expect(line.subsystem == "com.apple.locationd")
+                #expect(line.category == "Core")
+                #expect(line.message == "Location updated")
+                #expect(line.timestamp == Date(timeIntervalSince1970: 1_700_000_000.25))
+            }
+        }
+    }
+
+    @Test func osTraceParserFallsBackOnMalformedRecords() {
+        let line = OSTraceRecordParser.parse(Data("short but readable text".utf8))
+        #expect(line.level == "Undecoded")
+        #expect(line.message.contains("readable"))
+        let truncated = makeTraceRecord(pid: 1, seconds: 1, microseconds: 0, level: 0, filename: "x", image: "img", message: "hello", subsystem: nil, category: nil).prefix(135)
+        #expect(OSTraceRecordParser.parse(truncated).level == "Undecoded")
+    }
+
+    @Test func processListParsesPidListReplies() throws {
+        let processes = try OSTraceRelay.parseProcessList(["Status": "RequestSuccessful", "Payload": ["250": ["ProcessName": "SpringBoard"], "1": ["ProcessName": "launchd"], "7": [:], "not-a-pid": ["ProcessName": "x"]]])
+        #expect(processes.map(\.pid) == [1, 7, 250])
+        #expect(processes.map(\.name) == ["launchd", "PID 7", "SpringBoard"])
+        #expect(throws: ToolkitError.self) { try OSTraceRelay.parseProcessList(["Status": "RequestFailed"]) }
+    }
+
+    @Test func configurationProfileListParsesMCInstallReplies() throws {
+        let profiles = try ConfigurationProfileService.parse([
+            "Status": "Acknowledged",
+            "OrderedIdentifiers": ["b.profile", "a.profile"],
+            "ProfileMetadata": [
+                "a.profile": ["PayloadDisplayName": "A", "PayloadVersion": 1],
+                "b.profile": ["PayloadDisplayName": "B", "PayloadRemovalDisallowed": true, "PayloadUUID": "U"],
+                "c.profile": ["PayloadDisplayName": "C"],
+            ],
+            "ProfileManifest": ["b.profile": ["IsActive": false]],
+        ])
+        // Device order first, then any profile missing from the order, alphabetically.
+        #expect(profiles.map(\.identifier) == ["b.profile", "a.profile", "c.profile"])
+        #expect(profiles[0].removalDisallowed == true && profiles[0].isActive == false && profiles[0].uuid == "U")
+        #expect(profiles[1].version == 1 && profiles[1].isActive == nil)
+        #expect(throws: ToolkitError.self) { try ConfigurationProfileService.parse(["Status": "Error"]) }
+    }
+
+    @Test func webInspectorListsPagesAfterRetryingRefusals() async throws {
+        // The first session is dropped (as when a session starts too soon); the retry succeeds.
+        let inspector = FakeWebInspector(refusals: 1)
+        try await runWithServer({ inspector.register(on: $0) }) { server in
+            let applications = try await WebInspector.openPages(on: server.target, usbmux: server.client, retryInterval: .milliseconds(100), listingWindow: .milliseconds(500))
+            let safari = try #require(applications.first)
+            #expect(safari.name == "Safari" && safari.bundleIdentifier == "com.apple.mobilesafari" && safari.isActive == true)
+            #expect(safari.pages.map(\.title) == [nil, "Example Domain"])
+            #expect(safari.pages.map(\.kindLabel) == ["JavaScript context", "Web page"])
+            #expect(safari.pages.last?.url == "https://example.com/")
+            #expect(inspector.sessions == 2)
+            #expect(inspector.connectionIdentifiers.count == 1, "every message carries the same connection identifier")
+            #expect(inspector.selectors.prefix(3) == ["_rpc_reportIdentifier:", "_rpc_getConnectedApplications:", "_rpc_forwardGetListing:"])
+        }
+    }
+
+    @Test func webInspectorExplainsHowToTurnItOnWhenRefused() async throws {
+        let inspector = FakeWebInspector(refusals: 100)
+        try await runWithServer({ inspector.register(on: $0) }) { server in
+            do {
+                _ = try await WebInspector.openPages(on: server.target, usbmux: server.client, handshakeDeadline: .milliseconds(600), retryInterval: .milliseconds(100))
+                Issue.record("expected a refusal")
+            } catch let error as ToolkitError {
+                #expect(error.message == "Safari Web Inspector did not answer.")
+                #expect(error.recovery?.contains("Settings › Apps › Safari › Advanced › Web Inspector") == true)
+                #expect(error.recovery?.contains("ten seconds") == true)
+            }
+            #expect(inspector.sessions > 2, "refusals are retried until the deadline")
+        }
+    }
+
+    @Test func webInspectorListingStateFollowsTheDevice() {
+        var state = WebInspector.ListingState()
+        state.apply(["__selector": "_rpc_reportConnectedApplicationList:", "__argument": ["WIRApplicationDictionaryKey": ["A": ["WIRApplicationNameKey": "Safari"], "B": ["WIRApplicationNameKey": "Mail"]]]])
+        state.apply(["__selector": "_rpc_applicationSentListing:", "__argument": ["WIRApplicationIdentifierKey": "A", "WIRListingKey": ["1": ["WIRTitleKey": "One", "WIRTypeKey": "WIRTypeWeb"], "2": ["WIRTitleKey": "Two", "WIRTypeKey": "WIRTypeWeb"]]]])
+        // A new listing replaces the old one: closed tabs disappear.
+        state.apply(["__selector": "_rpc_applicationSentListing:", "__argument": ["WIRApplicationIdentifierKey": "A", "WIRListingKey": ["2": ["WIRTitleKey": "Two", "WIRTypeKey": "WIRTypeWeb"]]]])
+        state.apply(["__selector": "_rpc_applicationDisconnected:", "__argument": ["WIRApplicationIdentifierKey": "B"]])
+        state.apply(["__selector": "_rpc_unknownSelector:", "__argument": [:]])
+        #expect(state.result.map(\.name) == ["Safari"])
+        #expect(state.result.first?.pages.map(\.title) == ["Two"])
+    }
+
+    static func packetLoggerRecord(type: UInt8, seconds: UInt32, payload: [UInt8]) -> Data {
+        var data = Data()
+        data.appendBigEndian(UInt32(8 + 1 + payload.count))
+        data.appendBigEndian(seconds)
+        data.appendBigEndian(UInt32(250))
+        data.append(type)
+        data.append(contentsOf: payload)
+        return data
+    }
+
+    static func serviceFrame(_ record: Data) -> Data {
+        Data([UInt8(record.count & 0xFF), UInt8(record.count >> 8)]) + record
+    }
+
+    @Test func bluetoothRecordsBecomeAPacketLoggerFile() async throws {
+        let command = Self.packetLoggerRecord(type: 0x00, seconds: 1_700_000_000, payload: [0x03, 0x0C, 0x00])
+        let event = Self.packetLoggerRecord(type: 0x01, seconds: 1_700_000_001, payload: [0x0E, 0x04, 0x01, 0x03, 0x0C, 0x00])
+        #expect(PacketLoggerRecord(Data([0, 1, 2])) == nil)
+        let parsed = try #require(PacketLoggerRecord(command))
+        #expect(parsed.seconds == 1_700_000_000 && parsed.microseconds == 250 && parsed.typeLabel == "HCI command" && parsed.payload == Data([0x03, 0x0C, 0x00]))
+        try await runWithServer({ _ in }) { server in
+            server.register(service: BluetoothPacketLogger.serviceName) { channel in
+                try await channel.write(Data([0, 0]) + Self.serviceFrame(command) + Self.serviceFrame(event))
+            }
+            let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "bt")
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let file = directory.appendingPathComponent("capture.pklg")
+            let writer = try PacketLoggerFileWriter(creatingNewFileAt: file)
+            try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                for try await record in try await BluetoothPacketLogger.records(session) { try writer.write(record) }
+            }
+            let digest = try writer.finish()
+            let written = try Data(contentsOf: file)
+            #expect(written == command + event, "a .pklg file is the records back to back")
+            #expect(digest == SecureFileIO.sha256(of: written))
+            #expect(writer.countsByType == [0x00: 1, 0x01: 1])
+        }
+    }
+
+    @Test func bluetoothStreamRejectsDesynchronizedRecordsAndExplainsMissingProfile() async throws {
+        try await runWithServer({ _ in }) { server in
+            server.register(service: BluetoothPacketLogger.serviceName) { channel in
+                try await channel.write(Data([5, 0, 1, 2, 3, 4, 5]))
+            }
+            await #expect(throws: ToolkitError.self) {
+                try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                    for try await _ in try await BluetoothPacketLogger.records(session) {}
+                }
+            }
+        }
+        try await runWithServer({ _ in }) { server in
+            do {
+                try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                    _ = try await BluetoothPacketLogger.records(session)
+                }
+                Issue.record("expected the service to be unavailable")
+            } catch let error as ToolkitError {
+                #expect(error.message == "The device did not start Bluetooth logging.")
+                #expect(error.recovery?.contains("Bluetooth logging profile") == true)
+            }
+        }
+    }
+
+    @Test func springBoardServicesAnswerQueries() async throws {
+        let png = Data([0x89, 0x50, 0x4E, 0x47])
+        try await runWithServer({ _ in }) { server in
+            server.register(service: SpringBoardServices.serviceName) { channel in
+                let messages = PlistMessageConnection(channel: channel)
+                while let request = try? await messages.receive(timeout: 5) {
+                    switch request["command"]?.stringValue {
+                    case "getInterfaceOrientation": try await messages.send(["interfaceOrientation": 3])
+                    case "getHomeScreenIconMetrics": try await messages.send(["homeScreenIconColumns": 4])
+                    case "getIconPNGData": try await messages.send(["pngData": .data(png)])
+                    default: return
+                    }
+                }
+            }
+            try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                let springboard = try await SpringBoardServices.open(session)
+                #expect(try await springboard.interfaceOrientation() == .landscapeLeft)
+                #expect(try await springboard.homeScreenIconMetrics()["homeScreenIconColumns"]?.intValue == 4)
+                #expect(try await springboard.iconPNG(bundleIdentifier: "com.apple.mobilesafari") == png)
+                await #expect(throws: ToolkitError.self) { _ = try await springboard.iconPNG(bundleIdentifier: "bad id!") }
+                await springboard.close()
+            }
+        }
+    }
+
+    @Test func pcapdPacketsBecomeAValidPcapFile() async throws {
+        var header = [UInt8](repeating: 0, count: 95)
+        let payload: [UInt8] = [0x45, 0x00, 0x00, 0x14] + [UInt8](repeating: 0xAB, count: 16)
+        func be32(_ value: UInt32, _ offset: Int) {
+            header[offset] = UInt8(value >> 24); header[offset + 1] = UInt8((value >> 16) & 0xFF)
+            header[offset + 2] = UInt8((value >> 8) & 0xFF); header[offset + 3] = UInt8(value & 0xFF)
+        }
+        be32(95, 0)
+        be32(UInt32(payload.count), 5)
+        header[12] = 0x01
+        be32(2, 13)
+        for (index, byte) in Array("en0".utf8).enumerated() { header[25 + index] = byte }
+        header[41] = 42
+        for (index, byte) in Array("Safari".utf8).enumerated() { header[45 + index] = byte }
+        be32(1_700_000_000, 87)
+        be32(5, 91)
+        let blob = Data(header + payload)
+
+        let packet = try #require(PcapdRecordParser.parse(blob))
+        #expect(packet.interfaceName == "en0")
+        #expect(packet.processName == "Safari")
+        #expect(packet.pid == 42)
+        #expect(packet.isOutbound)
+        #expect(packet.frame.count == 14 + payload.count)
+        #expect(packet.frame[12] == 0x08)
+
+        try await runWithServer({ _ in }) { server in
+            server.register(service: PacketCaptureService.serviceName) { channel in
+                try await PlistMessageConnection(channel: channel).send(.data(blob), format: .binary)
+            }
+            let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "pcap-test")
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let file = directory.appendingPathComponent("capture.pcap")
+            let writer = try PcapFileWriter(creatingNewFileAt: file)
+            try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                for try await packet in try await PacketCaptureService.stream(session) {
+                    try writer.write(packet)
+                }
+            }
+            let digest = try writer.finish()
+            let data = try Data(contentsOf: file)
+            #expect(data.readLittleEndianUInt32(at: 0) == 0xA1B2_C3D4)
+            #expect(data.readLittleEndianUInt32(at: 20) == 1)
+            #expect(data.readLittleEndianUInt32(at: 24) == 1_700_000_000)
+            #expect(Int(data.readLittleEndianUInt32(at: 32)) == 14 + payload.count)
+            #expect(writer.packetCount == 1)
+            #expect(digest == (try SecureFileIO.sha256(of: file)))
+        }
+    }
+
+    @Test func diagnosticsBatteryAndFailures() async throws {
+        try await runWithServer({ _ in }) { server in
+            server.register(service: DiagnosticsRelay.serviceName) { channel in
+                let messages = PlistMessageConnection(channel: channel)
+                let request = try await messages.receive(timeout: 5)
+                #expect(request["EntryClass"]?.stringValue == "IOPMPowerSource")
+                try await messages.send(["Status": "Success", "Diagnostics": ["IORegistry": ["CurrentCapacity": 81, "IsCharging": true, "CycleCount": 312, "Temperature": 3050, "DesignCapacity": 3000, "AppleRawMaxCapacity": 2700]]])
+                _ = try await messages.receive(timeout: 5)
+                try await messages.send(["Status": "Failure"])
+            }
+            try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                let relay = try await DiagnosticsRelay.open(session)
+                let summary = BatterySummary(registry: try await relay.battery())
+                #expect(summary.percentage == 81)
+                #expect(summary.isCharging == true)
+                #expect(summary.cycleCount == 312)
+                #expect(summary.temperatureCelsius == 30.5)
+                #expect(summary.healthPercentage == 90)
+                await #expect(throws: ToolkitError.self) { _ = try await relay.all() }
+            }
+        }
+    }
+
+    @Test func installationProxyBrowsesInBatches() async throws {
+        try await runWithServer({ _ in }) { server in
+            server.register(service: InstallationProxy.serviceName) { channel in
+                let messages = PlistMessageConnection(channel: channel)
+                let request = try await messages.receive(timeout: 5)
+                #expect(request["Command"]?.stringValue == "Browse")
+                try await messages.send(["Status": "BrowsingApplications", "CurrentList": [
+                    ["CFBundleIdentifier": "com.example.zeta", "CFBundleDisplayName": "Zeta", "ApplicationType": "User", "StaticDiskUsage": 1000, "DynamicDiskUsage": 500],
+                ]])
+                try await messages.send(["Status": "BrowsingApplications", "CurrentList": [
+                    ["CFBundleIdentifier": "com.apple.mobilesafari", "CFBundleName": "Safari", "ApplicationType": "System", "CFBundleShortVersionString": "18.2"],
+                    ["CFBundleName": "Missing identifier"],
+                ]])
+                try await messages.send(["Status": "Complete"])
+            }
+            try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                let proxy = try await InstallationProxy.open(session)
+                let apps = try await proxy.browse(includeSizes: true)
+                #expect(apps.map(\.bundleIdentifier) == ["com.apple.mobilesafari", "com.example.zeta"])
+                #expect(apps[1].totalBytes == 1500)
+                #expect(apps[0].totalBytes == nil)
+                #expect(apps[0].typeLabel == "Built-in")
+            }
+        }
+    }
+
+    @Test func installationProxyErrorsAreActionable() {
+        let error = InstallationProxy.interpret(error: "ApplicationVerificationFailed", description: "bad sig", operation: "Installing")
+        #expect(error.message.contains("signature"))
+        #expect(error.recovery?.contains("provisioning profile") == true)
+    }
+
+    @Test func imageMounterQueries() async throws {
+        try await runWithServer({ _ in }) { server in
+            server.register(service: ImageMounter.serviceName) { channel in
+                let messages = PlistMessageConnection(channel: channel)
+                while let request = try? await messages.receive(timeout: 5) {
+                    switch request["Command"]?.stringValue {
+                    case "CopyDevices":
+                        try await messages.send(["EntryList": [["MountPath": "/System/Developer", "DiskImageType": "Personalized", "IsMounted": true]]])
+                    case "QueryDeveloperModeStatus":
+                        try await messages.send(["DeveloperModeStatus": true])
+                    case "UnmountImage":
+                        try await messages.send(["Error": "UnmountImageFailed", "DetailedError": "image not mounted"])
+                    default:
+                        try await messages.send(["Status": "Complete"])
+                    }
+                }
+            }
+            try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                let mounter = try await ImageMounter.open(session)
+                let images = try await mounter.mountedImages()
+                #expect(images.first?.mountPath == "/System/Developer")
+                #expect(images.first?.isMounted == true)
+                #expect(try await mounter.developerModeStatus() == true)
+                try await mounter.unmountDeveloperImage()
+            }
+        }
+    }
+}

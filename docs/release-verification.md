@@ -1,19 +1,45 @@
 # Release verification
 
-## What a published release contains
+## What a release contains
 
-Apple Silicon and Intel applications are built separately on native GitHub-hosted runners. Each ZIP is accompanied by a CycloneDX SBOM, a release-wide SHA-256 inventory, and GitHub build-provenance and SBOM attestations. The application is ad-hoc signed and is not Apple-notarized.
+Each tagged release is built by `.github/workflows/release.yml` with `scripts/build-release.sh` on
+a GitHub-hosted macOS runner:
 
-## Verification order
+| File | Contents |
+|---|---|
+| `iOS-Developer-Toolkit-VERSION-macOS-universal.zip` | The app (arm64 + x86_64), ad-hoc signed with the hardened runtime, with `idt` in `Contents/MacOS` and dependency licenses in `Contents/Resources/Licenses` |
+| `SHA256SUMS.txt` | SHA-256 of every release file |
+| `iOS-Developer-Toolkit-VERSION.spdx.json` | SPDX 2.3 SBOM of the Swift package dependencies, generated from `Package.resolved` |
 
-1. Download the archive matching the Mac architecture from the [latest release](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest).
-2. Verify the archive against `SHA256SUMS.txt` before extracting it.
-3. Verify GitHub build provenance for that exact archive.
-4. Inspect the architecture label and embedded SBOM.
-5. After extraction, inspect the ad-hoc signature and apply the documented Gatekeeper procedure only if the provenance is acceptable.
+GitHub build-provenance and SBOM attestations are published for the ZIP. The app is **not**
+notarized by Apple.
 
-The canonical commands and current signing caveats live in the [README release section](https://github.com/hideouts-io/iOS-Developer-Toolkit#release-model) and [security policy](https://github.com/hideouts-io/iOS-Developer-Toolkit/security/policy). Source and bundled-component boundaries are recorded in [SOURCE_AVAILABILITY.md](https://github.com/hideouts-io/iOS-Developer-Toolkit/blob/main/SOURCE_AVAILABILITY.md) and [THIRD_PARTY_NOTICES.md](https://github.com/hideouts-io/iOS-Developer-Toolkit/blob/main/THIRD_PARTY_NOTICES.md).
+## Verify
 
-!!! danger "Do not infer notarization"
+```bash
+shasum -a 256 -c SHA256SUMS.txt --ignore-missing
+gh attestation verify iOS-Developer-Toolkit-VERSION-macOS-universal.zip --repo hideouts-io/iOS-Developer-Toolkit
+```
 
-    A valid checksum, ad-hoc signature, SBOM, or GitHub attestation does not make the bundle Apple-notarized. Each mechanism answers a different provenance or integrity question.
+After unzipping:
+
+```bash
+codesign --verify --deep --strict --verbose=2 "iOS Developer Toolkit.app"
+codesign --display --verbose=2 "iOS Developer Toolkit.app"   # expect: Signature=adhoc, flags=0x10002(adhoc,runtime)
+lipo -archs "iOS Developer Toolkit.app/Contents/MacOS/iOS Developer Toolkit"   # expect: x86_64 arm64
+```
+
+Then open the app with Control-click › **Open** (or **Open Anyway** in *System Settings › Privacy &
+Security*). Do not disable Gatekeeper.
+
+## Build it yourself and compare
+
+```bash
+scripts/build-release.sh 1.0.0
+```
+
+Builds are not bit-for-bit reproducible (signatures and timestamps differ), but the SBOM and the
+source commit can be compared with a release.
+
+> A checksum, ad-hoc signature, SBOM, or attestation does not make the app notarized. Each answers
+> a different question about where the file came from and whether it changed.

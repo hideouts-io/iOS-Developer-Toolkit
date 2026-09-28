@@ -1,0 +1,11 @@
+{
+  "info" : { "outcome" : "success", "jsonVersion" : 5 },
+  "result" : {
+    "apps" : [
+      { "appClip" : false, "builtByDeveloper" : true, "bundleIdentifier" : "com.example.Demo", "bundleVersion" : "42", "defaultApp" : false, "hidden" : false, "internalApp" : false, "name" : "Demo", "removable" : true, "url" : "file:///private/var/containers/Bundle/Application/X/Demo.app/", "version" : "1.2" },
+      { "appClip" : false, "builtByDeveloper" : false, "bundleIdentifier" : "com.apple.mobilesafari", "bundleVersion" : "8621", "defaultApp" : true, "hidden" : false, "internalApp" : false, "name" : "Safari", "removable" : false, "url" : "file:///Applications/MobileSafari.app/", "version" : "26.0" },
+      { "name" : "No identifier" }
+    ],
+    "defaultAppsIncluded" : true
+  }
+}

@@ -7,14 +7,14 @@ authors:
 repository-code: "https://github.com/hideouts-io/iOS-Developer-Toolkit"
 url: "https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest"
 license: MIT
-version: 0.3.4
-date-released: "2026-09-21"
-abstract: "A safety-focused macOS workbench for Developer Disk Images, pymobiledevice3 and DVT diagnostics, iOS logs, packet capture, location simulation, app inspection, backups, and evidence preservation."
+version: 1.0.0
+abstract: "A native Swift/SwiftUI macOS app for iPhone, iPad, and simulator development and diagnostics: device readiness, live Unified and classic logs, location simulation, app installation, encrypted backups, packet capture, and hashed evidence collection."
 keywords:
   - iOS development
-  - pymobiledevice3
-  - Developer Disk Image
+  - macOS
+  - Swift
   - device diagnostics
-  - mobile forensics
   - unified logging
   - packet capture
+  - location simulation
+  - mobile forensics
