@@ -1,9 +1,10 @@
 name: Release macOS applications
 
+# The Python app is released as 0.x from the python branch; 1.x tags belong to the Swift app on main.
 on:
   push:
     tags:
-      - "v*"
+      - "v0.*"
 
 permissions:
   contents: read
@@ -87,6 +88,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" release-assets/* \
-            --title "iOS Developer Toolkit $GITHUB_REF_NAME" \
+            --title "iOS Developer Toolkit $GITHUB_REF_NAME (Python)" \
+            --latest=false \
             --generate-notes \
-            --notes "Native Apple Silicon and Intel macOS application bundles with CycloneDX SBOMs and GitHub build-provenance/SBOM attestations. Both builds are ad-hoc signed and are not Apple-notarized. Verify SHA256SUMS.txt and the GitHub attestation before opening."
+            --notes "Python/PySide6 app (0.x line, branch python). The native Swift app is the 1.x line. Native Apple Silicon and Intel macOS application bundles with CycloneDX SBOMs and GitHub build-provenance/SBOM attestations. Both builds are ad-hoc signed and are not Apple-notarized. Verify SHA256SUMS.txt and the GitHub attestation before opening."

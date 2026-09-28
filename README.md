@@ -7,13 +7,19 @@
 ### iOS Developer Toolkit: a guided pymobiledevice3 GUI, Developer Disk Image mounter, and evidence workbench for macOS
 
 [![CI](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/hideouts-io/iOS-Developer-Toolkit?display_name=tag)](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest)
+[![Latest Python release](https://img.shields.io/github/v/release/hideouts-io/iOS-Developer-Toolkit?display_name=tag&filter=v0.*&label=python%20release)](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases?q=v0.&expanded=true)
 ![Platform](https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white)
 ![Devices](https://img.shields.io/badge/device-iPhone%20%7C%20iPad-0969da)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)
 ![GUI](https://img.shields.io/badge/GUI-PySide6-41cd52)
 ![pymobiledevice3](https://img.shields.io/badge/pymobiledevice3-11.15.1-8250df)
 [![License](https://img.shields.io/badge/license-MIT-2da44e)](LICENSE)
+
+> **Two apps, one repository.** This is the **Python/PySide6 app (0.x)**, developed on the
+> [`python`](https://github.com/hideouts-io/iOS-Developer-Toolkit/tree/python) branch and released as
+> `v0.x`. The **native Swift app (1.x)** is on
+> [`main`](https://github.com/hideouts-io/iOS-Developer-Toolkit) and needs no Python or
+> `pymobiledevice3`. Both are maintained; workspace profiles exported here can be imported into 1.x.
 
 > **Scope:** iOS Developer Toolkit is a macOS front end for authorized Apple-device development, diagnostics, testing, backup, and evidence-preservation workflows. It does not jailbreak iOS, bypass a passcode, disable the sandbox, defeat code signing, decrypt protected traffic, or provide unrestricted filesystem access.
 
@@ -263,7 +269,7 @@ Check the Mac architecture before downloading:
 uname -m
 ```
 
-Download the matching ZIP and `SHA256SUMS.txt` from the [latest release page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest) and place them in the same directory. Verify only the archive for the current Mac; the manifest contains entries for both architectures, so checking the complete manifest after downloading only one ZIP would correctly report the other archive as missing.
+Download the matching ZIP and `SHA256SUMS.txt` from the [latest 0.x release](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases?q=v0.&expanded=true) and place them in the same directory. Verify only the archive for the current Mac; the manifest contains entries for both architectures, so checking the complete manifest after downloading only one ZIP would correctly report the other archive as missing.
 
 ```bash
 toolkit_arch="$(uname -m)"

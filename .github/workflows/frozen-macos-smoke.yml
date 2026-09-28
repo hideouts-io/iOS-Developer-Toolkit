@@ -17,7 +17,7 @@ on:
       - "tests/**"
   push:
     branches:
-      - main
+      - python
   workflow_dispatch:
 
 permissions:
