@@ -240,9 +240,14 @@ struct ReadinessAndActionTests {
     }
 
     @Test func developerImageRowDoesNotRepeatItsState() {
-        let blocked = CapabilityProbe.developerImageResult(DeveloperImageStatus(state: .blocked, headline: "Developer Mode is off.", explanation: "Turn it on."))
+        let blocked = CapabilityProbe.developerImageResult(DeveloperImageStatus(state: .blocked, headline: "Developer Mode is off.", explanation: "Turn it on.", remediation: "Turn on Settings › Privacy & Security › Developer Mode."))
         #expect(blocked.state == .attention)
         #expect(blocked.summary == "Developer Mode is off.")
+        // The specific fix replaces the row's generic “Mount Developer Image” advice.
+        #expect(blocked.remediation == "Turn on Settings › Privacy & Security › Developer Mode.")
+        let generic = CapabilityProbe.developerImageResult(DeveloperImageStatus(state: .available, headline: "Ready to mount.", explanation: ""))
+        #expect(generic.remediation.contains("Mount Developer Image"))
+        #expect(CapabilityProbe.developerImageResult(DeveloperImageStatus(state: .mounted, headline: "x", explanation: "", remediation: "unused")).remediation.isEmpty)
         let personalization = CapabilityProbe.developerImageResult(DeveloperImageStatus(state: .personalizationRequired, headline: "Apple must sign the image.", explanation: ""))
         #expect(personalization.summary == "Personalization required: Apple must sign the image.")
         #expect(CapabilityProbe.developerImageResult(DeveloperImageStatus(state: .mounted, headline: "x", explanation: "")).summary == "Mounted.")

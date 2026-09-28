@@ -171,7 +171,13 @@ public struct CapabilityProbe: Sendable {
         case .blocked: summary = status.headline
         default: summary = "\(status.state.label): \(status.headline)"
         }
-        return CapabilityRow.developerServices.result(state, summary, evidence: ([status.explanation] + (status.technicalDetail.map { [$0] } ?? [])).joined(separator: " "))
+        var result = CapabilityRow.developerServices.result(state, summary, evidence: ([status.explanation] + (status.technicalDetail.map { [$0] } ?? [])).joined(separator: " "))
+        // The image check knows the specific fix (for example “turn on Developer Mode” rather than
+        // the row's generic “Mount Developer Image”).
+        if !result.remediation.isEmpty, let specific = status.remediation, !specific.isEmpty {
+            result.remediation = specific
+        }
+        return result
     }
 
     public func run(for device: Device, progress: @Sendable (CapabilityResult) -> Void = { _ in }) async -> [CapabilityResult] {

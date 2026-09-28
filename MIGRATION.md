@@ -211,17 +211,18 @@ that changes the device was run: no mounting, location, installation, or backup.
 | Installed apps | `installation_proxy` | ✅ 462 apps |
 | Diagnostics | `diagnostics_relay` | ✅ |
 | Mounted images | `mobile_image_mounter` lookup | ✅ none mounted (correct: Developer Mode off) |
-| Developer image state | evaluator | ✅ *Needs attention: Developer Mode is off*. With Developer Mode assumed on, the evaluator selects Xcode image 27A266a's `iPhone18,1` identity (*Personalization required*) |
+| Developer image state | evaluator | ✅ *Needs attention: Developer Mode is off* (the row's advice now says to turn on Developer Mode instead of the generic “Mount Developer Image”). With Developer Mode assumed on, the evaluator selects Xcode image 27A266a's `iPhone18,1` identity (*Personalization required*) |
 | Classic syslog | `syslog_relay` | ✅ 3,476 lines in 4 s |
 | Unified Logging | `os_trace_relay` | ✅ 15,535 records in 4 s |
 | Packet capture | `pcapd` | ✅ 27 packets in 5 s, valid `.pcap` |
 | Bluetooth capture | `BTPacketLogger` | ◐ service starts, 0 records (no Bluetooth logging profile installed) |
 | Safari and web view tabs | `webinspector` | ◐ not answering (Web Inspector presumably off); the refusal message was shown |
+| Instruments | `xctrace list devices` | ✅ device listed as available |
 | CoreDevice | `devicectl` | ✅ connected, tunnel connected |
 
 | Device | iOS | Connection | Stage 1 | Stage 2 | Stage 3 | Stage 4 | Tester, date |
 |---|---|---|---|---|---|---|---|
-| iPhone 17 Pro | 26.3.1 | USB | discovery and trust only | protocol layer only (above), GUI not run | not run (Developer Mode off) | not run | maintainer, 2026-09-27 |
+| iPhone 17 Pro | 26.3.1 | USB | discovery and trust | protocol layer (above), repeated after the parity work; `idt readiness`; every app page rendered with the phone selected, including the Readiness Check and the app list (462 apps with sizes) — interactive steps (live-log controls, exports, packet-capture action) not run | not run (Developer Mode off) | not run | maintainer, 2026-09-27 |
 
 ### 5.5 Final verification (2026-09-27)
 

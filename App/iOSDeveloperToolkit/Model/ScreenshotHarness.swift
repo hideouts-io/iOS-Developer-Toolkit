@@ -9,6 +9,7 @@ import ToolkitFeatures
 ///         [-demo-mode] [-ui-testing] [-window-size WxH] [-only overview,apps]
 ///         [-populate-demo YES] [-select-booted-simulator YES] [-start-simulator-log YES]
 ///         [-scroll-fraction 0.0–1.0] [-show-sheet reconnect|shortcuts|advanced] [-select-physical-device YES]
+///         [-load-device-data YES]
 ///
 /// Every flag takes a value: AppKit reads arguments as `-key value` pairs, and a lone flag would
 /// swallow the next argument, leaving a stray path that macOS treats as a file to open (which
@@ -69,6 +70,11 @@ enum ScreenshotHarness {
             }
             if value("-select-physical-device") == "YES" {
                 await selectPhysicalDevice(model)
+            }
+            // Read-only: runs the Readiness Check and loads the app list for the selected device.
+            if value("-load-device-data") == "YES", let device = model.selectedDevice, device.kind != .demo {
+                await model.runReadiness(for: device)
+                await model.apps.refresh(app: model, device: device)
             }
             var report = [
                 "initial frame: \(window.frame)",
