@@ -239,6 +239,15 @@ struct ReadinessAndActionTests {
         #expect(ActionReadiness.evaluate(action, results: results, device: device) == .needsAttention(["Instruments lists the device: Instruments lists the device as offline."]))
     }
 
+    @Test func developerImageRowDoesNotRepeatItsState() {
+        let blocked = CapabilityProbe.developerImageResult(DeveloperImageStatus(state: .blocked, headline: "Developer Mode is off.", explanation: "Turn it on."))
+        #expect(blocked.state == .attention)
+        #expect(blocked.summary == "Developer Mode is off.")
+        let personalization = CapabilityProbe.developerImageResult(DeveloperImageStatus(state: .personalizationRequired, headline: "Apple must sign the image.", explanation: ""))
+        #expect(personalization.summary == "Personalization required: Apple must sign the image.")
+        #expect(CapabilityProbe.developerImageResult(DeveloperImageStatus(state: .mounted, headline: "x", explanation: "")).summary == "Mounted.")
+    }
+
     @Test func xctraceDeviceListParsing() {
         let output = """
         == Devices ==

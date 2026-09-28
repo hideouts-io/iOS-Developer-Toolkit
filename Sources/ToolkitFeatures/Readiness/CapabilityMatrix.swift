@@ -164,7 +164,13 @@ public struct CapabilityProbe: Sendable {
         case .available, .personalizationRequired, .blocked: state = .attention
         case .missing, .incompatible, .failed: state = .unavailable
         }
-        let summary = status.state == .mounted ? "Mounted." : "\(status.state.label): \(status.headline)"
+        // The row's own state already says “Needs attention”, so a blocked image shows only why.
+        let summary: String
+        switch status.state {
+        case .mounted: summary = "Mounted."
+        case .blocked: summary = status.headline
+        default: summary = "\(status.state.label): \(status.headline)"
+        }
         return CapabilityRow.developerServices.result(state, summary, evidence: ([status.explanation] + (status.technicalDetail.map { [$0] } ?? [])).joined(separator: " "))
     }
 
