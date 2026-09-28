@@ -191,15 +191,33 @@ rejects the app, as expected for an app that is not notarized.
 
 ### 5.4 Physical devices
 
-**Not tested on hardware.** No iPhone or iPad was available. Discovery, trust, live logs, backup,
-packet capture, app installation, diagnostics, and multi-device handling are verified only against
-the fake device (byte-level protocol tests) and against macOS's real usbmuxd with zero devices.
-Everything marked 🟡 in §2 needs a pass of
-[docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md).
+**Partly tested on hardware (2026-09-27).** One iPhone 17 Pro (`iPhone18,1`) on iOS 26.3.1, on USB,
+trusted, **locked, with Developer Mode off**. The native protocol layer was checked with the
+opt-in, read-only suite `RealDeviceTests` (`IDT_DEVICE_TESTS=1 swift test --filter RealDeviceTests`)
+and `idt`. The GUI protocol in
+[docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md) has not been run. Nothing
+that changes the device was run: no mounting, location, installation, or backup.
+
+| Check | Service | Result on the iPhone |
+|---|---|---|
+| Discovery, TLS session, UDID match | usbmuxd, lockdown | ✅ |
+| Process list | `os_trace_relay` `PidList` | ✅ 519 processes, including launchd |
+| Configuration profiles | `com.apple.mobile.MCInstall` | ✅ 2 profiles |
+| Provisioning profiles | `misagent` | ✅ 3 profiles |
+| Installed apps | `installation_proxy` | ✅ 462 apps |
+| Diagnostics | `diagnostics_relay` | ✅ |
+| Mounted images | `mobile_image_mounter` lookup | ✅ none mounted (correct: Developer Mode off) |
+| Developer image state | evaluator | ✅ *Needs attention: Developer Mode is off*. With Developer Mode assumed on, the evaluator selects Xcode image 27A266a's `iPhone18,1` identity (*Personalization required*) |
+| Classic syslog | `syslog_relay` | ✅ 3,476 lines in 4 s |
+| Unified Logging | `os_trace_relay` | ✅ 15,535 records in 4 s |
+| Packet capture | `pcapd` | ✅ 27 packets in 5 s, valid `.pcap` |
+| Bluetooth capture | `BTPacketLogger` | ◐ service starts, 0 records (no Bluetooth logging profile installed) |
+| Safari and web view tabs | `webinspector` | ◐ not answering (Web Inspector presumably off); the refusal message was shown |
+| CoreDevice | `devicectl` | ✅ connected, tunnel connected |
 
 | Device | iOS | Connection | Stage 1 | Stage 2 | Stage 3 | Stage 4 | Tester, date |
 |---|---|---|---|---|---|---|---|
-| — | — | — | not tested | not tested | not tested | not tested | — |
+| iPhone 17 Pro | 26.3.1 | USB | discovery and trust only | protocol layer only (above), GUI not run | not run (Developer Mode off) | not run | maintainer, 2026-09-27 |
 
 ### 5.5 Final verification (2026-09-27)
 

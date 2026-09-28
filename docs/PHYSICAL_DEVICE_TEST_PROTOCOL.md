@@ -1,8 +1,18 @@
 # Physical-device test protocol
 
 The native lockdown services in version 1.0 are verified against a protocol-accurate simulated
-device and macOS's real device service, but not yet against physical hardware. This protocol is
+device and macOS's real device service. Their read-only protocol layer has been checked on one
+iPhone (see MIGRATION.md §5.4); the steps below have not yet been run end to end. This protocol is
 how to verify them. Use it only with an iPhone or iPad you own or are authorized to test.
+
+Before the GUI steps, the read-only protocol checks can be run from a source checkout with the
+device connected by USB and trusted (nothing on the device is changed):
+
+```bash
+IDT_DEVICE_TESTS=1 swift test --filter RealDeviceTests
+```
+
+The lines prefixed `[device]` summarize what the device reported, without identifiers.
 
 Keep UDIDs, device names, logs, captures, backups, screenshots, coordinates, and case evidence out
 of issues and pull requests. Report results as **passed**, **failed**, **not applicable**, or
