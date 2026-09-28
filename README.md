@@ -250,6 +250,8 @@ idt ddi unmount --udid <UDID> --confirm "RUN ABC123"
 idt toolchain                                 # check the installed Xcode
 ```
 
+`--include-oslog`, the 0.3.x name of `--include-unified-logs`, is still accepted.
+
 `idt collect` exits with `0` when complete, `2` when finished with coverage gaps, and `1` when the
 device could not be identified.
 

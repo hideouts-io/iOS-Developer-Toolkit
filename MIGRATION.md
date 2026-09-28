@@ -421,7 +421,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 
 | Item | Swift | Class |
 |---|---|---|
-| `ios-developer-collect` (all options) | `idt collect` — `--include-oslog` renamed `--include-unified-logs` | ◐ → **G7** (accept the old flag) |
+| `ios-developer-collect` (all options) | `idt collect` — `--include-oslog` renamed `--include-unified-logs`; the old name is still accepted (hidden from help) | = (**G7 resolved**) |
 | `ios-ipa-inspect`, `ios-local-ddi` | `idt inspect-ipa`, `idt ddi` | = / 🔁 |
 | Evidence snapshots (17) | lockdown, images, diagnostics ×4, apps, provisioning, crashes, AFC root, CoreDevice details; processes and configuration profiles (native over USB since G1/G2); cryptex list and DVT ×3 excluded (RemoteXPC/DTX) | = (**G1**, **G2** resolved) |
 | `tests/` behaviours | ported to Swift tests (see §5.1); packaging/runtime tests replaced by `scripts/build-release.sh` checks | = |
@@ -436,7 +436,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | G4 | Bluetooth HCI capture (`com.apple.bluetooth.BTPacketLogger`) to `.pklg` | P1 | ✅ resolved — action “Bluetooth capture” |
 | G5 | Guided reconnect | P2 | ✅ resolved — Device › Reconnect a Device…, also on the Connection diagnostics and No-device cards |
 | G6 | Import 0.3.x workspace profiles; profile fields for the developer-image mechanism and selected action | P2 | migration path for existing users |
-| G7 | `idt collect --include-oslog` accepted as an alias | P2 | existing scripts |
+| G7 | `idt collect --include-oslog` accepted as an alias | P2 | ✅ resolved — hidden alias of `--include-unified-logs` |
 | G8 | Instruments readiness row (replaces the DVT row) | P2 | readiness coverage |
 | G9 | Add current coordinate as a route waypoint | P3 | convenience |
 | G10 | Copy the findings register | P3 | convenience |
