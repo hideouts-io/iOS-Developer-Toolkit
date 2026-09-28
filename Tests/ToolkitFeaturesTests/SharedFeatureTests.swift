@@ -86,6 +86,118 @@ struct SharedFeatureTests {
         #expect(throws: ToolkitError.self) { try WorkspaceProfile.decode(Data(repeating: 0x20, count: 70_000)) }
     }
 
+    @Test func workspaceProfileCarriesActionAndDeveloperImageChoices() throws {
+        let profile = WorkspaceProfile(name: "Capture lab", actionCategory: "Capture & Instruments", selectedAction: "bluetooth-capture", developerImageMechanism: .coreDevice)
+        let decoded = try WorkspaceProfile.importing(try profile.encoded())
+        #expect(decoded.profile == profile)
+        #expect(decoded.legacyVersion == nil && decoded.notes.isEmpty)
+        #expect(profile.preview.contains("Selected action: Bluetooth capture"))
+        #expect(profile.preview.contains("Developer image: mount with Xcode device service (devicectl)"))
+        var bad = profile
+        bad.selectedAction = "no-such-action"
+        #expect(throws: ToolkitError.self) { try bad.validated() }
+        bad.selectedAction = "battery"  // Device Basics, not Capture & Instruments
+        #expect(throws: ToolkitError.self) { try bad.validated() }
+        // Profiles exported before these fields existed still import.
+        let older = try JSONSerialization.jsonObject(with: try WorkspaceProfile(name: "Older").encoded()) as? [String: Any]
+        var trimmed = try #require(older)
+        trimmed["selectedAction"] = nil
+        trimmed["developerImageMechanism"] = nil
+        #expect(try WorkspaceProfile.importing(try JSONSerialization.data(withJSONObject: trimmed)).profile.selectedAction == nil)
+    }
+
+    /// Written by 0.3.4's own `render_workspace_profile_json` (ios_developer_toolkit/workspace_profile.py).
+    static let legacyProfile = """
+    {
+      "created_with_version": "0.3.4",
+      "default_workspace": "Command Center",
+      "description": "Shared settings for the device lab",
+      "name": "Lab defaults",
+      "privacy": {
+        "schema_excludes": ["device identity and targets", "credentials and authorization acknowledgements", "local paths and coordinates", "command parameters", "case text and capture output"],
+        "user_supplied_text_fields": ["name", "description"],
+        "warning": "Review the user-supplied name and description before sharing."
+      },
+      "schema_version": 1,
+      "settings": {
+        "app_workflow": {"calculate_app_sizes": false, "install_as_developer_package": true},
+        "backup_workflow": {"force_full_backup": true, "require_encryption": true},
+        "command": {"category": "Logging & Capture", "preset": "btlogger"},
+        "ddi_source": "local-xcode",
+        "evidence_workflow": {"capture_duration_seconds": 120, "include_crash_pull": true, "include_oslog": true, "include_pcap": false, "include_screenshot": false, "include_syslog": true},
+        "location_workflow": {"ignore_timing_delays": true, "route_interval_seconds": 3, "route_speed_kmh": 35, "route_speed_preset_kmh": 20, "route_traversals": 4, "timing_randomness_ms": 250}
+      }
+    }
+    """
+
+    @Test func importsPythonWorkspaceProfiles() throws {
+        let imported = try WorkspaceProfile.importing(Data(Self.legacyProfile.utf8))
+        let profile = imported.profile
+        #expect(imported.legacyVersion == "0.3.4")
+        #expect(profile.schemaVersion == WorkspaceProfile.currentSchemaVersion)
+        #expect(profile.name == "Lab defaults" && profile.description == "Shared settings for the device lab")
+        #expect(profile.defaultWorkspace == .actions)
+        #expect(profile.actionCategory == "Capture & Instruments")
+        #expect(profile.selectedAction == "bluetooth-capture")
+        #expect(profile.developerImageMechanism == .native)
+        #expect(profile.apps == .init(calculateSizes: false, includeSystemApps: false, installAsDeveloperPackage: true))
+        #expect(profile.backup == .init(forceFullBackup: true, requireEncryption: true))
+        #expect(profile.evidence == CollectionOptions(durationSeconds: 120, includeClassicSyslog: true, includeUnifiedLogs: true, includePacketCapture: false, includeScreenshot: false, includeCrashReports: true))
+        #expect(profile.location == .init(timingJitterMilliseconds: 250, ignoreRecordedTiming: true, routeSpeedKmh: 35, routeIntervalSeconds: 3, routeTraversals: 4))
+        #expect(imported.notes.contains { $0.contains("“btlogger” → action “Bluetooth capture”") })
+        #expect(imported.notes.contains { $0.contains("nothing is downloaded") })
+        #expect(imported.notes.contains { $0.contains("DVT OSLog → Unified Logging") })
+        // Once imported it is an ordinary profile.
+        #expect(try WorkspaceProfile.decode(try profile.encoded()) == profile)
+
+        func variant(_ edit: (inout [String: Any]) -> Void) throws -> WorkspaceProfile.Import {
+            var object = try #require(try JSONSerialization.jsonObject(with: Data(Self.legacyProfile.utf8)) as? [String: Any])
+            edit(&object)
+            return try WorkspaceProfile.importing(try JSONSerialization.data(withJSONObject: object))
+        }
+        func setting(_ path: [String], _ value: Any) -> (inout [String: Any]) -> Void {
+            { object in
+                var settings = object["settings"] as! [String: Any]
+                if path.count == 1 { settings[path[0]] = value } else {
+                    var inner = settings[path[0]] as! [String: Any]
+                    inner[path[1]] = value
+                    settings[path[0]] = inner
+                }
+                object["settings"] = settings
+            }
+        }
+        // A preset that moved to a workspace, with “All categories”.
+        let moved = try variant { object in
+            setting(["command", "category"], "All categories")(&object)
+            setting(["command", "preset"], "syslog")(&object)
+        }
+        #expect(moved.profile.actionCategory == "All" && moved.profile.selectedAction == nil)
+        #expect(moved.notes.contains { $0.contains("Live Logs page") })
+        #expect(try variant { $0["default_workspace"] = "Man Pages" }.profile.defaultWorkspace == .help)
+
+        // Checked as strictly as 0.3.x checked it.
+        #expect(throws: ToolkitError.self) { try variant { $0["default_workspace"] = "Nowhere" } }
+        #expect(throws: ToolkitError.self) { try variant(setting(["command", "preset"], "rm-rf")) }
+        #expect(throws: ToolkitError.self) { try variant(setting(["ddi_source"], "download")) }
+        #expect(throws: ToolkitError.self) { try variant(setting(["evidence_workflow", "capture_duration_seconds"], 5)) }
+        #expect(throws: ToolkitError.self) { try variant(setting(["evidence_workflow", "include_pcap"], "yes")) }
+        #expect(throws: ToolkitError.self) { try variant(setting(["location_workflow", "route_speed_preset_kmh"], 7)) }
+        #expect(throws: ToolkitError.self) { try variant { $0["description"] = "From /Users/alice/Desktop" } }
+        #expect(throws: ToolkitError.self) { try variant { $0["schema_version"] = 3 } }
+        #expect(throws: ToolkitError.self) { try variant { $0["settings"] = nil } }
+    }
+
+    @Test func everyPythonPresetHasATranslation() throws {
+        // The 49 Command Center presets of 0.3.4 (command_catalog.py).
+        #expect(LegacyWorkspaceProfile.presets.count == 49)
+        for case let (preset, action?) in LegacyWorkspaceProfile.presets {
+            #expect(ActionCatalog.descriptor(action) != nil, "\(preset) → \(action)")
+        }
+        for (preset, action) in LegacyWorkspaceProfile.presets where action == nil && LegacyWorkspaceProfile.movedPresets[preset] == nil {
+            #expect(["dvt-list", "notifications", "remote-browse"].contains(preset), "\(preset) has neither an action nor a destination")
+        }
+    }
+
     @Test func supportBundleIsSanitizedAndHashed() throws {
         let context = SupportBundleContext(
             workspace: "Device",

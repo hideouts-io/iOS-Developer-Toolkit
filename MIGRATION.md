@@ -91,7 +91,7 @@ Swift device discovery (usbmuxd + CoreDevice + simctl), so nothing is lost.
 | 36 | Bluetooth HCI capture | `pmd3 btlogger` | Native `com.apple.bluetooth.BTPacketLogger` client writing `.pklg` (Action “Bluetooth capture”) — §9 G4 | Private lockdown service | No | 🟡 |
 | 37 | DVT filesystem listing (`dvt ls /`), AFC media listing | `pmd3 developer dvt ls`, `afc ls` | AFC via native `com.apple.afc`; DVT listing ❌ (see §6) | Lockdown | No | 🟡 AFC · ❌ DVT |
 | 38 | Session Activity journal + manifest export | `operation_history.py` | Ported (`OperationJournal` actor) | Foundation | No | ✅ |
-| 39 | Workspace profiles import/export | `workspace_profile.py` | Ported (Codable + validation) | Foundation | No | ✅ |
+| 39 | Workspace profiles import/export | `workspace_profile.py` | Ported (Codable + validation); imports 0.3.x files (§9 G6) | Foundation | No | ✅ |
 | 40 | Sanitized support bundle | `support_bundle.py` | Ported; native ZIP writer; includes redacted OSLog export | OSLog, Foundation | No | ✅ |
 | 41 | Action Palette (⌘K), keyboard shortcuts | `action_palette.py` | SwiftUI command palette + `Commands` | SwiftUI | No | ✅ (UI test runs in CI) |
 | 42 | Demo Mode | `demo_mode.py` | Ported; also drives deterministic UI tests | — | No | ✅ |
@@ -413,7 +413,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | MVT | executable, backup, IOC files, output, fast, hashes, network, acknowledgements, guides | External Tools · MVT | = |
 | UFADE | checkout, Python, output, validation incl. **developer-image submodule status**, guides, launch | External Tools · UFADE | ◐ → **G13** |
 | Ecosystem tools | go-ios, ipsw, idb | idb Companion | = (go-ios/ipsw removed by request) |
-| Workspace profiles | export/import with preview; fields incl. **`ddi_source`, `command_preset`**; imports schema-1 files | export/import; no DDI/action fields; **rejects 0.3.x files** | ◐ → **G6** |
+| Workspace profiles | export/import with preview; fields incl. **`ddi_source`, `command_preset`**; imports schema-1 files | export/import with preview; developer-image mechanism, Actions category, and selected action; imports 0.3.x (schema 1) files, translating workspaces, presets (§9.1), `ddi_source` (→ built-in mounter) and DVT OSLog (→ Unified Logging), with notes in the preview | = (**G6 resolved**) |
 | Support bundle, Session Activity, Demo Mode, Action Palette | — | ported | = |
 | Shortcuts | ⌘1–9, ⌘0, ⌘R, ⌘K, ⌘L, ⌘F, **⌘/ reference**, **⌥⌘←/→ previous/next workspace** | ⌘1–9, ⌘R, ⇧⌘R, ⌘K | ◐ → **G11** |
 
@@ -435,7 +435,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | G3 | Safari/WebView tab listing (`com.apple.webinspector`) + Web Inspector readiness row | P1 | ✅ resolved — action “Safari and web view tabs”, Readiness row “Safari Web Inspector” |
 | G4 | Bluetooth HCI capture (`com.apple.bluetooth.BTPacketLogger`) to `.pklg` | P1 | ✅ resolved — action “Bluetooth capture” |
 | G5 | Guided reconnect | P2 | ✅ resolved — Device › Reconnect a Device…, also on the Connection diagnostics and No-device cards |
-| G6 | Import 0.3.x workspace profiles; profile fields for the developer-image mechanism and selected action | P2 | migration path for existing users |
+| G6 | Import 0.3.x workspace profiles; profile fields for the developer-image mechanism and selected action | P2 | ✅ resolved — tested with a profile written by 0.3.4's own exporter |
 | G7 | `idt collect --include-oslog` accepted as an alias | P2 | ✅ resolved — hidden alias of `--include-unified-logs` |
 | G8 | Instruments readiness row (replaces the DVT row) | P2 | ✅ resolved — Readiness row “Instruments (xctrace)” from `xctrace list devices` (available / offline / not listed); the Instruments recording action waits for it |
 | G9 | Add current coordinate as a route waypoint | P3 | convenience |

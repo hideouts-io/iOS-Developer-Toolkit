@@ -338,12 +338,16 @@ See [docs/architecture.md](docs/architecture.md).
 ## Project status and limitations
 
 Version 1.0 is a complete rewrite of the earlier Python/PySide6 app (0.3.x), which depended on
-`pymobiledevice3`. See [MIGRATION.md](MIGRATION.md) for the feature-by-feature mapping.
+`pymobiledevice3`. See [MIGRATION.md](MIGRATION.md) for the feature-by-feature mapping. Workspace
+profiles exported by 0.3.x can be imported in **Settings › Profiles**; the preview explains how each
+setting carries over.
 
 - The native lockdown services (logs, packet capture, backup, diagnostics, app installation over
   USB, developer-image checking and mounting including Apple personalization) are tested end to
-  end against a protocol-accurate simulated device and against macOS's real device service, but
-  **not yet against physical iPhones or iPads**. Please report results using the
+  end against a protocol-accurate simulated device and against macOS's real device service. Their
+  read-only protocol layer has been checked on one iPhone (iOS 26, Developer Mode off); mounting,
+  location, installation, backup, and the app's pages **have not yet been tested on physical
+  iPhones or iPads**. Please report results using the
   [physical-device test protocol](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md).
 - Not available in 1.0: the developer-service file listing. Details and alternatives are in [MIGRATION.md](MIGRATION.md#6-known-limitations-and-features-not-reproduced).
 - Release builds are ad-hoc signed and not notarized.

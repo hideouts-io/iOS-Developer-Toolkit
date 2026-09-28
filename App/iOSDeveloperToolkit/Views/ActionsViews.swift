@@ -5,29 +5,28 @@ import ToolkitFeatures
 
 struct ActionsView: View {
     @Environment(AppModel.self) private var model
-    @State private var selectedActionID: String?
     @State private var search = ""
-    @State private var category = "All"
     @State private var showsAdvanced = false
 
     private var actions: [ActionDescriptor] {
         ActionCatalog.all.filter { action in
-            (category == "All" || action.category == category)
+            (model.actionsCategory == "All" || action.category == model.actionsCategory)
                 && (search.isEmpty || action.title.localizedCaseInsensitiveContains(search) || action.summary.localizedCaseInsensitiveContains(search) || (action.replacesLegacy ?? "").localizedCaseInsensitiveContains(search))
         }
     }
 
     var body: some View {
+        @Bindable var model = model
         HStack(spacing: 0) {
             VStack(spacing: 8) {
                 TextField("Search actions", text: $search)
                     .textFieldStyle(.roundedBorder)
-                Picker("Category", selection: $category) {
+                Picker("Category", selection: $model.actionsCategory) {
                     Text("All categories").tag("All")
                     ForEach(ActionCatalog.categories, id: \.self) { Text($0).tag($0) }
                 }
                 .labelsHidden()
-                List(selection: $selectedActionID) {
+                List(selection: $model.selectedActionID) {
                     ForEach(ActionCatalog.categories.filter { name in actions.contains { $0.category == name } }, id: \.self) { name in
                         Section(name) {
                             ForEach(actions.filter { $0.category == name }) { action in
@@ -52,7 +51,7 @@ struct ActionsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     TargetHeader()
-                    if let id = selectedActionID, let action = ActionCatalog.descriptor(id) {
+                    if let id = model.selectedActionID, let action = ActionCatalog.descriptor(id) {
                         ActionDetailView(action: action)
                             .id(action.id)
                     } else {

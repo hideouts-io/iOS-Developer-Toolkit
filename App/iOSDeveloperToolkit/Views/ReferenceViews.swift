@@ -206,7 +206,7 @@ struct SettingsView: View {
             .tabItem { Label("General", systemImage: "gearshape") }
 
             Form {
-                Text("A workspace profile shares workflow defaults with your team. It never contains device identity, paths, coordinates, passwords, or captured data, and importing one only changes defaults.")
+                Text("A workspace profile shares workflow defaults with your team. It never contains device identity, paths, coordinates, passwords, or captured data, and importing one only changes defaults. Profiles exported by version 0.3.x can be imported too.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -241,7 +241,7 @@ struct SettingsView: View {
     }
 
     private func exportProfile() {
-        var profile = WorkspaceProfile(name: "Team defaults", defaultWorkspace: model.workspace)
+        var profile = WorkspaceProfile(name: "Team defaults", defaultWorkspace: model.workspace, actionCategory: model.actionsCategory, selectedAction: model.selectedActionID, developerImageMechanism: model.developerImage.mechanism)
         profile.apps = .init(calculateSizes: model.apps.calculateSizes, includeSystemApps: model.apps.includeSystemApps, installAsDeveloperPackage: model.install.installAsDeveloperPackage)
         profile.backup = .init(forceFullBackup: model.backup.forceFullBackup, requireEncryption: model.backup.requireEncryption)
         profile.evidence = model.evidence.options
@@ -258,15 +258,22 @@ struct SettingsView: View {
     private func importProfile() {
         guard let url = FilePanels.chooseFile(title: "Import workspace profile", allowedExtensions: ["json"]) else { return }
         do {
-            let profile = try WorkspaceProfile.decode(try Data(contentsOf: url))
+            let imported = try WorkspaceProfile.importing(try Data(contentsOf: url))
+            let profile = imported.profile
             let alert = NSAlert()
             alert.messageText = "Apply “\(profile.name)”?"
-            alert.informativeText = profile.preview + "\n\nOnly defaults change. Nothing runs."
+            let translation = imported.legacyVersion.map { version in
+                "\n\nThis profile was exported by version \(version). How its settings carry over:\n" + imported.notes.map { "• \($0)" }.joined(separator: "\n")
+            } ?? ""
+            alert.informativeText = profile.preview + translation + "\n\nOnly defaults change. Nothing runs."
             alert.addButton(withTitle: "Apply")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             guard model.operations.isEmpty else { throw ToolkitError.invalidInput("Wait for running operations to finish before importing a profile.") }
             model.workspace = profile.defaultWorkspace
+            model.actionsCategory = profile.actionCategory
+            model.selectedActionID = profile.selectedAction
+            if let mechanism = profile.developerImageMechanism { model.developerImage.mechanism = mechanism }
             model.apps.calculateSizes = profile.apps.calculateSizes
             model.apps.includeSystemApps = profile.apps.includeSystemApps
             model.install.installAsDeveloperPackage = profile.apps.installAsDeveloperPackage
@@ -279,7 +286,7 @@ struct SettingsView: View {
             model.location.customSpeedKmh = Double(profile.location.routeSpeedKmh)
             model.location.routeIntervalSeconds = profile.location.routeIntervalSeconds
             model.location.routeTraversals = profile.location.routeTraversals
-            profileMessage = "Applied “\(profile.name)”."
+            profileMessage = imported.legacyVersion == nil ? "Applied “\(profile.name)”." : "Applied “\(profile.name)” from version \(imported.legacyVersion ?? "")."
         } catch {
             model.present(error)
         }
@@ -357,7 +364,7 @@ struct CommandPaletteView: View {
         }
         list += ActionCatalog.actions(for: model.selectedDevice?.kind).map { action in
             Entry(id: "action-\(action.id)", title: action.title, subtitle: "\(action.category) · \(action.risk.label)", symbol: action.risk.symbolName) {
-                model.workspace = .actions
+                model.openAction(action.id)
             }
         }
         list.append(Entry(id: "refresh", title: "Refresh Devices", subtitle: "Look for devices again", symbol: "arrow.clockwise") { Task { await model.refreshDevices() } })

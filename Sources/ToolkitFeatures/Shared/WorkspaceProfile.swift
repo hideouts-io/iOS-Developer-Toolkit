@@ -1,3 +1,4 @@
+import DeviceKit
 import Foundation
 import ToolkitCore
 
@@ -46,6 +47,10 @@ public struct WorkspaceProfile: Codable, Sendable, Hashable {
     public var description: String
     public var defaultWorkspace: Workspace
     public var actionCategory: String
+    /// The action selected on the Actions page (an `ActionCatalog` identifier).
+    public var selectedAction: String?
+    /// How the Device page mounts the developer image.
+    public var developerImageMechanism: DeveloperImageMechanism?
     public var apps: AppPreferences
     public var backup: BackupPreferences
     public var evidence: CollectionOptions
@@ -54,13 +59,15 @@ public struct WorkspaceProfile: Codable, Sendable, Hashable {
     public static let currentSchemaVersion = 2
     public static let maximumFileBytes = 64 * 1024
 
-    public init(name: String, description: String = "", defaultWorkspace: Workspace = .overview, actionCategory: String = "All", apps: AppPreferences = AppPreferences(), backup: BackupPreferences = BackupPreferences(), evidence: CollectionOptions = CollectionOptions(), location: LocationPreferences = LocationPreferences()) {
+    public init(name: String, description: String = "", defaultWorkspace: Workspace = .overview, actionCategory: String = "All", selectedAction: String? = nil, developerImageMechanism: DeveloperImageMechanism? = nil, apps: AppPreferences = AppPreferences(), backup: BackupPreferences = BackupPreferences(), evidence: CollectionOptions = CollectionOptions(), location: LocationPreferences = LocationPreferences()) {
         schemaVersion = Self.currentSchemaVersion
         createdWithVersion = ToolkitVersion.current
         self.name = name
         self.description = description
         self.defaultWorkspace = defaultWorkspace
         self.actionCategory = actionCategory
+        self.selectedAction = selectedAction
+        self.developerImageMechanism = developerImageMechanism
         self.apps = apps
         self.backup = backup
         self.evidence = evidence
@@ -76,6 +83,14 @@ public struct WorkspaceProfile: Codable, Sendable, Hashable {
         copy.createdWithVersion = try Self.text(createdWithVersion, label: "version", maximum: 40, allowEmpty: false)
         guard actionCategory == "All" || ActionCatalog.categories.contains(actionCategory) else {
             throw ToolkitError.invalidInput("The profile names an unknown action category.")
+        }
+        if let selectedAction {
+            guard let action = ActionCatalog.descriptor(selectedAction) else {
+                throw ToolkitError.invalidInput("The profile names an unknown action.")
+            }
+            guard actionCategory == "All" || action.category == actionCategory else {
+                throw ToolkitError.invalidInput("The profile's selected action is not in its action category.")
+            }
         }
         copy.evidence = try evidence.validated()
         guard (0...60_000).contains(location.timingJitterMilliseconds) else { throw ToolkitError.invalidInput("Timing randomness must be 0–60,000 ms.") }
@@ -113,6 +128,38 @@ public struct WorkspaceProfile: Codable, Sendable, Hashable {
         }
     }
 
+    /// A profile read from a file, with notes on anything that was translated.
+    public struct Import: Sendable {
+        public var profile: WorkspaceProfile
+        /// Set when the file was exported by the 0.3.x Python app.
+        public var legacyVersion: String?
+        /// Plain-language notes on how 0.3.x settings were translated.
+        public var notes: [String]
+    }
+
+    /// Reads a profile exported by this app or by the 0.3.x Python app (schema 1).
+    public static func importing(_ data: Data) throws -> Import {
+        guard data.count <= maximumFileBytes else { throw ToolkitError.invalidInput("The profile file is too large.") }
+        struct Schema: Decodable {
+            var schemaVersion: Int?
+            var legacySchemaVersion: Int?
+            enum CodingKeys: String, CodingKey {
+                case schemaVersion
+                case legacySchemaVersion = "schema_version"
+            }
+        }
+        guard let schema = try? JSONDecoder().decode(Schema.self, from: data) else {
+            throw ToolkitError.invalidInput("The file is not a valid workspace profile.")
+        }
+        if schema.schemaVersion == nil, let legacy = schema.legacySchemaVersion {
+            guard legacy == LegacyWorkspaceProfile.schemaVersion else {
+                throw ToolkitError.invalidInput("This profile was made by an unsupported version (schema \(legacy)).")
+            }
+            return try LegacyWorkspaceProfile.translate(data)
+        }
+        return Import(profile: try decode(data), legacyVersion: nil, notes: [])
+    }
+
     /// The exact, human-readable preview shown before import or export.
     public var preview: String {
         [
@@ -120,6 +167,8 @@ public struct WorkspaceProfile: Codable, Sendable, Hashable {
             description.isEmpty ? nil : "Description: \(description)",
             "Opens to: \(defaultWorkspace.title)",
             "Actions category: \(actionCategory)",
+            selectedAction.flatMap(ActionCatalog.descriptor).map { "Selected action: \($0.title)" },
+            developerImageMechanism.map { "Developer image: mount with \($0.label)" },
             "Apps: sizes \(apps.calculateSizes ? "on" : "off"), system apps \(apps.includeSystemApps ? "shown" : "hidden"), developer package installs \(apps.installAsDeveloperPackage ? "on" : "off")",
             "Backup: \(backup.forceFullBackup ? "always full" : "incremental when possible"), encryption \(backup.requireEncryption ? "required" : "optional")",
             "Evidence: \(evidence.durationSeconds)s streams; syslog \(evidence.includeClassicSyslog ? "on" : "off"), unified logs \(evidence.includeUnifiedLogs ? "on" : "off"), packet capture \(evidence.includePacketCapture ? "on" : "off"), screenshot \(evidence.includeScreenshot ? "on" : "off"), crash reports \(evidence.includeCrashReports ? "on" : "off")",

@@ -79,6 +79,9 @@ final class AppModel {
         didSet { UserDefaults.standard.set(selectedDeviceID, forKey: "selectedDeviceID") }
     }
     var workspace: Workspace = .overview
+    /// The Actions page's category filter and selection (set by profiles and the command palette).
+    var actionsCategory = "All"
+    var selectedActionID: String?
     var demoMode: Bool {
         didSet {
             UserDefaults.standard.set(demoMode, forKey: "demoMode")
@@ -267,6 +270,14 @@ final class AppModel {
         let record = OperationRecord(title: title, workspace: workspace.title, target: target?.shortLabel ?? "This Mac", transport: transport, argv: argv, startedAt: started, finishedAt: finished, outcome: outcome, errorMessage: error, outputPaths: outputPaths)
         let journal = self.journal
         Task { await journal.append(record) }
+    }
+
+    /// Shows one action on the Actions page, widening the category filter if it hides the action.
+    func openAction(_ id: String) {
+        guard let action = ActionCatalog.descriptor(id) else { return }
+        if actionsCategory != "All" && actionsCategory != action.category { actionsCategory = "All" }
+        selectedActionID = id
+        workspace = .actions
     }
 
     func present(_ error: Error) {
