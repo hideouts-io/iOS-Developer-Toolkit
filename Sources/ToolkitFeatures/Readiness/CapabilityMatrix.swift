@@ -193,6 +193,8 @@ public struct CapabilityProbe: Sendable {
         let hasCoreDevice = tools.devicectl.isAvailable
         if tools.devicectl.isAvailable {
             record(.xcodeTools, CapabilityRow.xcodeTools.result(.ready, tools.xcodeVersion ?? "Xcode is installed.", evidence: tools.developerDirectory ?? ""))
+        } else if case .unresponsive(let reason) = tools.devicectl {
+            record(.xcodeTools, CapabilityRow.xcodeTools.result(.attention, "Xcode's tools did not answer in time. The Mac may be busy; run the check again.", evidence: reason))
         } else if tools.isCommandLineToolsOnly {
             record(.xcodeTools, CapabilityRow.xcodeTools.result(.attention, "Only the Command Line Tools are selected; developer services and simulators need Xcode.", evidence: tools.developerDirectory ?? ""))
         } else {
@@ -209,9 +211,11 @@ public struct CapabilityProbe: Sendable {
             break
         case .simulator:
             guard hasCoreDevice || tools.simctl.isAvailable else {
-                record(.simulatorRuntime, CapabilityRow.simulatorRuntime.result(.blocked, "Needs Xcode."))
-                record(.simulatorRunning, CapabilityRow.simulatorRunning.result(.blocked, "Needs Xcode."))
-                record(.instruments, CapabilityRow.instruments.result(.blocked, "Needs Xcode."))
+                let reason: String
+                if case .unresponsive = tools.simctl { reason = "Xcode's tools did not answer in time." } else { reason = "Needs Xcode." }
+                record(.simulatorRuntime, CapabilityRow.simulatorRuntime.result(.blocked, reason))
+                record(.simulatorRunning, CapabilityRow.simulatorRunning.result(.blocked, reason))
+                record(.instruments, CapabilityRow.instruments.result(.blocked, reason))
                 break
             }
             let records = (try? await simulators.list()) ?? []

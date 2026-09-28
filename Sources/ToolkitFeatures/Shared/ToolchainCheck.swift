@@ -95,6 +95,9 @@ public enum ToolchainCheck {
         case .xctrace: availability = status.xctrace
         case .xed: return nil
         }
+        if case .unresponsive(let reason) = availability {
+            return "\(tool.rawValue) did not answer in time: \(reason) The Mac may be busy; run the check again."
+        }
         guard case .missing(let reason) = availability else { return nil }
         if status.developerDirectory == nil || status.isCommandLineToolsOnly {
             return "Xcode is not installed or not selected (only the Command Line Tools are available). Install Xcode and open it once."

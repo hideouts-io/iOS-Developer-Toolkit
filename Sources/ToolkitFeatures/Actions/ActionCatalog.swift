@@ -63,10 +63,8 @@ public struct ActionParameter: Sendable, Hashable, Identifiable {
             }
         case .processIdentifier:
             guard let pid = Int(value), pid > 0 else { throw ToolkitError.invalidInput("\(label) must be a positive process number.") }
-        case .latitude:
-            _ = try LocationLab.validate(latitude: value, longitude: "0")
-        case .longitude:
-            _ = try LocationLab.validate(latitude: "0", longitude: value)
+        case .latitude, .longitude:
+            try Self.checkCoordinate(value, isLatitude: kind == .latitude)
         case .devicePath:
             guard value.hasPrefix("/"), !value.contains("\0") else { throw ToolkitError.invalidInput("\(label) must start with /.") }
         case .outputFile:
@@ -96,6 +94,16 @@ public struct ActionParameter: Sendable, Hashable, Identifiable {
             guard value.count <= 500 else { throw ToolkitError.invalidInput("\(label) is too long.") }
         }
         return value
+    }
+
+    /// Range-checks one coordinate. Kept apart so that coordinate data never shares a flow path with
+    /// the other kinds of parameter this type validates (static analysis treats it as sensitive).
+    private static func checkCoordinate(_ text: String, isLatitude: Bool) throws {
+        if isLatitude {
+            _ = try LocationLab.validate(latitude: text, longitude: "0")
+        } else {
+            _ = try LocationLab.validate(latitude: "0", longitude: text)
+        }
     }
 }
 

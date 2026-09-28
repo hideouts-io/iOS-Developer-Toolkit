@@ -74,8 +74,10 @@ struct RealSimulatorTests {
         #expect(openURL.summary.contains("example.com"))
 
         let readiness = await CapabilityProbe().run(for: record.device)
-        #expect(readiness.first { $0.id == "simulator-running" }?.state == .ready)
-        #expect(readiness.first { $0.id == "xcode-tools" }?.state == .ready)
+        let running = readiness.first { $0.id == "simulator-running" }
+        let xcode = readiness.first { $0.id == "xcode-tools" }
+        #expect(running?.state == .ready, "\(running?.summary ?? "") \(running?.evidence ?? "")")
+        #expect(xcode?.state == .ready, "\(xcode?.summary ?? "") \(xcode?.evidence ?? "")")
 
         // Install, list, launch, and remove a real (minimal) simulator app.
         step("building fixture app")

@@ -45,6 +45,32 @@ struct ToolchainTests {
         let brokenTool = DeveloperToolsStatus(developerDirectory: "/Applications/Xcode.app/Contents/Developer", xcodeVersion: "Xcode 27.0", devicectl: missing, simctl: .available(version: nil), xctrace: .available(version: nil))
         #expect(ToolchainCheck.unavailableReason(.devicectl, in: brokenTool)?.hasPrefix("devicectl could not run") == true)
         #expect(ToolchainCheck.unavailableReason(.simctl, in: brokenTool) == nil)
+
+        // A busy Mac is not a missing Xcode.
+        let busy = DeveloperToolsStatus(developerDirectory: "/Applications/Xcode.app/Contents/Developer", xcodeVersion: nil, devicectl: .unresponsive(reason: "devicectl did not finish within 45 seconds."), simctl: .available(version: nil), xctrace: .available(version: nil))
+        #expect(ToolchainCheck.unavailableReason(.devicectl, in: busy)?.contains("did not answer in time") == true)
+    }
+
+    @Test func slowXcodeToolsAreNotReportedAsMissing() async {
+        final class TimingOutRunner: CommandRunning, @unchecked Sendable {
+            func run(_ request: CommandRequest) async throws -> CommandResult {
+                throw ToolkitError.timedOut(request.displayName, after: 45)
+            }
+            func stream(_ request: CommandRequest) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+                AsyncThrowingStream { $0.finish(throwing: ToolkitError.timedOut(request.displayName, after: 45)) }
+            }
+        }
+        let tools = await DeveloperToolsStatus.probe(runner: TimingOutRunner())
+        guard case .unresponsive = tools.devicectl else {
+            Issue.record("expected unresponsive, got \(tools.devicectl)")
+            return
+        }
+        let simulator = Device(kind: .simulator, udid: "SIM", name: "iPhone", transports: [.local], sources: [.simctl])
+        let results = await CapabilityProbe(runner: TimingOutRunner()).run(for: simulator)
+        let xcode = results.first { $0.id == "xcode-tools" }
+        #expect(xcode?.state == .attention)
+        #expect(xcode?.summary.contains("did not answer in time") == true)
+        #expect(results.first { $0.id == "simulator-running" }?.summary == "Xcode's tools did not answer in time.")
     }
 
     @Test(.enabled(if: xcodeAvailable))

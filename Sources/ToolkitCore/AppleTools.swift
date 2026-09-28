@@ -81,6 +81,9 @@ public struct DeveloperToolsStatus: Sendable, Hashable {
     public enum Availability: Sendable, Hashable {
         case available(version: String?)
         case missing(reason: String)
+        /// The tool exists but did not answer in time (a busy Mac), which is not the same as
+        /// Xcode being missing.
+        case unresponsive(reason: String)
 
         public var isAvailable: Bool {
             if case .available = self { return true }
@@ -131,7 +134,7 @@ public struct DeveloperToolsStatus: Sendable, Hashable {
 
     private static func availability(runner: CommandRunning, tool: XcodeTool, arguments: [String]) async -> Availability {
         do {
-            let result = try await runner.run(try tool.request(arguments, timeout: 20))
+            let result = try await runner.run(try tool.request(arguments, timeout: probeTimeout))
             guard result.succeeded else {
                 return .missing(reason: "xcrun could not run \(tool.rawValue) (exit \(result.exitCode ?? -1)). \(result.standardErrorText.prefix(300))")
             }
@@ -139,14 +142,19 @@ public struct DeveloperToolsStatus: Sendable, Hashable {
                 .split(separator: "\n").first.map(String.init)?
                 .trimmingCharacters(in: .whitespaces)
             return .available(version: tool == .simctl ? nil : firstLine)
+        } catch let error as ToolkitError where error.kind == .timedOut {
+            return .unresponsive(reason: error.message)
         } catch {
             return .missing(reason: (error as? ToolkitError)?.message ?? error.localizedDescription)
         }
     }
 
+    /// Normally well under a second; a Mac busy booting a simulator can take much longer.
+    static let probeTimeout: TimeInterval = 45
+
     private static func xcodeBuildVersion(runner: CommandRunning) async -> String? {
         guard let xcrun = try? AppleTool.xcrun.locate(),
-              let result = try? await runner.run(CommandRequest(executable: xcrun, arguments: ["xcodebuild", "-version"], timeout: 20, displayName: "xcodebuild -version")),
+              let result = try? await runner.run(CommandRequest(executable: xcrun, arguments: ["xcodebuild", "-version"], timeout: probeTimeout, displayName: "xcodebuild -version")),
               result.succeeded
         else { return nil }
         return result.standardOutputText.split(separator: "\n").map(String.init).joined(separator: " · ")
