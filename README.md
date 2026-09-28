@@ -181,7 +181,8 @@ No device handy? Turn on **Device › Demo Mode** to explore every workspace wit
   the app's boundaries.
 
 Press **⌘K** for the command palette, **⌘R** to refresh devices, **⇧⌘R** to run the Readiness
-Check, and **⌘1–⌘9** to switch workspaces.
+Check, **⌘1–⌘9** to switch workspaces, and **⌥⌘←** / **⌥⌘→** for the previous or next
+workspace. **Help › Keyboard Shortcuts** (**⌘/**) lists them all.
 
 ### How changes are confirmed
 

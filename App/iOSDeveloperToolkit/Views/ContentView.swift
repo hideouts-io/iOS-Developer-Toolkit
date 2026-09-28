@@ -37,6 +37,9 @@ struct ContentView: View {
         .sheet(isPresented: $model.isReconnectGuidePresented) {
             ReconnectGuideView()
         }
+        .sheet(isPresented: $model.isShortcutReferencePresented) {
+            ShortcutReferenceView()
+        }
         .overlay(alignment: .bottom) {
             if let message = model.statusMessage {
                 StatusToast(message: message) { model.statusMessage = nil }

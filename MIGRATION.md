@@ -415,7 +415,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | Ecosystem tools | go-ios, ipsw, idb | idb Companion | = (go-ios/ipsw removed by request) |
 | Workspace profiles | export/import with preview; fields incl. **`ddi_source`, `command_preset`**; imports schema-1 files | export/import with preview; developer-image mechanism, Actions category, and selected action; imports 0.3.x (schema 1) files, translating workspaces, presets (§9.1), `ddi_source` (→ built-in mounter) and DVT OSLog (→ Unified Logging), with notes in the preview | = (**G6 resolved**) |
 | Support bundle, Session Activity, Demo Mode, Action Palette | — | ported | = |
-| Shortcuts | ⌘1–9, ⌘0, ⌘R, ⌘K, ⌘L, ⌘F, **⌘/ reference**, **⌥⌘←/→ previous/next workspace** | ⌘1–9, ⌘R, ⇧⌘R, ⌘K | ◐ → **G11** |
+| Shortcuts | ⌘1–9, ⌘0, ⌘R, ⌘K, ⌘L, ⌘F, **⌘/ reference**, **⌥⌘←/→ previous/next workspace** | ⌘1–9, ⌘R, ⇧⌘R, ⌘K, **⌘/** (Help › Keyboard Shortcuts), **⌥⌘←/→**, ⌃⌘S (sidebar). Not reproduced: ⌘0 and ⇧⌘E/M/S for the tenth and later pages (use ⌘K or ⌥⌘←/→), ⌘L/⌘F focus shortcuts (Tab and the search fields' own focus) | = (**G11 resolved**) |
 
 ### 9.3 Command-line tools, evidence snapshots, tests
 
@@ -440,6 +440,6 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | G8 | Instruments readiness row (replaces the DVT row) | P2 | ✅ resolved — Readiness row “Instruments (xctrace)” from `xctrace list devices` (available / offline / not listed); the Instruments recording action waits for it |
 | G9 | Add current coordinate as a route waypoint | P3 | ✅ resolved — Location Lab › Route › Add Current Coordinate |
 | G10 | Copy the findings register | P3 | ✅ resolved — Live Logs › Findings › Copy Register (Markdown, same as the evidence bundle's report) |
-| G11 | Keyboard shortcut reference (⌘/) and previous/next workspace (⌥⌘← / ⌥⌘→) | P3 | convenience |
+| G11 | Keyboard shortcut reference (⌘/) and previous/next workspace (⌥⌘← / ⌥⌘→) | P3 | ✅ resolved — Help › Keyboard Shortcuts; View › Previous/Next Workspace |
 | G12 | “Use in Advanced Mode” from Tool Reference; readiness shortcuts on Actions and Evidence | P3 | convenience |
 | G13 | UFADE developer-image submodule status | P3 | diagnostic detail |

@@ -8,7 +8,7 @@ import ToolkitFeatures
 ///     "iOS Developer Toolkit" -capture-screenshots <folder>
 ///         [-demo-mode] [-ui-testing] [-window-size WxH] [-only overview,apps]
 ///         [-populate-demo YES] [-select-booted-simulator YES] [-start-simulator-log YES]
-///         [-scroll-fraction 0.0–1.0] [-show-sheet reconnect] [-select-physical-device YES]
+///         [-scroll-fraction 0.0–1.0] [-show-sheet reconnect|shortcuts] [-select-physical-device YES]
 ///
 /// Every flag takes a value: AppKit reads arguments as `-key value` pairs, and a lone flag would
 /// swallow the next argument, leaving a stray path that macOS treats as a file to open (which
@@ -91,16 +91,16 @@ enum ScreenshotHarness {
                 report.append("\(workspace.rawValue): window \(window.frame.size) sidebar \(sidebarWidth)\(sidebarWidth < 190 ? " SQUEEZED" : "")\(overflow)")
                 if value("-dump-views") == "YES" { report.append(dump(window.contentView, depth: 0)) }
             }
-            if value("-show-sheet") == "reconnect" {
-                model.isReconnectGuidePresented = true
+            if let sheetName = value("-show-sheet"), let presented = sheetBinding(sheetName, model) {
+                presented.wrappedValue = true
                 try? await Task.sleep(for: .milliseconds(900))
                 if let sheet = window.attachedSheet {
-                    render(sheet, to: folder.appendingPathComponent("sheet-reconnect.png"))
-                    report.append("sheet-reconnect: \(sheet.frame.size)")
+                    render(sheet, to: folder.appendingPathComponent("sheet-\(sheetName).png"))
+                    report.append("sheet-\(sheetName): \(sheet.frame.size)")
                 } else {
-                    report.append("sheet-reconnect: not shown")
+                    report.append("sheet-\(sheetName): not shown")
                 }
-                model.isReconnectGuidePresented = false
+                presented.wrappedValue = false
                 try? await Task.sleep(for: .milliseconds(500))
             }
             try? report.joined(separator: "\n").write(to: folder.appendingPathComponent("window-geometry.txt"), atomically: true, encoding: .utf8)
@@ -124,6 +124,15 @@ enum ScreenshotHarness {
             case .lockState: return row.result(.attention, "Locked — unlock the device to continue (demo data).")
             default: return row.result(.ready, "Ready (demo data).")
             }
+        }
+    }
+
+    /// The sheets the harness can render.
+    static func sheetBinding(_ name: String, _ model: AppModel) -> Binding<Bool>? {
+        switch name {
+        case "reconnect": return Binding(get: { model.isReconnectGuidePresented }, set: { model.isReconnectGuidePresented = $0 })
+        case "shortcuts": return Binding(get: { model.isShortcutReferencePresented }, set: { model.isShortcutReferencePresented = $0 })
+        default: return nil
         }
     }
 

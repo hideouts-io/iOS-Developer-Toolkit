@@ -21,7 +21,10 @@ struct IOSDeveloperToolkitApp: App {
         // Fits a 13-inch MacBook Air (1280×800 points) with room for the Dock and menu bar.
         .defaultSize(width: 1180, height: 700)
         .windowResizability(.contentMinSize)
-        .commands { ToolkitCommands(model: model) }
+        .commands {
+            SidebarCommands()
+            ToolkitCommands(model: model)
+        }
 
         WindowGroup("Live Log", id: "log-window", for: UUID.self) { $sessionID in
             if let sessionID, let session = model.logs.sessions.first(where: { $0.id == sessionID }) {
@@ -109,12 +112,19 @@ struct ToolkitCommands: Commands {
             Button("Command Palette…") { model.isCommandPalettePresented = true }
                 .keyboardShortcut("k", modifiers: .command)
             Divider()
-            ForEach(Array(Workspace.allCases.prefix(9).enumerated()), id: \.element) { index, workspace in
+            Button("Previous Workspace") { model.workspace = model.workspace.previous }
+                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+            Button("Next Workspace") { model.workspace = model.workspace.next }
+                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+            Divider()
+            ForEach(Array(Workspace.numbered.enumerated()), id: \.element) { index, workspace in
                 Button(workspace.title) { model.workspace = workspace }
                     .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
             }
         }
         CommandGroup(after: .help) {
+            Button("Keyboard Shortcuts") { model.isShortcutReferencePresented = true }
+                .keyboardShortcut("/", modifiers: .command)
             Button("Diagnostic Log") { openWindow(id: "diagnostic-log") }
             Button("Scope & Safety") { model.workspace = .safety }
         }

@@ -97,6 +97,7 @@ final class AppModel {
     var isCommandPalettePresented = false
     var isDeveloperModeGuidePresented = false
     var isReconnectGuidePresented = false
+    var isShortcutReferencePresented = false
     var isRefreshing = false
     var statusMessage: String?
 

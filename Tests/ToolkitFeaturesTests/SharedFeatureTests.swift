@@ -287,3 +287,28 @@ struct ReconnectGuideTests {
         #expect(ReconnectGuide.boundary.contains("never uses sudo"))
     }
 }
+
+@Suite("Keyboard navigation")
+struct KeyboardNavigationTests {
+    @Test func workspacesCycleInSidebarOrder() {
+        #expect(Workspace.overview.next == .device)
+        #expect(Workspace.device.previous == .overview)
+        #expect(Workspace.allCases.last?.next == Workspace.allCases.first)
+        #expect(Workspace.overview.previous == Workspace.allCases.last)
+        for workspace in Workspace.allCases {
+            #expect(workspace.next.previous == workspace)
+        }
+    }
+
+    @Test func referenceListsTheMenuShortcuts() {
+        let entries = KeyboardShortcutReference.sections.flatMap(\.entries)
+        #expect(Set(entries.map(\.id)).count == entries.count)
+        for (index, workspace) in Workspace.numbered.enumerated() {
+            #expect(entries.contains { $0.keys == "⌘\(index + 1)" && $0.title == workspace.title })
+        }
+        #expect(Workspace.numbered.count == 9)
+        for keys in ["⌘K", "⌥⌘←", "⌥⌘→", "⌘R", "⇧⌘R", "⌘/"] {
+            #expect(entries.contains { $0.keys == keys }, "\(keys)")
+        }
+    }
+}
