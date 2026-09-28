@@ -44,6 +44,41 @@ public enum InstrumentsRecorder {
     }
 }
 
+/// Whether Instruments can record from a device, read from `xcrun xctrace list devices` (the
+/// supported replacement for the DVT reachability check of earlier versions).
+public enum InstrumentsDeviceList {
+    public enum Presence: Sendable, Equatable {
+        case available
+        /// Listed under an “Offline” heading: connected, but Instruments cannot record from it yet.
+        case offline
+        case notListed
+    }
+
+    public static func request() throws -> CommandRequest {
+        try XcodeTool.xctrace.request(["list", "devices"], timeout: 60, displayName: "xctrace list devices")
+    }
+
+    /// Finds the device by the identifier in parentheses at the end of its line, e.g.
+    /// `iPhone (26.3.1) (00008150-…)`, under the `== Devices ==`, `== Devices Offline ==`, and
+    /// `== Simulators ==` headings.
+    public static func presence(of udid: String, in output: String) -> Presence {
+        var offline = false
+        for rawLine in output.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("=="), line.hasSuffix("==") {
+                offline = line.localizedCaseInsensitiveContains("offline")
+                continue
+            }
+            guard line.hasSuffix(")"), let open = line.lastIndex(of: "(") else { continue }
+            let identifier = line[line.index(after: open)..<line.index(before: line.endIndex)]
+            if identifier.caseInsensitiveCompare(udid) == .orderedSame {
+                return offline ? .offline : .available
+            }
+        }
+        return .notListed
+    }
+}
+
 /// Apple developer-tool handoffs.
 public enum XcodeHandoff {
     public static func openProject(_ url: URL) throws -> CommandRequest {

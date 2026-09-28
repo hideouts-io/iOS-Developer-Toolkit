@@ -188,6 +188,7 @@ struct ReadinessAndActionTests {
         #expect(states["lockdown-services"] == .ready)
         #expect(states["backup-service"] == .ready)
         #expect(states["web-inspector"] == .ready)
+        #expect(states["instruments"] == .blocked)
         #expect(states["coredevice"] == .blocked)
         // Without Xcode the native check still reads the device; with no image on this Mac for it, the state is Missing.
         #expect(states["developer-services"] == .unavailable)
@@ -205,6 +206,56 @@ struct ReadinessAndActionTests {
             return
         }
         #expect(!problems.isEmpty)
+    }
+
+    @Test func instrumentsRowFollowsXctraceDeviceList() async throws {
+        let server = try FakeDeviceServer()
+        registerStandardServices(server, afc: FakeAFCFileSystem(files: [:]), crashes: FakeAFCFileSystem(files: [:]))
+        try await server.start()
+        defer { Task { await server.stop() } }
+        let device = Device(kind: .physical, udid: server.udid, name: "Test iPhone", osVersion: "18.2", transports: [.usb], usbmuxDeviceID: server.deviceID, sources: [.usbmux])
+        let listing = LockedValue<String>("")
+        let runner = ScriptedRunner()
+        runner.reply = { request in
+            request.arguments.suffix(2) == ["list", "devices"] ? (0, listing.current) : (0, "")
+        }
+        func instrumentsRow() async -> CapabilityResult? {
+            await CapabilityProbe(runner: runner, usbmux: server.client).run(for: device).first { $0.id == "instruments" }
+        }
+        listing.withLock { $0 = "== Devices ==\nThis Mac (AAAA-BBBB)\nTest iPhone (18.2) (\(server.udid))\n\n== Simulators ==\n" }
+        #expect(await instrumentsRow()?.state == .ready)
+        listing.withLock { $0 = "== Devices ==\nThis Mac (AAAA-BBBB)\n\n== Devices Offline ==\nTest iPhone (18.2) (\(server.udid.lowercased()))\n" }
+        let offline = await instrumentsRow()
+        #expect(offline?.state == .attention)
+        #expect(offline?.summary == "Instruments lists the device as offline.")
+        #expect(offline?.remediation.contains("Devices and Simulators") == true)
+        listing.withLock { $0 = "== Devices ==\nThis Mac (AAAA-BBBB)\n" }
+        #expect(await instrumentsRow()?.summary == "Instruments does not list the device.")
+        #expect(runner.requests.current.contains { $0.arguments.suffix(3) == ["xctrace", "list", "devices"] })
+
+        // The recording action waits for this row.
+        let action = try #require(ActionCatalog.descriptor("instruments"))
+        let results = [CapabilityRow.xcodeTools.result(.ready, "Xcode"), CapabilityRow.developerMode.result(.ready, "On"), try #require(offline)]
+        #expect(ActionReadiness.evaluate(action, results: results, device: device) == .needsAttention(["Instruments lists the device: Instruments lists the device as offline."]))
+    }
+
+    @Test func xctraceDeviceListParsing() {
+        let output = """
+        == Devices ==
+        Someone’s MacBook Pro (11111111-2222-3333-4444-555555555555)
+        iPad (17.4) (00008103-000A11112222001E)
+
+        == Devices Offline ==
+        Someone’s iPhone (26.3.1) (00008150-000B33334444002E)
+
+        == Simulators ==
+        iPhone 17 Pro (26.3.1) (AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE)
+        """
+        #expect(InstrumentsDeviceList.presence(of: "00008103-000A11112222001E", in: output) == .available)
+        #expect(InstrumentsDeviceList.presence(of: "00008150-000b33334444002e", in: output) == .offline)
+        #expect(InstrumentsDeviceList.presence(of: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE", in: output) == .available)
+        #expect(InstrumentsDeviceList.presence(of: "00008150", in: output) == .notListed)
+        #expect(InstrumentsDeviceList.presence(of: "anything", in: "") == .notListed)
     }
 
     @Test func matrixReportsUntrustedDevices() async throws {

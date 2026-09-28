@@ -44,7 +44,7 @@ Instruments. It needs no Python, no Homebrew packages, and no administrator righ
 |---|---|
 | **Devices** | Automatic discovery of USB and Wi-Fi–synced devices (event-driven, no polling), Xcode-paired network devices, and simulators — shown in separate *Physical Devices* and *Simulators* sections. |
 | **Plain-language device details** | Name, model, hardware identifier, UDID, iOS version and build, architecture, connection, trust, Developer Mode, and developer-service status, each with an explanation. Identifying values stay hidden until you choose to show them. |
-| **Readiness Check** | A read-only check of every prerequisite (Xcode, the macOS device service, connection, trust, Developer Mode, Xcode's device service, developer services, lock state, logging and backup services) with a next step for anything not ready. |
+| **Readiness Check** | A read-only check of every prerequisite (Xcode, the macOS device service, connection, trust, Developer Mode, Xcode's device service, developer services, Instruments, lock state, logging and backup services, Safari Web Inspector) with a next step for anything not ready. |
 | **Live Logs** | Unified Logging and classic syslog from physical devices, and the simulator's unified log. Every byte is spooled and hashed; the view can be paused and filtered (literal or regex) without affecting capture. Mark findings, then export the raw capture, filtered lines, or an evidence bundle. |
 | **Location Lab** | Set a coordinate (offline world map, map-link parsing, nudges, saved places), move along a route at constant speed, or replay a GPX track. Always clearable; every change is logged. |
 | **Apps** | Search and sort installed apps (with sizes over USB), launch, and remove with confirmation. |
@@ -105,7 +105,7 @@ Features that use Xcode's developer tools need Xcode installed (open it once to 
 | Diagnostics, battery, IORegistry, MobileGestalt, running processes, configuration profiles | Lock state, displays |
 | Installed apps (with sizes), removing apps, installing `.ipa` packages | Sysdiagnose and Instruments recordings |
 | Provisioning profiles, crash reports, Media folder listing | Restart device, Advanced Mode (`devicectl`), Tool Reference |
-| IPA inspection, Evidence Capture (without the Xcode-only steps) | Readiness rows for Xcode's device service |
+| IPA inspection, Evidence Capture (without the Xcode-only steps) | Readiness rows for Xcode's device service and Instruments |
 
 The Command Line Tools alone are not enough for the Xcode column: `devicectl`, `simctl`, and
 `xctrace` ship with Xcode.app.

@@ -79,7 +79,7 @@ Swift device discovery (usbmuxd + CoreDevice + simctl), so nothing is lost.
 | 24 | Network PCAP | `pmd3 pcap` | Native `com.apple.pcapd` client writing libpcap files | Lockdown service | No | 🟡 |
 | 25 | Screenshot | `pmd3 developer dvt screenshot` | CoreDevice `capture screenshot`; Simulator `simctl io screenshot` | Yes | No | ✅ simulators · 🟡 physical |
 | 26 | Crash report list / pull | `pmd3 crash ls/pull` | Native AFC over `com.apple.crashreportcopymobile` (after `crashreportmover`), no Xcode needed | Yes | No | 🟡 |
-| 27 | Processes | `pmd3 processes ps`, DVT proclist, CoreDevice list-processes | CoreDevice `info processes` | Yes | No | 🟡 |
+| 27 | Processes | `pmd3 processes ps`, DVT proclist, CoreDevice list-processes | Native `os_trace_relay` `PidList` over USB (§9 G1); CoreDevice `info processes` for network-only devices | Private lockdown service; devicectl | No | ✅ (read on one iPhone, §5.4) |
 | 28 | Launch app / open URL | DVT launch, Web Inspector launch | CoreDevice `process launch` / `process openURL`; Simulator `simctl launch` / `openurl` | Yes | No | ✅ simulators · 🟡 physical |
 | 29 | Configuration / provisioning profiles | `pmd3 profile list`, `provision list` | CoreDevice `profile list`; native `misagent` | Yes | No | 🟡 |
 | 30 | Diagnostics, battery, IORegistry, MobileGestalt | `pmd3 diagnostics …` | Native `diagnostics_relay` | Lockdown service | No | 🟡 |
@@ -401,7 +401,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 |---|---|---|---|
 | Device & DDI | device info, Developer Mode check and guide, DDI source choice, mount/unmount, list images, CoreDevice details, RVI list, open project/artifact | Device page, Developer image card (§8), handoffs | = |
 | Connection | banner, **Reconnect & Retry…** (guided 30-second reconnect window) | sidebar summary, Connection diagnostics, Next-step card, **Device › Reconnect a Device…** (guided 30-second window that watches discovery) | = (**G5 resolved**) |
-| Capability Matrix | 11 rows incl. `rsd-tunnel`, `dvt`, `webinspector`; copy report; per-preset and per-case readiness buttons | Readiness Check (15 rows; tunnel state in the CoreDevice row); copy report | ◐ → **G3** (Web Inspector row), **G8** (Instruments row replacing DVT), **G12** (readiness shortcuts) |
+| Capability Matrix | 11 rows incl. `rsd-tunnel`, `dvt`, `webinspector`; copy report; per-preset and per-case readiness buttons | Readiness Check (16 rows for devices; tunnel state in the CoreDevice row; “Safari Web Inspector” and “Instruments (xctrace)” rows); copy report | ◐ → **G3**, **G8** resolved; **G12** (readiness shortcuts) |
 | Compatibility history | table, refresh, JSON/Markdown export with preview | Readiness history and exports | = |
 | Location Lab | coordinates, map links, map, nudge, saved places, routes (speed presets, interval, traversals), **add current coordinate as waypoint**, GPX (ignore timing, randomness), evidence log, clear on stop | all except the waypoint button | ◐ → **G9** |
 | Live Logs | streams, reference, regex/case filter, pause, follow, stop, findings, **findings register with Copy**, copy visible, save raw/filtered, evidence bundle, pop-out | all except copying the register | ◐ → **G10** |
@@ -437,7 +437,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | G5 | Guided reconnect | P2 | ✅ resolved — Device › Reconnect a Device…, also on the Connection diagnostics and No-device cards |
 | G6 | Import 0.3.x workspace profiles; profile fields for the developer-image mechanism and selected action | P2 | migration path for existing users |
 | G7 | `idt collect --include-oslog` accepted as an alias | P2 | ✅ resolved — hidden alias of `--include-unified-logs` |
-| G8 | Instruments readiness row (replaces the DVT row) | P2 | readiness coverage |
+| G8 | Instruments readiness row (replaces the DVT row) | P2 | ✅ resolved — Readiness row “Instruments (xctrace)” from `xctrace list devices` (available / offline / not listed); the Instruments recording action waits for it |
 | G9 | Add current coordinate as a route waypoint | P3 | convenience |
 | G10 | Copy the findings register | P3 | convenience |
 | G11 | Keyboard shortcut reference (⌘/) and previous/next workspace (⌥⌘← / ⌥⌘→) | P3 | convenience |

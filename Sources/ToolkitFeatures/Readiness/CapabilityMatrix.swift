@@ -67,6 +67,7 @@ public enum CapabilityRow: String, CaseIterable, Sendable {
     case lockdownServices = "lockdown-services"
     case backupService = "backup-service"
     case webInspector = "web-inspector"
+    case instruments = "instruments"
     case simulatorRuntime = "simulator-runtime"
     case simulatorRunning = "simulator-running"
 
@@ -74,7 +75,7 @@ public enum CapabilityRow: String, CaseIterable, Sendable {
         switch self {
         case .host, .xcodeTools, .usbmux: return "This Mac"
         case .deviceConnection, .pairingTrust: return "Connection"
-        case .developerMode, .coreDevice, .developerServices: return "Developer readiness"
+        case .developerMode, .coreDevice, .developerServices, .instruments: return "Developer readiness"
         case .lockState, .lockdownServices, .backupService, .webInspector: return "Device services"
         case .simulatorRuntime, .simulatorRunning: return "Simulator"
         }
@@ -94,6 +95,7 @@ public enum CapabilityRow: String, CaseIterable, Sendable {
         case .lockdownServices: return "Logging and diagnostics services"
         case .backupService: return "Backup service"
         case .webInspector: return "Safari Web Inspector"
+        case .instruments: return "Instruments (xctrace)"
         case .simulatorRuntime: return "Simulator runtime installed"
         case .simulatorRunning: return "Simulator running"
         }
@@ -113,6 +115,7 @@ public enum CapabilityRow: String, CaseIterable, Sendable {
         case .lockdownServices: return "Unlock the device; if it was just restarted, unlock it once."
         case .backupService: return "Unlock the device and make sure no other backup (Finder) is running."
         case .webInspector: return "Only needed to list Safari and web view tabs. Turn on Settings › Apps › Safari › Advanced › Web Inspector (Settings › Safari › Advanced before iOS 18)."
+        case .instruments: return "Only needed for Instruments recordings. Keep the device unlocked with Developer Mode on; if Instruments still lists it as offline, open Xcode › Window › Devices and Simulators with the device connected and wait for Xcode to finish preparing it."
         case .simulatorRuntime: return "Install the simulator runtime in Xcode › Settings › Components."
         case .simulatorRunning: return "Start the simulator from the Simulator actions or from Xcode."
         }
@@ -120,8 +123,8 @@ public enum CapabilityRow: String, CaseIterable, Sendable {
 
     public static func rows(for kind: DeviceKind) -> [CapabilityRow] {
         switch kind {
-        case .physical: return [.host, .xcodeTools, .usbmux, .deviceConnection, .pairingTrust, .developerMode, .coreDevice, .developerServices, .lockState, .lockdownServices, .backupService, .webInspector]
-        case .simulator: return [.host, .xcodeTools, .simulatorRuntime, .simulatorRunning]
+        case .physical: return [.host, .xcodeTools, .usbmux, .deviceConnection, .pairingTrust, .developerMode, .coreDevice, .developerServices, .instruments, .lockState, .lockdownServices, .backupService, .webInspector]
+        case .simulator: return [.host, .xcodeTools, .simulatorRuntime, .simulatorRunning, .instruments]
         case .demo: return [.host]
         }
     }
@@ -202,20 +205,46 @@ public struct CapabilityProbe: Sendable {
             guard hasCoreDevice || tools.simctl.isAvailable else {
                 record(.simulatorRuntime, CapabilityRow.simulatorRuntime.result(.blocked, "Needs Xcode."))
                 record(.simulatorRunning, CapabilityRow.simulatorRunning.result(.blocked, "Needs Xcode."))
+                record(.instruments, CapabilityRow.instruments.result(.blocked, "Needs Xcode."))
                 break
             }
             let records = (try? await simulators.list()) ?? []
             guard let simulator = records.first(where: { $0.udid == target.udid }) else {
                 record(.simulatorRuntime, CapabilityRow.simulatorRuntime.result(.unavailable, "The simulator no longer exists."))
                 record(.simulatorRunning, CapabilityRow.simulatorRunning.result(.blocked, "The simulator no longer exists."))
+                record(.instruments, CapabilityRow.instruments.result(.blocked, "The simulator no longer exists."))
                 break
             }
             record(.simulatorRuntime, simulator.isAvailable ? CapabilityRow.simulatorRuntime.result(.ready, simulator.runtime?.name ?? simulator.runtimeIdentifier) : CapabilityRow.simulatorRuntime.result(.unavailable, simulator.availabilityError ?? "The runtime is not installed."))
             record(.simulatorRunning, simulator.state == .booted ? CapabilityRow.simulatorRunning.result(.ready, "Running") : CapabilityRow.simulatorRunning.result(.attention, "The simulator is \(simulator.state.label.lowercased())."))
+            record(.instruments, await instrumentsResult(for: target, tools: tools))
         case .physical:
             await probePhysical(device, hasCoreDevice: hasCoreDevice, record: record)
+            record(.instruments, await instrumentsResult(for: target, tools: tools))
         }
         return ordered(results, device.kind)
+    }
+
+    /// Whether Instruments lists the device, from `xctrace list devices` (read-only).
+    func instrumentsResult(for target: DeviceTarget, tools: DeveloperToolsStatus) async -> CapabilityResult {
+        let row = CapabilityRow.instruments
+        guard tools.xctrace.isAvailable else { return row.result(.blocked, "Needs Xcode.") }
+        do {
+            let result = try await runner.run(try InstrumentsDeviceList.request())
+            guard result.succeeded else {
+                return row.result(.unavailable, "Instruments could not list devices.", evidence: result.standardErrorText.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            switch InstrumentsDeviceList.presence(of: target.udid, in: result.standardOutputText) {
+            case .available:
+                return row.result(.ready, target.kind == .simulator ? "Instruments lists this simulator." : "Instruments lists the device as available.")
+            case .offline:
+                return row.result(.attention, "Instruments lists the device as offline.")
+            case .notListed:
+                return row.result(.attention, "Instruments does not list the device.")
+            }
+        } catch {
+            return row.result(.unavailable, (error as? ToolkitError)?.message ?? error.localizedDescription)
+        }
     }
 
     private func probePhysical(_ device: Device, hasCoreDevice: Bool, record: (CapabilityRow, CapabilityResult) -> Void) async {
@@ -373,6 +402,7 @@ public enum ActionReadiness: Sendable, Equatable {
             case .developerServices: id = CapabilityRow.developerServices.rawValue
             case .simulatorRunning: id = CapabilityRow.simulatorRunning.rawValue
             case .xcode: id = CapabilityRow.xcodeTools.rawValue
+            case .instruments: id = CapabilityRow.instruments.rawValue
             }
             guard let result = table[id] else {
                 if device?.kind == .simulator && [.trustedDevice, .lockdownConnection, .coreDevice, .developerMode, .developerServices].contains(requirement) { continue }
