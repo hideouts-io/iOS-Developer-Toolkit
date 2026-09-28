@@ -142,6 +142,7 @@ struct EvidenceView: View {
                     Toggle("Screenshot", isOn: $evidence.options.includeScreenshot)
                     Toggle("Copy crash reports", isOn: $evidence.options.includeCrashReports)
                     Text("Logs, packet captures, screenshots, and crash reports can contain private information.").font(.caption).foregroundStyle(.secondary)
+                    ReadinessStatusView(requirements: evidence.options.requirements, device: device, subject: "this collection")
                 }
                 HStack {
                     Button("Start Collection…") {

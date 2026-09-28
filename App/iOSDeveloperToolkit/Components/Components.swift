@@ -410,3 +410,41 @@ struct RawOutputView: View {
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
     }
 }
+
+/// What the latest Readiness Check says about a set of prerequisites, with a way to run or open it.
+struct ReadinessStatusView: View {
+    @Environment(AppModel.self) private var model
+    let requirements: [ActionRequirement]
+    let device: Device?
+    /// “this action”, “this collection”.
+    let subject: String
+
+    var body: some View {
+        switch ActionReadiness.evaluate(requirements: requirements, results: model.readiness(for: device), device: device) {
+        case .ready:
+            Label("Readiness Check: everything \(subject) needs is ready.", systemImage: "checkmark.circle").foregroundStyle(.green).font(.callout)
+        case .notTested:
+            HStack {
+                Label("Not checked yet for this device.", systemImage: "circle.dashed").font(.callout).foregroundStyle(.secondary)
+                runButton("Run Readiness Check")
+            }
+        case .needsAttention(let problems):
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(problems, id: \.self) { Label($0, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange) }
+                HStack {
+                    runButton("Check Again")
+                    Button("Open Readiness Check") { model.workspace = .readiness }.controlSize(.small)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func runButton(_ title: String) -> some View {
+        if let device, device.kind != .demo {
+            Button(title) { Task { await model.runReadiness(for: device) } }
+                .controlSize(.small)
+                .disabled(model.operations.contains { $0.title == "Readiness Check" })
+        }
+    }
+}

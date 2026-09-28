@@ -26,6 +26,12 @@ public struct CollectionOptions: Codable, Sendable, Hashable {
         return self
     }
 
+    /// What a collection with these options needs: a trusted connection, and Xcode's device
+    /// service for the screenshot.
+    public var requirements: [ActionRequirement] {
+        [.trustedDevice] + (includeScreenshot ? [.coreDevice] : [])
+    }
+
     var hasStreams: Bool { durationSeconds > 0 && (includeClassicSyslog || includeUnifiedLogs || includePacketCapture) }
 }
 

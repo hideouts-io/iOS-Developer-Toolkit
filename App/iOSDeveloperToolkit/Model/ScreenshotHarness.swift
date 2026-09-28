@@ -8,7 +8,7 @@ import ToolkitFeatures
 ///     "iOS Developer Toolkit" -capture-screenshots <folder>
 ///         [-demo-mode] [-ui-testing] [-window-size WxH] [-only overview,apps]
 ///         [-populate-demo YES] [-select-booted-simulator YES] [-start-simulator-log YES]
-///         [-scroll-fraction 0.0–1.0] [-show-sheet reconnect|shortcuts] [-select-physical-device YES]
+///         [-scroll-fraction 0.0–1.0] [-show-sheet reconnect|shortcuts|advanced] [-select-physical-device YES]
 ///
 /// Every flag takes a value: AppKit reads arguments as `-key value` pairs, and a lone flag would
 /// swallow the next argument, leaving a stray path that macOS treats as a file to open (which
@@ -132,6 +132,7 @@ enum ScreenshotHarness {
         switch name {
         case "reconnect": return Binding(get: { model.isReconnectGuidePresented }, set: { model.isReconnectGuidePresented = $0 })
         case "shortcuts": return Binding(get: { model.isShortcutReferencePresented }, set: { model.isShortcutReferencePresented = $0 })
+        case "advanced": return Binding(get: { model.isAdvancedModePresented }, set: { model.isAdvancedModePresented = $0 })
         default: return nil
         }
     }

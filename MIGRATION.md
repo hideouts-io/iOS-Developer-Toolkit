@@ -401,15 +401,15 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 |---|---|---|---|
 | Device & DDI | device info, Developer Mode check and guide, DDI source choice, mount/unmount, list images, CoreDevice details, RVI list, open project/artifact | Device page, Developer image card (§8), handoffs | = |
 | Connection | banner, **Reconnect & Retry…** (guided 30-second reconnect window) | sidebar summary, Connection diagnostics, Next-step card, **Device › Reconnect a Device…** (guided 30-second window that watches discovery) | = (**G5 resolved**) |
-| Capability Matrix | 11 rows incl. `rsd-tunnel`, `dvt`, `webinspector`; copy report; per-preset and per-case readiness buttons | Readiness Check (16 rows for devices; tunnel state in the CoreDevice row; “Safari Web Inspector” and “Instruments (xctrace)” rows); copy report | ◐ → **G3**, **G8** resolved; **G12** (readiness shortcuts) |
+| Capability Matrix | 11 rows incl. `rsd-tunnel`, `dvt`, `webinspector`; copy report; per-preset and per-case readiness buttons | Readiness Check (16 rows for devices; tunnel state in the CoreDevice row; “Safari Web Inspector” and “Instruments (xctrace)” rows); copy report; readiness status with Run / Check Again / Open Readiness Check on every action and on Evidence Capture | = (**G3**, **G8**, **G12** resolved) |
 | Compatibility history | table, refresh, JSON/Markdown export with preview | Readiness history and exports | = |
 | Location Lab | coordinates, map links, map, nudge, saved places, routes (speed presets, interval, traversals), **add current coordinate as waypoint**, GPX (ignore timing, randomness), evidence log, clear on stop | all, including **Add Current Coordinate** on the Route card | = (**G9 resolved**) |
 | Live Logs | streams, reference, regex/case filter, pause, follow, stop, findings, **findings register with Copy**, copy visible, save raw/filtered, evidence bundle, pop-out | all, including **Copy Register** in the Findings sheet | = (**G10 resolved**) |
-| Command Center / Man Pages / Drift | presets, console, prerequisites, risk badge, man pages, **use man-page command in console**, drift check | Actions, Advanced Mode, Tool Reference, Toolchain Check | ◐ → **G12** |
+| Command Center / Man Pages / Drift | presets, console, prerequisites, risk badge, man pages, **use man-page command in console**, drift check | Actions, Advanced Mode, Tool Reference (**Use in Advanced Mode** fills in the `devicectl` command; nothing runs until Run), Toolchain Check | = (**G12 resolved**) |
 | Installed Apps | table, filter, sizes, copy bundle ID, uninstall, stop | Apps page | = |
 | Backup | encryption check/enable, destination, require encryption, full, progress, stop, open folder | Backup page | = |
 | Sideload IPA | choose, inspect, developer package, install, stop | Install App | = |
-| Evidence | guided case, authorization, streams, screenshot, crash pull, open last case, readiness | Evidence Capture | = (readiness shortcut: **G12**) |
+| Evidence | guided case, authorization, streams, screenshot, crash pull, open last case, readiness | Evidence Capture, with the collection's own readiness status (screenshot adds Xcode's device service) | = |
 | MVT | executable, backup, IOC files, output, fast, hashes, network, acknowledgements, guides | External Tools · MVT | = |
 | UFADE | checkout, Python, output, validation incl. **developer-image submodule status**, guides, launch | External Tools · UFADE | ◐ → **G13** |
 | Ecosystem tools | go-ios, ipsw, idb | idb Companion | = (go-ios/ipsw removed by request) |
@@ -441,5 +441,5 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | G9 | Add current coordinate as a route waypoint | P3 | ✅ resolved — Location Lab › Route › Add Current Coordinate |
 | G10 | Copy the findings register | P3 | ✅ resolved — Live Logs › Findings › Copy Register (Markdown, same as the evidence bundle's report) |
 | G11 | Keyboard shortcut reference (⌘/) and previous/next workspace (⌥⌘← / ⌥⌘→) | P3 | ✅ resolved — Help › Keyboard Shortcuts; View › Previous/Next Workspace |
-| G12 | “Use in Advanced Mode” from Tool Reference; readiness shortcuts on Actions and Evidence | P3 | convenience |
+| G12 | “Use in Advanced Mode” from Tool Reference; readiness shortcuts on Actions and Evidence | P3 | ✅ resolved |
 | G13 | UFADE developer-image submodule status | P3 | diagnostic detail |

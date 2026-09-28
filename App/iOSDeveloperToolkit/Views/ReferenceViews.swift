@@ -94,6 +94,10 @@ struct ToolReferenceView: View {
                     HStack {
                         Text(selection.title).font(.title3.monospaced())
                         Spacer()
+                        if let command = ToolReference.advancedModeCommand(for: selection) {
+                            Button("Use in Advanced Mode") { model.openAdvancedMode(command: command) }
+                                .help("Open Advanced Mode with “devicectl \(command)” filled in. Nothing runs until you press Run.")
+                        }
                         Button("Copy") { Pasteboard.copy(helpText[selection] ?? "") }
                     }
                     if loading { ProgressView() }

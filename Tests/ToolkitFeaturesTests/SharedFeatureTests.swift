@@ -312,3 +312,29 @@ struct KeyboardNavigationTests {
         }
     }
 }
+
+@Suite("Readiness shortcuts and Advanced Mode")
+struct ReadinessShortcutTests {
+    @Test func evidenceCollectionsHaveTheirOwnPrerequisites() {
+        let device = Device(kind: .physical, udid: "u", name: "Phone", transports: [.usb], sources: [.usbmux])
+        var options = CollectionOptions()
+        #expect(options.requirements == [.trustedDevice])
+        options.includeScreenshot = true
+        #expect(options.requirements == [.trustedDevice, .coreDevice])
+        let trusted = CapabilityRow.pairingTrust.result(.ready, "Trusted")
+        let noXcode = CapabilityRow.coreDevice.result(.blocked, "Needs Xcode.")
+        #expect(ActionReadiness.evaluate(requirements: CollectionOptions().requirements, results: [trusted, noXcode], device: device) == .ready)
+        #expect(ActionReadiness.evaluate(requirements: options.requirements, results: [trusted, noXcode], device: device) == .needsAttention(["Xcode device service (CoreDevice): Needs Xcode."]))
+        #expect(ActionReadiness.evaluate(requirements: options.requirements, results: [], device: device) == .notTested)
+    }
+
+    @Test func toolReferenceTopicsFillInAdvancedMode() throws {
+        #expect(ToolReference.advancedModeCommand(for: .init(tool: .devicectl, path: ["device", "info", "apps"])) == "device info apps")
+        #expect(ToolReference.advancedModeCommand(for: .init(tool: .devicectl, path: [])) == nil)
+        #expect(ToolReference.advancedModeCommand(for: .init(tool: .simctl, path: ["list"])) == nil)
+        // What is filled in is still checked by Advanced Mode's own policy before anything runs.
+        let target = DeviceTarget(kind: .physical, udid: "00008150-000B33334444002E", name: "Phone", osVersion: "26.0", usbmuxDeviceID: 1, coreDeviceIdentifier: nil, transport: .usb)
+        let prepared = try ActionExecutor.prepareAdvanced(try #require(ToolReference.advancedModeCommand(for: .init(tool: .devicectl, path: ["device", "info", "apps"]))), target: target)
+        #expect(prepared.risk == .readOnly)
+    }
+}

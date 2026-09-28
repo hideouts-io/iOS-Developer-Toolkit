@@ -394,11 +394,16 @@ public enum ActionReadiness: Sendable, Equatable {
     case needsAttention([String])
 
     public static func evaluate(_ action: ActionDescriptor, results: [CapabilityResult], device: Device?) -> ActionReadiness {
+        evaluate(requirements: action.requirements, results: results, device: device)
+    }
+
+    /// Whether a set of prerequisites (an action's, or an evidence collection's) is met.
+    public static func evaluate(requirements: [ActionRequirement], results: [CapabilityResult], device: Device?) -> ActionReadiness {
         guard device != nil else { return .notTested }
         let table = Dictionary(results.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         var problems: [String] = []
         var untested = false
-        for requirement in action.requirements {
+        for requirement in requirements {
             let id: String
             switch requirement {
             case .trustedDevice: id = CapabilityRow.pairingTrust.rawValue

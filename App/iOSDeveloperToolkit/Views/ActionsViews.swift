@@ -6,7 +6,6 @@ import ToolkitFeatures
 struct ActionsView: View {
     @Environment(AppModel.self) private var model
     @State private var search = ""
-    @State private var showsAdvanced = false
 
     private var actions: [ActionDescriptor] {
         ActionCatalog.all.filter { action in
@@ -38,7 +37,7 @@ struct ActionsView: View {
                 }
                 .accessibilityIdentifier("actions-list")
                 Button {
-                    showsAdvanced = true
+                    model.openAdvancedMode()
                 } label: {
                     Label("Advanced Mode (devicectl)…", systemImage: "terminal")
                 }
@@ -64,9 +63,7 @@ struct ActionsView: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .sheet(isPresented: $showsAdvanced) {
-            AdvancedModeView()
-        }
+
     }
 }
 
@@ -126,7 +123,7 @@ struct ActionDetailView: View {
                 if !action.requirements.isEmpty {
                     InfoRow("Needs", action.requirements.map(\.label).joined(separator: " · "))
                 }
-                readiness(device)
+                ReadinessStatusView(requirements: action.requirements, device: device, subject: "this action")
             }
             if !action.parameters.isEmpty {
                 Card(title: "Details", systemImage: "slider.horizontal.3") {
@@ -155,25 +152,6 @@ struct ActionDetailView: View {
         }
         .sheet(item: $confirmation) { pending in
             ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: pending.commandPreview, onConfirm: pending.action)
-        }
-    }
-
-    @ViewBuilder
-    private func readiness(_ device: Device?) -> some View {
-        switch ActionReadiness.evaluate(action, results: model.readiness(for: device), device: device) {
-        case .ready:
-            Label("Readiness Check: everything this action needs is ready.", systemImage: "checkmark.circle").foregroundStyle(.green).font(.callout)
-        case .notTested:
-            HStack {
-                Label("Not checked yet for this device.", systemImage: "circle.dashed").font(.callout).foregroundStyle(.secondary)
-                if let device, device.kind != .demo {
-                    Button("Run Readiness Check") { Task { await model.runReadiness(for: device) } }.controlSize(.small)
-                }
-            }
-        case .needsAttention(let problems):
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(problems, id: \.self) { Label($0, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange) }
-            }
         }
     }
 
@@ -301,7 +279,7 @@ struct ActionResultView: View {
 struct AdvancedModeView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var text = "device info details"
+    @State private var text = ""
     @State private var output = ""
     @State private var confirmation: PendingConfirmation?
     @State private var isRunning = false
@@ -340,6 +318,8 @@ struct AdvancedModeView: View {
         }
         .padding(20)
         .frame(width: 720, height: 520)
+        .onAppear { text = model.advancedModeText }
+        .onChange(of: text) { _, value in model.advancedModeText = value }
         .sheet(item: $confirmation) { pending in
             ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: pending.commandPreview, onConfirm: pending.action)
         }

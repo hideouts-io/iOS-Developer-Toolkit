@@ -98,6 +98,9 @@ final class AppModel {
     var isDeveloperModeGuidePresented = false
     var isReconnectGuidePresented = false
     var isShortcutReferencePresented = false
+    var isAdvancedModePresented = false
+    /// The Advanced Mode command line (kept between openings; Tool Reference can fill it in).
+    var advancedModeText = "device info details"
     var isRefreshing = false
     var statusMessage: String?
 
@@ -271,6 +274,12 @@ final class AppModel {
         let record = OperationRecord(title: title, workspace: workspace.title, target: target?.shortLabel ?? "This Mac", transport: transport, argv: argv, startedAt: started, finishedAt: finished, outcome: outcome, errorMessage: error, outputPaths: outputPaths)
         let journal = self.journal
         Task { await journal.append(record) }
+    }
+
+    /// Opens Advanced Mode, optionally with a command line filled in (never run automatically).
+    func openAdvancedMode(command: String? = nil) {
+        if let command { advancedModeText = command }
+        isAdvancedModePresented = true
     }
 
     /// Shows one action on the Actions page, widening the category filter if it hides the action.

@@ -40,6 +40,9 @@ struct ContentView: View {
         .sheet(isPresented: $model.isShortcutReferencePresented) {
             ShortcutReferenceView()
         }
+        .sheet(isPresented: $model.isAdvancedModePresented) {
+            AdvancedModeView()
+        }
         .overlay(alignment: .bottom) {
             if let message = model.statusMessage {
                 StatusToast(message: message) { model.statusMessage = nil }

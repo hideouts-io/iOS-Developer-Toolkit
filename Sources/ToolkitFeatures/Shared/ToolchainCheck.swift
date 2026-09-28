@@ -145,6 +145,13 @@ public enum ToolReference {
         public var title: String { path.isEmpty ? tool.rawValue : "\(tool.rawValue) \(path.joined(separator: " "))" }
     }
 
+    /// The Advanced Mode command line for a `devicectl` topic (Advanced Mode runs only
+    /// `devicectl`); `nil` for other tools and for the tool itself.
+    public static func advancedModeCommand(for topic: Topic) -> String? {
+        guard topic.tool == .devicectl, !topic.path.isEmpty else { return nil }
+        return topic.path.joined(separator: " ")
+    }
+
     public static let roots: [Topic] = [
         Topic(tool: .devicectl, path: []),
         Topic(tool: .simctl, path: []),
