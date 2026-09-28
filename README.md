@@ -352,6 +352,9 @@ setting carries over.
   [physical-device test protocol](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md).
 - Not available in 1.0: the developer-service file listing. Details and alternatives are in [MIGRATION.md](MIGRATION.md#6-known-limitations-and-features-not-reproduced).
 - Release builds are ad-hoc signed and not notarized.
+- Release builds are universal (Apple silicon and Intel). If the Intel half is run under Rosetta on
+  an Apple silicon Mac, macOS warns that the app includes a component that will not open in
+  macOS 28; the Apple silicon half, which runs by default, is not affected.
 
 ## Contributing, support, and license
 

@@ -287,7 +287,8 @@ that changes the device was run: no mounting, location, installation, or backup.
 
 ### 6.3 Behaviour differences from 0.3.x
 
-- Release builds are universal instead of separate Apple silicon and Intel downloads; minimum
+- Release builds are universal instead of separate Apple silicon and Intel downloads (kept after
+  macOS 27 began warning that Intel code run under Rosetta will not open in macOS 28); minimum
   macOS is 14 (was 13).
 - Guided actions replace the 49 raw `pymobiledevice3` presets; Advanced Mode runs `devicectl`
   instead of arbitrary `pymobiledevice3` subcommands.
