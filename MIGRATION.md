@@ -153,21 +153,25 @@ Swift device discovery (usbmuxd + CoreDevice + simctl), so nothing is lost.
 
 ## 5. Test results
 
-Environment: MacBook Pro (Apple silicon), macOS 27.0, Xcode 27.0 (Swift 6.4). No physical iPhone
-or iPad was connected during the migration.
+Environment: MacBook Pro (Apple silicon), macOS 27.0, Xcode 27.0 (Swift 6.4). One iPhone
+(iPhone 17 Pro, iOS 26.3.1, locked, Developer Mode off) was connected on 2026-09-27 for the
+read-only checks in §5.4; nothing that changes a device was run on it.
 
 ### 5.1 Automated tests
 
 | Suite | Tests | What it exercises | Result |
 |---|---:|---|---|
 | `ToolkitCoreTests` | 30 | `CommandRunner` (argument vectors, timeouts, cancellation, output draining, minimal environment), `ToolkitError`, secure file I/O (owner-only, no overwrite, path traversal), sanitizer, hashing, journal, ZIP writer | ✅ pass |
-| `DeviceKitTests` | 76 | usbmuxd framing and `Listen` events, developer images (image mounter, image library, TSS request, state evaluation, personalized and legacy mount/unmount), pairing-record handling, lockdown TLS with certificate pinning and UDID check, the lockdown service clients (syslog, os_trace, pcapd, MobileBackup2, diagnostics, installation proxy, AFC, image mounter, springboard) against an in-process **fake usbmuxd + lockdownd device**; CoreDevice JSON parsing; `simctl` parsing | ✅ pass |
-| `ToolkitFeaturesTests` | 55 | Location Lab, GPX, location mechanism routing and legacy-service message encoding, provisioning profiles (misagent) and packet capture through the action executor, IPA inspection (fixtures incl. malicious archives), live-log capture/findings/export, action catalog and safety policy, actions and readiness against the fake device, evidence collection, workspace profiles, support bundle, external-tool validation | ✅ pass |
+| `DeviceKitTests` | 85 | usbmuxd framing and `Listen` events, developer images (image mounter, image library, TSS request, state evaluation, personalized and legacy mount/unmount), pairing-record handling, lockdown TLS with certificate pinning and UDID check, the lockdown service clients (syslog, os_trace incl. the process list, pcapd, MobileBackup2, diagnostics, installation proxy, AFC, image mounter, springboard, MCInstall, Web Inspector, Bluetooth PacketLogger) against an in-process **fake usbmuxd + lockdownd device**; CoreDevice JSON parsing; `simctl` parsing | ✅ pass |
+| `ToolkitFeaturesTests` | 72 | Location Lab, GPX, route waypoints, location mechanism routing and legacy-service message encoding, provisioning profiles (misagent) and packet capture through the action executor, IPA inspection (fixtures incl. malicious archives), live-log capture/findings/register/export, action catalog and safety policy, actions and readiness against the fake device (incl. the Web Inspector and Instruments rows and slow Xcode tools), evidence collection and its prerequisites, workspace profiles incl. 0.3.x import, guided reconnect, keyboard navigation, support bundle, external-tool validation (incl. UFADE's submodule) | ✅ pass |
 | Real simulator (opt-in, `IDT_SIMULATOR_TESTS=1`) | 1 | Boots an iOS 26.3.1 iPhone simulator; waits for boot to complete; sets, routes, and clears location; screenshot; app list; live unified log capture with hash; launches an app; Open URL action; readiness; compiles, installs, lists, launches, and uninstalls a minimal simulator app | ✅ pass locally (about 24 s) |
+| Real device (opt-in, `IDT_DEVICE_TESTS=1`) | 4 | Read-only protocol checks against a connected iPhone or iPad (§5.4) | ✅ pass on one iPhone (2026-09-27) |
 | XCUITest smoke tests (`App/UITests`) | 8 | Window size, Demo Mode labelling, every workspace, disabled demo actions, command palette, Location Lab validation, minimum size, developer-image card | ✅ the original 7 pass locally (2026-09-27, run by the maintainer). The first run failed `testDemoActionsAreBlockedWithExplanation`: each Actions row exposed its identifier on three child elements, so the click was ambiguous (and VoiceOver read three items). Rows are now single accessibility elements; the three affected tests were re-run and pass. All 8 (including the developer-image card test added in §8) pass in CI on Xcode 26.6 (PR #13). |
 
-Totals: 161 package tests pass with `-warnings-as-errors`; the app and UI-test targets build with
-`SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` and zero warnings.
+Totals: 187 package tests pass with `-warnings-as-errors` (6 opt-in tests skipped); the app and
+UI-test targets build with `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` and zero warnings. The UI added after
+the parity audit (reconnect guide, shortcut reference, Advanced Mode prefill, readiness status,
+profile import) is verified through the screenshot harness and unit tests, not by XCUITests.
 
 ### 5.2 GUI verification
 
@@ -185,8 +189,8 @@ SBOM inside, and verified it again from the ZIP. The release build launched and 
 `idt` listed devices. After Rosetta 2 was installed (2026-09-27), the x86_64 slices were run under
 Rosetta: the release script's check ran the Intel `idt`; the Intel `idt` listed devices, found all
 27 Xcode routes, and reported developer-image status; the Intel app rendered all 14 pages at both
-window sizes without layout problems; and all 161 package tests pass when built for x86_64 and run
-with `arch -x86_64 xctest`. This is Rosetta on Apple silicon, not a real Intel Mac. `spctl`
+window sizes without layout problems; and all 187 package tests pass when built for x86_64 and run
+with `arch -x86_64 xctest` (re-run after the parity work). This is Rosetta on Apple silicon, not a real Intel Mac. `spctl`
 rejects the app, as expected for an app that is not notarized.
 
 ### 5.4 Physical devices
@@ -235,7 +239,8 @@ that changes the device was run: no mounting, location, installation, or backup.
 | Unified log review | ✅ subsystem `io.hideouts.iOSDeveloperToolkit` logs discovery, commands (start/finish, duration, status), and outcomes; errors seen were the tests' deliberate negative cases. Found and fixed: default command names could put a simulator UDID in a public field, and some error descriptions and operation titles (paths, app names) were public |
 | Default window on a 1280×800 display | ✅ first launch opens at 1180×700 including title bar and toolbar (minimum 900×612), within the ~1280×705 usable area below the menu bar with a bottom Dock |
 | README matches the app | ✅ menus, shortcuts, pages, labels, `idt` options and exit codes, file locations, and the with/without-Xcode table checked against the code; the no-Xcode column was checked against the implementation (native lockdown paths) |
-| Physical iPhone/iPad | ❌ **none connected** — discovery, trust, live logs, backup, packet capture, and multi-device handling are **untested on hardware** (§5.4) |
+| Physical iPhone/iPad | ◐ read-only protocol checks passed on one iPhone (§5.4); the app's pages, mounting, location, installation, backup, and multi-device handling are **untested on hardware** |
+| After the parity work (§9) | ✅ `swift test -Xswiftc -warnings-as-errors`: 187 pass; clean `xcodebuild … clean build-for-testing`: zero compiler warnings; `scripts/check-layout.sh`: 14 pages at both sizes; `scripts/build-release.sh`: passes; x86_64 tests under Rosetta: 187 pass; real simulator end-to-end: passes |
 
 ## 6. Known limitations and features not reproduced
 
@@ -252,7 +257,9 @@ that changes the device was run: no mounting, location, installation, or backup.
 - **Developer images** (§8): the image-mounter protocol and Apple personalization are verified
   against a stateful fake image mounter and a fake signing server, and the request is built from
   the real image Xcode installed on this Mac. No device has mounted an image through this code yet.
-- **Native lockdown services need physical-device verification.** usbmuxd, lockdown TLS, and all
+- **Native lockdown services need more physical-device verification.** The read-only services
+  answered correctly on one iPhone (§5.4); Web Inspector and Bluetooth logging were reached but
+  returned nothing (setting and profile not present). usbmuxd, lockdown TLS, and all
   service clients pass byte-level tests against the fake device, which reproduces Apple's framing
   (plist headers, TLS upgrade, DeviceLink, AFC packets, pcapd records, os_trace records) from
   public protocol documentation and prior implementations. Real devices can differ in details
@@ -267,12 +274,16 @@ that changes the device was run: no mounting, location, installation, or backup.
 - **CI** (PR #13, `macos-26`, Xcode 26.6 / Swift 6.3.3): the app build with the zero-warning check,
   all 8 UI tests, the layout check, and dependency review pass. Two fixes came out of the first
   runs: an array-type inference difference in Swift 6.3 (test code), and waiting for simulators to
-  finish booting (`simctl bootstatus -b`) before launching apps.
+  finish booting (`simctl bootstatus -b`) before launching apps. Later fixes: a race in the fake
+  device's TLS start (intermittent package-test timeout), `@main` in a file named `main.swift`
+  (rejected by Swift 6.3 in the universal release build; the file is now `IDT.swift`), and Xcode
+  tool probes that time out on a busy runner (now “did not answer in time”, not “Xcode missing”).
 - **Older Xcode:** Xcode 26.6 (the CI runner) lacks `devicectl device simulate location`, the
   screenshot `--destination` option, `device process openURL`, and `device profile list --type`.
   With Xcode 26, location simulation on iOS 17+ and those actions through Xcode's device service are
   unavailable; the app says so (“needs a newer Xcode”) and the Toolchain Check lists them. Native
-  replacements that avoid `devicectl` are tracked in §9 (G1, G2). The app is verified with Xcode 27.
+  replacements now avoid `devicectl` for the process list and configuration profiles over USB (§9
+  G1, G2). The app is verified with Xcode 27.
 
 ### 6.3 Behaviour differences from 0.3.x
 
@@ -296,6 +307,9 @@ that changes the device was run: no mounting, location, installation, or backup.
 - 2026-09-27 — Python implementation, packaging, and go-ios/ipsw references removed.
 - 2026-09-27 — Final verification (§5.5): fresh clone, clean builds, every screen rendered, no-Xcode / no-usbmuxd / no-device states, unified log review. Fixed on the way: UI-test concurrency warnings (and a CI check for them), Toolchain Check message without Xcode, identifiers in public log fields. Physical-device verification remains open.
 - 2026-09-27 — Developer-image (DDI) capability audited and restored natively (§8): detection, state model, personalized and legacy mounting, unmount, GUI, readiness, actions, and `idt ddi`. Physical-device verification remains open.
+
+- 2026-09-27 — Full parity audit against 0.3.4 (§9); gaps G1–G13 implemented, each with its own commit: native process list, configuration profiles, Safari/web view tabs, and Bluetooth capture; guided reconnect; 0.3.x profile import; `--include-oslog`; Instruments readiness row; route waypoint; findings register copy; shortcut reference and workspace stepping; readiness shortcuts and Tool Reference → Advanced Mode; UFADE submodule status.
+- 2026-09-27 — First hardware pass (read-only, one iPhone, §5.4) and opt-in `RealDeviceTests`.
 
 ## 8. Developer image (DDI) audit and restoration
 
@@ -364,6 +378,13 @@ presets, the 17 evidence snapshots and man-page routes in `catalog.py`, the 11 C
 rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours asserted in
 `tests/`. Classification: **=** equivalent · **🔁** replaced by a better Apple mechanism ·
 **◐** partial · **✗** missing · **—** intentionally excluded.
+
+**Outcome.** Every gap found (G1–G13, §9.4) is implemented. Intentionally excluded, with reasons
+in §6.1 and the rows below: the DVT file listing and DVT app-state notifications (Apple's private
+DTX protocol, reachable on iOS 17+ only through CoreDevice's tunnel), RemoteXPC service browsing
+(same tunnel), opening URLs through Web Inspector automation (needs a WebDriver session; Open URL
+uses CoreDevice instead), downloading developer images (images come from Xcode or a user folder),
+and 0.3.x's shortcuts for the tenth and later pages and focus (⌘0, ⇧⌘E/M/S, ⌘L, ⌘F).
 
 ### 9.1 Command Center presets (49)
 
