@@ -165,7 +165,11 @@ struct IPAInspectorTests {
         #expect(summary.isExpired)
         #expect(summary.includes(udid: "00008110001234560abc801e"))
         #expect(!summary.includes(udid: "00008110-FFFFFFFFFFFFFFFF"))
-        #expect(summary.developerCertificateCount == 1)
+        #expect(summary.allowedSignerCount == 1)
+        // `idt inspect-ipa --json` keeps the 1.0 key.
+        let json = try #require(try JSONSerialization.jsonObject(with: JSONOutput.encode(summary)) as? [String: Any])
+        #expect(json["developerCertificateCount"] as? Int == 1)
+        #expect(try JSONOutput.decoder().decode(ProvisioningProfileSummary.self, from: JSONOutput.encode(summary)) == summary)
     }
 
     @Test func zipWriterRoundTripsThroughReader() throws {

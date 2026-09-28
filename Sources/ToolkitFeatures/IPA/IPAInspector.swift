@@ -59,7 +59,7 @@ public struct IPAInspection: Sendable, Hashable, Codable {
             "Provisioned devices: \(provisioning.provisionedDevices.count)",
             "All devices: \(provisioning.provisionsAllDevices)",
             "Debugging allowed (get-task-allow): \(provisioning.getTaskAllow.map(String.init) ?? "not declared")",
-            "Developer certificates: \(provisioning.developerCertificateCount)",
+            "Developer certificates: \(provisioning.allowedSignerCount)",
             "",
             "Assessment: \(installabilityExplanation)",
         ].joined(separator: "\n")

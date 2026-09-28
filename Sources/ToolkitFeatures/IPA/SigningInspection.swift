@@ -19,11 +19,20 @@ public struct ProvisioningProfileSummary: Sendable, Hashable, Codable {
     public var provisionedDevices: [String]
     public var provisionsAllDevices: Bool
     public var getTaskAllow: Bool?
-    public var developerCertificateCount: Int
+    /// How many developer certificates the profile allows to sign (`DeveloperCertificates`). Only a
+    /// count; the certificates themselves are not kept.
+    public var allowedSignerCount: Int
     public var signatureVerified: Bool?
     public var detail: String
 
-    public static let absent = ProvisioningProfileSummary(status: .absent, name: nil, uuid: nil, teamIdentifiers: [], teamName: nil, applicationIdentifier: nil, creationDate: nil, expirationDate: nil, provisionedDevices: [], provisionsAllDevices: false, getTaskAllow: nil, developerCertificateCount: 0, signatureVerified: nil, detail: "The package has no embedded provisioning profile.")
+    enum CodingKeys: String, CodingKey {
+        case status, name, uuid, teamIdentifiers, teamName, applicationIdentifier, creationDate, expirationDate
+        case provisionedDevices, provisionsAllDevices, getTaskAllow, signatureVerified, detail
+        /// The JSON key is unchanged so `idt inspect-ipa --json` output stays compatible.
+        case allowedSignerCount = "developerCertificateCount"
+    }
+
+    public static let absent = ProvisioningProfileSummary(status: .absent, name: nil, uuid: nil, teamIdentifiers: [], teamName: nil, applicationIdentifier: nil, creationDate: nil, expirationDate: nil, provisionedDevices: [], provisionsAllDevices: false, getTaskAllow: nil, allowedSignerCount: 0, signatureVerified: nil, detail: "The package has no embedded provisioning profile.")
 
     public var isExpired: Bool {
         guard let expirationDate else { return false }
@@ -98,7 +107,7 @@ public enum ProvisioningProfileDecoder {
             provisionedDevices: plist["ProvisionedDevices"]?.arrayValue?.compactMap(\.stringValue) ?? [],
             provisionsAllDevices: plist["ProvisionsAllDevices"]?.boolValue ?? false,
             getTaskAllow: entitlements["get-task-allow"]?.boolValue,
-            developerCertificateCount: plist["DeveloperCertificates"]?.arrayValue?.count ?? 0,
+            allowedSignerCount: plist["DeveloperCertificates"]?.arrayValue?.count ?? 0,
             signatureVerified: signatureVerified,
             detail: "Decoded with Security.framework (CMS)."
         )
