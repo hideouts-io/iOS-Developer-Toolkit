@@ -8,7 +8,7 @@ import ToolkitFeatures
 ///     "iOS Developer Toolkit" -capture-screenshots <folder>
 ///         [-demo-mode] [-ui-testing] [-window-size WxH] [-only overview,apps]
 ///         [-populate-demo YES] [-select-booted-simulator YES] [-start-simulator-log YES]
-///         [-scroll-fraction 0.0–1.0]
+///         [-scroll-fraction 0.0–1.0] [-show-sheet reconnect] [-select-physical-device YES]
 ///
 /// Every flag takes a value: AppKit reads arguments as `-key value` pairs, and a lone flag would
 /// swallow the next argument, leaving a stray path that macOS treats as a file to open (which
@@ -44,6 +44,9 @@ enum ScreenshotHarness {
             try? await Task.sleep(for: .seconds(120))
             try? "Timed out".write(to: folder.appendingPathComponent("TIMEOUT"), atomically: true, encoding: .utf8)
             NSApp.terminate(nil)
+            // A presented sheet can block termination; never leave the harness running.
+            try? await Task.sleep(for: .seconds(5))
+            exit(3)
         }
 
         Task { @MainActor in
@@ -63,6 +66,9 @@ enum ScreenshotHarness {
             }
             if value("-select-booted-simulator") == "YES" {
                 await selectBootedSimulator(model, startLog: value("-start-simulator-log") == "YES")
+            }
+            if value("-select-physical-device") == "YES" {
+                await selectPhysicalDevice(model)
             }
             var report = [
                 "initial frame: \(window.frame)",
@@ -85,10 +91,24 @@ enum ScreenshotHarness {
                 report.append("\(workspace.rawValue): window \(window.frame.size) sidebar \(sidebarWidth)\(sidebarWidth < 190 ? " SQUEEZED" : "")\(overflow)")
                 if value("-dump-views") == "YES" { report.append(dump(window.contentView, depth: 0)) }
             }
+            if value("-show-sheet") == "reconnect" {
+                model.isReconnectGuidePresented = true
+                try? await Task.sleep(for: .milliseconds(900))
+                if let sheet = window.attachedSheet {
+                    render(sheet, to: folder.appendingPathComponent("sheet-reconnect.png"))
+                    report.append("sheet-reconnect: \(sheet.frame.size)")
+                } else {
+                    report.append("sheet-reconnect: not shown")
+                }
+                model.isReconnectGuidePresented = false
+                try? await Task.sleep(for: .milliseconds(500))
+            }
             try? report.joined(separator: "\n").write(to: folder.appendingPathComponent("window-geometry.txt"), atomically: true, encoding: .utf8)
             model.logs.stopAll()
             try? await Task.sleep(for: .milliseconds(300))
             NSApp.terminate(nil)
+            try? await Task.sleep(for: .seconds(5))
+            exit(0)
         }
     }
 
@@ -104,6 +124,18 @@ enum ScreenshotHarness {
             case .lockState: return row.result(.attention, "Locked — unlock the device to continue (demo data).")
             default: return row.result(.ready, "Ready (demo data).")
             }
+        }
+    }
+
+    /// Selects the first physical device connected by USB (waits up to 30 seconds for discovery).
+    static func selectPhysicalDevice(_ model: AppModel) async {
+        for _ in 0..<30 {
+            if let device = model.physicalDevices.first(where: { $0.kind == .physical && $0.transports.contains(.usb) }) {
+                model.selectedDeviceID = device.id
+                try? await Task.sleep(for: .seconds(3))
+                return
+            }
+            try? await Task.sleep(for: .seconds(1))
         }
     }
 

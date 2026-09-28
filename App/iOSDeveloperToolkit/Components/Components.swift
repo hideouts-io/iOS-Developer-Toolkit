@@ -211,6 +211,7 @@ struct NoDeviceView: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Refresh Devices") { Task { await model.refreshDevices() } }
+                Button("Reconnect a Device…") { model.isReconnectGuidePresented = true }
                 Button("Use Demo Mode") { model.demoMode = true }
             }
         }

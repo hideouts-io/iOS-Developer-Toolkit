@@ -6,7 +6,7 @@
 |---|---|---|
 | Not in Finder either | USB / cable | Data-capable cable, direct port (no hub), device unlocked, **Allow accessory** approved on the Mac |
 | In Finder, not in the app | macOS device service | **Connection diagnostics** on the Device page. If the device service is not answering, restart the Mac — the app never restarts system services |
-| Listed, but “not trusted” | Pairing | Unlock, reconnect, tap **Trust**. If no prompt appears: *Settings › General › Transfer or Reset › Reset › Reset Location & Privacy* |
+| Listed, but “not trusted” | Pairing | Unlock, reconnect, tap **Trust** (**Device › Reconnect a Device…** walks through this and watches for the device for 30 seconds). If no prompt appears: *Settings › General › Transfer or Reset › Reset › Reset Location & Privacy* |
 | Developer features unavailable | Developer Mode | *Settings › Privacy & Security › Developer Mode*. If the switch is missing, connect the device to Xcode once |
 | “Needs Xcode” | Xcode | Install Xcode, open it once, and select it in *Xcode › Settings › Locations › Command Line Tools*. Run **Tool Reference › Toolchain Check** |
 | Developer image not mounted | Developer image | The **Developer image** card on the Device page names the problem and the fix. Keep the device unlocked and on USB; on iOS 17 and later keep the Mac online (Apple personalizes the image). If one route fails, try the other under **Options › Mount with** |

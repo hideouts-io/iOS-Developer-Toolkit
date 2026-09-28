@@ -361,6 +361,7 @@ struct DeviceDetailView: View {
                 InfoRow("Developer directory", tools.developerDirectory ?? "Not set", monospaced: true)
                 InfoRow("Xcode", tools.xcodeVersion ?? (tools.isCommandLineToolsOnly ? "Command Line Tools only" : "Not installed"))
             }
+            Button("Reconnect a Device…") { model.isReconnectGuidePresented = true }
             DisclosureGroup("Device not showing up?") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("1. Use a cable that carries data (some charging cables do not).")

@@ -152,3 +152,26 @@ struct SharedFeatureTests {
         #expect(LogStreamKind.available(for: demo.kind).isEmpty)
     }
 }
+
+@Suite("Guided reconnect")
+struct ReconnectGuideTests {
+    func device(_ name: String, kind: DeviceKind = .physical, transports: Set<DeviceTransport> = [.usb], pairing: PairingState) -> Device {
+        Device(kind: kind, udid: name, name: name, transports: transports, pairingState: pairing)
+    }
+
+    @Test func interpretsWhatDiscoverySees() {
+        #expect(ReconnectGuide.evaluate(devices: [], timeElapsed: false) == .waiting)
+        #expect(ReconnectGuide.evaluate(devices: [], timeElapsed: true) == .timedOut)
+        // Only USB-connected physical devices count; simulators and network-only devices do not.
+        #expect(ReconnectGuide.evaluate(devices: [device("Sim", kind: .simulator, transports: [.local], pairing: .notApplicable), device("Net", transports: [.network], pairing: .paired)], timeElapsed: true) == .timedOut)
+        #expect(ReconnectGuide.evaluate(devices: [device("Phone", pairing: .paired)], timeElapsed: false) == .connected(name: "Phone"))
+        #expect(ReconnectGuide.evaluate(devices: [device("Phone", pairing: .unpaired)], timeElapsed: false) == .awaitingTrust(name: "Phone"))
+        // Pairing not known yet: keep waiting until the window ends.
+        #expect(ReconnectGuide.evaluate(devices: [device("Phone", pairing: .unknown)], timeElapsed: false) == .waiting)
+        #expect(ReconnectGuide.evaluate(devices: [device("Phone", pairing: .unknown)], timeElapsed: true) == .awaitingTrust(name: "Phone"))
+        // A trusted device wins over an untrusted one.
+        #expect(ReconnectGuide.evaluate(devices: [device("A", pairing: .unpaired), device("B", pairing: .paired)], timeElapsed: false) == .connected(name: "B"))
+        #expect(ReconnectGuide.Outcome.timedOut.nextStep?.contains("restart the Mac") == true)
+        #expect(ReconnectGuide.boundary.contains("never uses sudo"))
+    }
+}

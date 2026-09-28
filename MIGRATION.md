@@ -382,7 +382,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | Area | Python | Swift | Class |
 |---|---|---|---|
 | Device & DDI | device info, Developer Mode check and guide, DDI source choice, mount/unmount, list images, CoreDevice details, RVI list, open project/artifact | Device page, Developer image card (§8), handoffs | = |
-| Connection | banner, **Reconnect & Retry…** (guided 30-second reconnect window) | sidebar summary, Connection diagnostics, Next-step card | ◐ → **G5** |
+| Connection | banner, **Reconnect & Retry…** (guided 30-second reconnect window) | sidebar summary, Connection diagnostics, Next-step card, **Device › Reconnect a Device…** (guided 30-second window that watches discovery) | = (**G5 resolved**) |
 | Capability Matrix | 11 rows incl. `rsd-tunnel`, `dvt`, `webinspector`; copy report; per-preset and per-case readiness buttons | Readiness Check (15 rows; tunnel state in the CoreDevice row); copy report | ◐ → **G3** (Web Inspector row), **G8** (Instruments row replacing DVT), **G12** (readiness shortcuts) |
 | Compatibility history | table, refresh, JSON/Markdown export with preview | Readiness history and exports | = |
 | Location Lab | coordinates, map links, map, nudge, saved places, routes (speed presets, interval, traversals), **add current coordinate as waypoint**, GPX (ignore timing, randomness), evidence log, clear on stop | all except the waypoint button | ◐ → **G9** |
@@ -405,7 +405,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 |---|---|---|
 | `ios-developer-collect` (all options) | `idt collect` — `--include-oslog` renamed `--include-unified-logs` | ◐ → **G7** (accept the old flag) |
 | `ios-ipa-inspect`, `ios-local-ddi` | `idt inspect-ipa`, `idt ddi` | = / 🔁 |
-| Evidence snapshots (17) | lockdown, images, diagnostics ×4, apps, provisioning, crashes, AFC root, CoreDevice details; **processes and configuration profiles only with Xcode**; cryptex list and DVT ×3 excluded (RemoteXPC/DTX) | ◐ → **G1**, **G2** |
+| Evidence snapshots (17) | lockdown, images, diagnostics ×4, apps, provisioning, crashes, AFC root, CoreDevice details; processes and configuration profiles (native over USB since G1/G2); cryptex list and DVT ×3 excluded (RemoteXPC/DTX) | = (**G1**, **G2** resolved) |
 | `tests/` behaviours | ported to Swift tests (see §5.1); packaging/runtime tests replaced by `scripts/build-release.sh` checks | = |
 
 ### 9.4 Gap list (priority order)
@@ -416,7 +416,7 @@ rows, every CLI option, workspace-profile fields, shortcuts, and the behaviours 
 | G2 | Native configuration profiles (`com.apple.mobile.MCInstall` `GetProfileList`) | P1 | ✅ resolved — no Xcode needed over USB (also avoids `profile list --type`, missing in Xcode 26) |
 | G3 | Safari/WebView tab listing (`com.apple.webinspector`) + Web Inspector readiness row | P1 | ✅ resolved — action “Safari and web view tabs”, Readiness row “Safari Web Inspector” |
 | G4 | Bluetooth HCI capture (`com.apple.bluetooth.BTPacketLogger`) to `.pklg` | P1 | ✅ resolved — action “Bluetooth capture” |
-| G5 | Guided reconnect | P2 | user-facing help in 0.3.x |
+| G5 | Guided reconnect | P2 | ✅ resolved — Device › Reconnect a Device…, also on the Connection diagnostics and No-device cards |
 | G6 | Import 0.3.x workspace profiles; profile fields for the developer-image mechanism and selected action | P2 | migration path for existing users |
 | G7 | `idt collect --include-oslog` accepted as an alias | P2 | existing scripts |
 | G8 | Instruments readiness row (replaces the DVT row) | P2 | readiness coverage |

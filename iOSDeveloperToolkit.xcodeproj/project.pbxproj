@@ -16,6 +16,7 @@
 		25D059CF99AA7F74E66147F4 /* SmokeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2095C064BD8BE67389318E84 /* SmokeUITests.swift */; };
 		26019A7B916688FEE3A23585 /* LogViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81EECBCB7D517436001EFF8 /* LogViews.swift */; };
 		296F9F5D4685AB10A7B27CA6 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 791078D9EF3EC6308839270F /* AppModel.swift */; };
+		42E12E11EB7BA75B9D50C3E8 /* ReconnectGuideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B26E835D20074A0489176A15 /* ReconnectGuideView.swift */; };
 		743B753A384188F88D118565 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6641462093807C7726C77E6 /* ContentView.swift */; };
 		74E2D8771554772F6F5085DB /* DeveloperImageModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A42E01F498D8AE9BAE52EA83 /* DeveloperImageModel.swift */; };
 		795941F1191B8EF4997DF250 /* AppsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF4B82A9EAB2FEBF4FBE2FA2 /* AppsViews.swift */; };
@@ -55,6 +56,7 @@
 		9FD5D4AAA78961F517FD87B2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A42E01F498D8AE9BAE52EA83 /* DeveloperImageModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperImageModel.swift; sourceTree = "<group>"; };
 		B1FF773D9D443C79240CC926 /* iOSDeveloperToolkitUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = iOSDeveloperToolkitUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B26E835D20074A0489176A15 /* ReconnectGuideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReconnectGuideView.swift; sourceTree = "<group>"; };
 		B37EBEC3A6576895CA18665A /* DataViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataViews.swift; sourceTree = "<group>"; };
 		B81EECBCB7D517436001EFF8 /* LogViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogViews.swift; sourceTree = "<group>"; };
 		C28F7F2B73F9F0983878D44D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -132,6 +134,7 @@
 				EC558873395BD2D10988B49F /* LocationViews.swift */,
 				B81EECBCB7D517436001EFF8 /* LogViews.swift */,
 				E7E525F882B8476846CFA326 /* ReadinessView.swift */,
+				B26E835D20074A0489176A15 /* ReconnectGuideView.swift */,
 				117839C38E19BA74C82D8382 /* ReferenceViews.swift */,
 			);
 			path = Views;
@@ -292,6 +295,7 @@
 				16410705637BF3C36BD60ADB /* LocationViews.swift in Sources */,
 				26019A7B916688FEE3A23585 /* LogViews.swift in Sources */,
 				0E51C7116150795B48ED38A0 /* ReadinessView.swift in Sources */,
+				42E12E11EB7BA75B9D50C3E8 /* ReconnectGuideView.swift in Sources */,
 				C11140FE6CD2D8612115AF8F /* ReferenceViews.swift in Sources */,
 				E0A3673F60ACD7FFF3801DFC /* ScreenshotHarness.swift in Sources */,
 				1623B3509BB855616EA203F0 /* iOSDeveloperToolkitApp.swift in Sources */,

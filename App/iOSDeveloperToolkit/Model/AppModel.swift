@@ -93,6 +93,7 @@ final class AppModel {
     var toolchainReport = ""
     var isCommandPalettePresented = false
     var isDeveloperModeGuidePresented = false
+    var isReconnectGuidePresented = false
     var isRefreshing = false
     var statusMessage: String?
 

@@ -34,6 +34,9 @@ struct ContentView: View {
         .sheet(isPresented: $model.isDeveloperModeGuidePresented) {
             DeveloperModeGuideView()
         }
+        .sheet(isPresented: $model.isReconnectGuidePresented) {
+            ReconnectGuideView()
+        }
         .overlay(alignment: .bottom) {
             if let message = model.statusMessage {
                 StatusToast(message: message) { model.statusMessage = nil }

@@ -101,6 +101,7 @@ struct ToolkitCommands: Commands {
             .keyboardShortcut("r", modifiers: [.command, .shift])
             .disabled(model.selectedDevice == nil)
             Divider()
+            Button("Reconnect a Device…") { model.isReconnectGuidePresented = true }
             Button("Developer Mode Guide") { model.isDeveloperModeGuidePresented = true }
             Toggle("Demo Mode", isOn: Binding(get: { model.demoMode }, set: { model.demoMode = $0 }))
         }
