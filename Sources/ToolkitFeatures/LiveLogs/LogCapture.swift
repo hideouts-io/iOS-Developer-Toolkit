@@ -198,6 +198,11 @@ public actor LogCapture {
     public var allFindings: [LiveLogFinding] { findings }
     public var isClosed: Bool { closed }
 
+    /// The findings register as it stands now: capture facts and every finding, as Markdown.
+    public var findingsRegister: String {
+        Self.renderReport(metadata: metadata, rawFilename: spoolURL.lastPathComponent, rawSHA256: metadata.rawSHA256, findings: findings)
+    }
+
     public func append(_ chunk: LogChunk) throws {
         guard !closed else { return }
         if !chunk.spoolBytes.isEmpty {

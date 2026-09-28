@@ -41,7 +41,14 @@ struct LiveLogTests {
         try await capture.setInvestigationReference("CASE-42")
         let finding = try LiveLogFinding.make(note: "Crash lead", selectedText: "SpringBoard: second ERROR", stream: .classic, target: target, rawBytesObserved: Int64(raw.count), filter: LogFilter(text: "error"), assessment: .lead, tags: ["crash"])
         try await capture.addFinding(finding)
+        // The register can be copied while the capture is still running.
+        let liveRegister = await capture.findingsRegister
+        #expect(liveRegister.contains("### Finding 1: Lead to correlate"))
+        #expect(liveRegister.contains("Crash lead"))
+        #expect(liveRegister.contains("Raw SHA-256: `not finalized at export`"))
+        #expect(liveRegister.contains("Investigation reference: CASE-42"))
         try await capture.finish(reason: "Stopped by user")
+        #expect(await capture.findingsRegister.contains("Raw SHA-256: `\(SecureFileIO.sha256(of: raw))`"))
         try await capture.finish(reason: "second call is ignored")
 
         let metadata = await capture.currentMetadata

@@ -175,7 +175,7 @@ struct LogSessionView: View {
             FindingSheet(session: session, selectedText: selection.sorted().compactMap { lines.indices.contains($0) ? lines[$0].rendered : nil }.joined(separator: "\n"))
         }
         .sheet(isPresented: $isReviewingFindings) {
-            FindingsReviewSheet(findings: session.findings)
+            FindingsReviewSheet(findings: session.findings, capture: session.capture)
         }
     }
 
@@ -301,6 +301,8 @@ struct FindingSheet: View {
 struct FindingsReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
     let findings: [LiveLogFinding]
+    let capture: LogCapture
+    @State private var copied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -319,6 +321,14 @@ struct FindingsReviewSheet: View {
             }
             .frame(minHeight: 240)
             HStack {
+                Button("Copy Register") {
+                    Task {
+                        Pasteboard.copy(await capture.findingsRegister)
+                        copied = true
+                    }
+                }
+                .help("Copy the capture facts and every finding as Markdown")
+                if copied { Text("Copied.").font(.callout).foregroundStyle(.secondary) }
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
