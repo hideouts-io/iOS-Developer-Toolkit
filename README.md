@@ -343,13 +343,15 @@ Version 1.0 is a complete rewrite of the earlier Python/PySide6 app (0.3.x), whi
 profiles exported by 0.3.x can be imported in **Settings › Profiles**; the preview explains how each
 setting carries over.
 
-### The Python app (0.x)
+### The Python app
 
-The Python/PySide6 app is still maintained, as a separate line: it is developed on the
-[`python`](https://github.com/hideouts-io/iOS-Developer-Toolkit/tree/python) branch and released as
-`v0.x` ([0.x releases](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases?q=v0.&expanded=true),
-with separate Apple silicon and Intel builds). It uses `pymobiledevice3` and Python; this app (1.x)
-needs neither. Workspace profiles move between them: 1.x imports profiles exported by 0.x.
+The Python/PySide6 app is still maintained, as a separate product:
+**iOS Developer Toolkit (Python)**, developed in
+[hideouts-io/iOS-Developer-Toolkit-Python](https://github.com/hideouts-io/iOS-Developer-Toolkit-Python).
+It uses `pymobiledevice3` and Python; this app needs neither. The two install side by side, and
+this app imports workspace profiles exported by the Python app. Its releases up to v0.3.4 remain
+on this repository's [releases page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases?q=v0.&expanded=true);
+later releases are published in its own repository.
 
 - The native lockdown services (logs, packet capture, backup, diagnostics, app installation over
   USB, developer-image checking and mounting including Apple personalization) are tested end to

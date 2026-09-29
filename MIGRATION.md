@@ -9,8 +9,9 @@ itself) · 🟡 migrated and tested against the protocol-accurate fake device or
 needs physical-device verification · 🔁 replaced by a different Apple-supported mechanism · ❌ not
 migrated (see §6) or removed
 
-> The Python app is not discontinued: it continues as the 0.x line on the `python` branch (see
-> the README). This document covers how its features map to the Swift app (1.x) on `main`.
+> The Python app is not discontinued: it continues as **iOS Developer Toolkit (Python)** in
+> [hideouts-io/iOS-Developer-Toolkit-Python](https://github.com/hideouts-io/iOS-Developer-Toolkit-Python).
+> This document covers how its features map to this Swift app.
 
 ## 1. Audit of the Python application (v0.3.4)
 
