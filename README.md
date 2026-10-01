@@ -1199,7 +1199,7 @@ Windows and Linux would require a separate host implementation or deliberately i
 - [`ostrace`](https://github.com/BerkayCaglar/ostrace) informed live-log interaction design; no GPL source is copied, imported, or linked into this MIT project.
 - [`LocationSimulator`](https://github.com/Schlaubischlump/LocationSimulator) informed the offline map/teleport workflow. Its GPL source is not copied or linked, and its public backend does not support iOS 17 or later.
 - [Natural Earth](https://www.naturalearthdata.com/) provides the public-domain 1:110m land geometry rendered into the bundled offline Location Lab map.
-- The project logo is stored at `ios_developer_toolkit/assets/iosdevtoolkit.png` and is used unchanged in the application and documentation.
+- The project logo is stored at `ios_developer_toolkit/assets/iosdevtoolkit.png` and appears in the application and this README. The macOS Dock icon is `macos/iOSDeveloperToolkit.icns`; the documentation logo, favicon, and [GitHub social-preview image](docs/assets/social-preview.png) use the same supplied branding pack.
 
 The release-critical dependency versions, declared licenses, source links, generated inventory, and redistribution boundary are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). [SOURCE_AVAILABILITY.md](SOURCE_AVAILABILITY.md) identifies the matching tagged project source and bundled-component upstream sources. Each packaged app carries its own copies of both documents and the license files supplied by the installed Python distributions.
 
