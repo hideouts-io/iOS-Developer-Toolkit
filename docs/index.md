@@ -2,6 +2,8 @@
 
 <div class="toolkit-hero" markdown>
 
+![iOS Developer Toolkit logo](assets/logo-256.png){ width="96" }
+
 ## One guided macOS workbench for Apple-device services
 
 iOS Developer Toolkit makes authorized iPhone and iPad development, diagnostics, backup, logging, package inspection, and evidence-preservation workflows visible without hiding their prerequisites or interpretation limits.

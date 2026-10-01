@@ -11,6 +11,8 @@ strict: true
 theme:
   name: material
   language: en
+  logo: assets/logo-256.png
+  favicon: assets/favicon-32.png
   features:
     - content.code.copy
     - navigation.footer
@@ -23,14 +25,14 @@ theme:
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: black
-      accent: red
+      accent: light blue
       toggle:
         icon: material/weather-night
         name: Use dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: black
-      accent: red
+      accent: light blue
       toggle:
         icon: material/weather-sunny
         name: Use light mode
