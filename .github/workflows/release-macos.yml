@@ -24,13 +24,13 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
           architecture: ${{ matrix.python_architecture }}
           cache: pip
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ runner.temp }}/nuitka-cache
           key: nuitka-${{ runner.os }}-${{ matrix.architecture }}-${{ hashFiles('pyproject.toml', 'requirements/**', 'packaging/**') }}
@@ -41,7 +41,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "13.0"
           NUITKA_CACHE_DIR: ${{ runner.temp }}/nuitka-cache
         run: ./scripts/build_macos_release.sh "${GITHUB_REF_NAME#v}" release-assets python3
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: macos-${{ matrix.architecture }}
           path: |
@@ -51,6 +51,7 @@ jobs:
 
   release:
     name: Publish GitHub release
+    environment: github-release
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -59,8 +60,8 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: macos-*
           path: release-assets
@@ -69,16 +70,16 @@ jobs:
         working-directory: release-assets
         run: sha256sum *.zip *.cdx.json > SHA256SUMS.txt
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: release-assets/*.zip
       - name: Attest Apple Silicon SBOM
-        uses: actions/attest@v4.2.2
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release-assets/iOS-Developer-Toolkit-${{ github.ref_name }}-macOS-arm64.zip
           sbom-path: release-assets/iOS-Developer-Toolkit-${{ github.ref_name }}-macOS-arm64.cdx.json
       - name: Attest Intel SBOM
-        uses: actions/attest@v4.2.2
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release-assets/iOS-Developer-Toolkit-${{ github.ref_name }}-macOS-x86_64.zip
           sbom-path: release-assets/iOS-Developer-Toolkit-${{ github.ref_name }}-macOS-x86_64.cdx.json
