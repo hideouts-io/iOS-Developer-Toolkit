@@ -22,6 +22,7 @@ on:
       - "scripts/verify_release_metadata.py"
       - "scripts/verify_macos_bundle.py"
       - "scripts/verify_command_catalog.py"
+      - "scripts/verify_apple_tool_readiness.py"
       - "pyproject.toml"
       - "tests/**"
   push:

@@ -105,6 +105,7 @@ fi
 "$build_environment/bin/python" scripts/collect_third_party_licenses.py "$sbom_requirements" "$license_directory"
 
 cd "$repository_root"
+"$build_environment/bin/python" -m scripts.verify_apple_tool_readiness
 "$build_environment/bin/python" -m unittest discover -s tests -v
 /bin/mkdir -p "$deployment_project_directory"
 /bin/cp packaging/main.py "$source_wrapper"
