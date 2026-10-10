@@ -9,9 +9,11 @@ from typing import Mapping, Sequence
 
 if __package__:
     from .augment_restore_helper_sbom import archive_metadata, native_components
+    from .qt_cocoa_packaging import verify_qt_cocoa_bundle
     from .restore_helper_metadata import object_fields, packaged_helper_files, packaged_helpers_present, source_inventory
 else:
     from augment_restore_helper_sbom import archive_metadata, native_components
+    from qt_cocoa_packaging import verify_qt_cocoa_bundle
     from restore_helper_metadata import object_fields, packaged_helper_files, packaged_helpers_present, source_inventory
 
 
@@ -127,6 +129,10 @@ def verify_release_metadata(application_path: Path, sbom_path: Path, release_ver
     if "file://" in sbom_path.read_text(encoding="utf-8"):
         raise ReleaseMetadataError("Release SBOM contains a local file URL")
     verify_native_metadata(application_path, sbom_path, release_version, sbom, Path(__file__).with_name("build_restore_helpers_vendor.sh"))
+    try:
+        verify_qt_cocoa_bundle(application_path, sbom_path, release_version, sbom)
+    except (ValueError, OSError, UnicodeError, tarfile.TarError) as error:
+        raise ReleaseMetadataError(f"Cocoa accessibility repair verification failed: {error}") from error
 
     licenses_directory = resource_directory / "Licenses"
     required_text_resource(licenses_directory / "IOS_DEVELOPER_TOOLKIT_LICENSE.txt")

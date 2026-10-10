@@ -156,6 +156,7 @@ class ParityProfileTests(unittest.TestCase):
             ("developerImageMechanism", "automatic", "no automatic"),
             ("developerImageMechanism", None, "no automatic"),
             ("defaultWorkspace", "activity", "no Python profile destination"),
+            ("defaultWorkspace", "externalTools", "removed.*another default workspace"),
             ("actionCategory", "Device Actions", "not in actionCategory"),
             ("schemaVersion", True, "schemaVersion 2"),
         )

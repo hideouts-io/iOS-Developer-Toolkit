@@ -22,7 +22,6 @@ WORKSPACE_NAMES = (
     "Backup",
     "Sideload IPA",
     "Evidence Capture",
-    "Ecosystem Tools",
     "Man Pages",
     "Scope & Safety",
     "Firmware",
@@ -36,7 +35,7 @@ WORKSPACE_GROUPS = (
     ("Start", ("Home",)),
     ("Device", ("Device & DDI", "Firmware", "Capability Matrix", "Installed Apps", "Sideload IPA", "Simulators")),
     ("Develop", ("Location Lab", "Live Logs", "Command Center", "Xcode Tools")),
-    ("Data & Evidence", ("Backup", "Evidence Capture", "Security Analysis", "Ecosystem Tools")),
+    ("Data & Evidence", ("Backup", "Evidence Capture", "Security Analysis")),
     ("Reference", ("Man Pages", "Scope & Safety")),
 )
 
@@ -115,6 +114,10 @@ def validate_workspace_profile(profile: WorkspaceProfile) -> WorkspaceProfile:
     created_with_version = _validated_text(profile.created_with_version, "toolkit version", 40, False)
     name = _validated_text(profile.name, "name", 100, False)
     description = _validated_text(profile.description, "description", 500, True)
+    if profile.default_workspace == "Ecosystem Tools":
+        raise WorkspaceProfileError(
+            "Ecosystem Tools has been removed. Choose another default workspace in the profile before importing it."
+        )
     if profile.default_workspace not in WORKSPACE_NAMES:
         raise WorkspaceProfileError(f"Unknown default workspace: {profile.default_workspace!r}")
     if profile.ddi_source not in DDI_SOURCES:

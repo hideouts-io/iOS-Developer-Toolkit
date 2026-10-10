@@ -40,8 +40,8 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          brew install autoconf automake libtool pkg-config cmake
-          for tool in autoconf autom4te automake glibtoolize pkg-config cmake; do
+          brew install autoconf automake libtool pkg-config cmake sevenzip
+          for tool in autoconf autom4te automake glibtoolize pkg-config cmake 7zz; do
             command -v "$tool"
           done
       - name: Build and verify native application
@@ -52,7 +52,9 @@ jobs:
       - name: Verify architecture-specific helper source archive
         env:
           TOOLKIT_ARCHITECTURE: ${{ matrix.architecture }}
-        run: test -s "release-assets/iOS-Developer-Toolkit-restore-helper-sources-${GITHUB_REF_NAME}-macOS-${TOOLKIT_ARCHITECTURE}.tar.gz"
+        run: |
+          test -s "release-assets/iOS-Developer-Toolkit-restore-helper-sources-${GITHUB_REF_NAME}-macOS-${TOOLKIT_ARCHITECTURE}.tar.gz"
+          test -s "release-assets/iOS-Developer-Toolkit-qt-cocoa-sources-${GITHUB_REF_NAME}-macOS-${TOOLKIT_ARCHITECTURE}.tar.gz"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: macos-${{ matrix.architecture }}

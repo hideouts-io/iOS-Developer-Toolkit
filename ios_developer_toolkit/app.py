@@ -10,7 +10,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, Mapping
+from typing import Mapping
 
 from PySide6.QtCore import QEvent, QObject, QProcess, QProcessEnvironment, QRect, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import (
@@ -19,6 +19,8 @@ from PySide6.QtGui import (
     QColor,
     QDesktopServices,
     QFont,
+    QFontDatabase,
+    QPalette,
     QIcon,
     QMouseEvent,
     QPaintEvent,
@@ -136,26 +138,11 @@ from ios_developer_toolkit.device_compatibility import (
 )
 from ios_developer_toolkit.demo_mode import demo_connection_banner, demo_device
 from ios_developer_toolkit.developer_images import DeveloperImageError, host_developer_images, inspect_developer_image
-from ios_developer_toolkit.external_tools import (
-    ExternalToolExecutable,
-    ExternalToolIdentifier,
-    ExternalToolInstallation,
-    ExternalToolSpec,
-    ExternalToolValidationError,
-    discover_external_tool_executables,
-    external_tool_command,
-    external_tool_environment,
-    external_tool_spec,
-    external_tool_specs,
-    inspect_external_tool_executable,
-    parse_external_tool_version,
-    validate_external_tool_installation,
-)
+from ios_developer_toolkit.ui_theme import appearance_colors, interface_icon, toolkit_stylesheet
 from ios_developer_toolkit.gui_pages import (
     build_home_page,
     build_live_logs_page,
     build_safety_page,
-    toolkit_stylesheet,
 )
 from ios_developer_toolkit.command_catalog import (
     CommandCatalogError,
@@ -308,13 +295,7 @@ IPA_INSTALL_TIMEOUT_MS = 15 * 60_000
 COLLECTION_FINALIZATION_TIMEOUT_MS = 2 * 60_000
 XCODE_HANDOFF_TIMEOUT_MS = 60_000
 PROCESS_TERMINATE_GRACE_MS = 1_500
-EXTERNAL_TOOL_TIMEOUT_MS = 30_000
 MAX_SESSION_OPERATION_RECORDS = 250
-EXTERNAL_TOOL_OBJECT_SUFFIXES: Mapping[ExternalToolIdentifier, str] = {
-    "go-ios": "GoIos",
-    "idb": "Idb",
-    "ipsw": "Ipsw",
-}
 
 
 def application_icon_path() -> Path:
@@ -651,7 +632,9 @@ class MainWindow(QMainWindow):
             "Keyboard-first workspace for authorized iPhone and iPad development, diagnostics, backup, and evidence collection."
         )
         self.setWindowIcon(QIcon(str(application_icon_path())))
-        self.resize(1280, 840)
+        self.resize(1280, 860)
+        self.setMinimumSize(1040, 680)
+        self.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont))
         self._pmd3 = pymobiledevice3_command()
         self._devices: tuple[IOSDevice, ...] = ()
         self._connection_diagnostic = initial_connection_diagnostic()
@@ -724,19 +707,6 @@ class MainWindow(QMainWindow):
         self._mvt_request: MVTAnalysisRequest | None = None
         self._mvt_ioc_paths: tuple[Path, ...] = ()
         self._mvt_temporary_config: tempfile.TemporaryDirectory[str] | None = None
-        self._external_tool_controller = FiniteProcessController(self)
-        self._external_tool_controller.completed.connect(self._external_tool_completed)
-        self._external_tool_installations: dict[ExternalToolIdentifier, ExternalToolInstallation] = {}
-        self._external_tool_pending_executable: ExternalToolExecutable | None = None
-        self._external_tool_active_identifier: ExternalToolIdentifier | None = None
-        self._external_tool_operation: Literal["validate", "probe"] | None = None
-        self._external_tool_fields: dict[ExternalToolIdentifier, QLineEdit] = {}
-        self._external_tool_statuses: dict[ExternalToolIdentifier, QLabel] = {}
-        self._external_tool_outputs: dict[ExternalToolIdentifier, QPlainTextEdit] = {}
-        self._external_tool_validate_buttons: dict[ExternalToolIdentifier, QPushButton] = {}
-        self._external_tool_probe_buttons: dict[ExternalToolIdentifier, QPushButton] = {}
-        self._external_tool_stop_buttons: dict[ExternalToolIdentifier, QPushButton] = {}
-        self._external_tool_path_buttons: dict[ExternalToolIdentifier, tuple[QPushButton, QPushButton]] = {}
         self._location_process: QProcess | None = None
         self._location_operation = ""
         self._location_arguments: tuple[str, ...] = ()
@@ -791,6 +761,7 @@ class MainWindow(QMainWindow):
         if application is None:
             raise RuntimeError("A QApplication is required before creating the toolkit window")
         application.installEventFilter(self)
+        application.paletteChanged.connect(self._palette_changed)
         self._scanner = DeviceScanner(self._pmd3)
         self._scanner.devices_changed.connect(self._devices_changed)
         self._scanner.scan_error.connect(self._scan_error)
@@ -799,127 +770,146 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         root = QWidget()
-        root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(22, 18, 22, 18)
-        root_layout.setSpacing(14)
-
-        header_layout = QHBoxLayout()
+        root.setObjectName("applicationRoot")
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        workspace = QSplitter(Qt.Orientation.Horizontal)
+        workspace.setObjectName("workspaceSplitter")
+        workspace.setChildrenCollapsible(False)
+        workspace.setHandleWidth(1)
+        sidebar = QFrame()
+        sidebar.setObjectName("workspaceSidebar")
+        sidebar.setMinimumWidth(220)
+        sidebar.setMaximumWidth(270)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(12, 16, 12, 14)
+        sidebar_layout.setSpacing(10)
+        brand = QHBoxLayout()
+        brand.setSpacing(10)
         logo = QLabel()
         logo.setObjectName("appLogo")
         logo_pixmap = QPixmap(str(application_icon_path()))
         if logo_pixmap.isNull():
             raise RuntimeError(f"Could not load application logo: {application_icon_path()}")
-        logo.setPixmap(
-            logo_pixmap.scaled(
-                66,
-                66,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
-        logo.setFixedSize(66, 66)
+        logo.setPixmap(logo_pixmap.scaled(38, 38, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        logo.setFixedSize(38, 38)
         logo.setAccessibleName("iOS Developer Toolkit logo")
-        header_layout.addWidget(logo)
+        brand.addWidget(logo)
         title_block = QVBoxLayout()
-        title = QLabel("iOS Developer Toolkit")
+        title_block.setSpacing(2)
+        title = QLabel("iOS Developer\nToolkit")
         title.setObjectName("appTitle")
-        title.setFont(QFont(title.font().family(), 24, QFont.Weight.Bold))
-        subtitle = QLabel("iOS developer workbench • pymobiledevice3 • diagnostics • evidence")
-        subtitle.setObjectName("appSubtitle")
-        subtitle.setWordWrap(True)
         title_block.addWidget(title)
+        subtitle = QLabel("Your device workbench")
+        subtitle.setObjectName("appSubtitle")
         title_block.addWidget(subtitle)
-        header_layout.addLayout(title_block)
-        header_layout.addStretch()
-        device_controls = QHBoxLayout()
-        self.device_combo = QComboBox()
-        self.device_combo.setObjectName("devicePicker")
-        self.device_combo.setMinimumWidth(320)
-        self.device_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.device_combo.currentIndexChanged.connect(self._device_selected)
-        device_controls.addWidget(self.device_combo, 1)
-        self.demo_mode_button = QPushButton("Demo Mode")
-        self.demo_mode_button.setObjectName("demoModeButton")
-        self.demo_mode_button.setToolTip("Show a clearly simulated iPhone without connecting to a device")
-        self.demo_mode_button.clicked.connect(self.toggle_demo_mode)
-        device_controls.addWidget(self.demo_mode_button)
-        self.refresh_devices_button = QPushButton("Retry Scan")
-        self.refresh_devices_button.setObjectName("refreshDevicesButton")
-        self.refresh_devices_button.clicked.connect(self._scanner_scan)
-        device_controls.addWidget(self.refresh_devices_button)
-        self.reconnect_device_button = QPushButton("Reconnect & Retry…")
-        self.reconnect_device_button.setObjectName("reconnectDeviceButton")
-        self.reconnect_device_button.setToolTip(
-            "Guide a physical reconnection and retry USB device discovery for 30 seconds."
-        )
-        self.reconnect_device_button.clicked.connect(self._reconnect_device)
-        device_controls.addWidget(self.reconnect_device_button)
-        self.keyboard_shortcuts_button = QPushButton("Keyboard Shortcuts")
-        self.keyboard_shortcuts_button.setObjectName("keyboardShortcutsButton")
-        self.keyboard_shortcuts_button.setToolTip("Show keyboard shortcuts (⌘/)")
-        self.keyboard_shortcuts_button.clicked.connect(self.show_keyboard_shortcuts)
-        header_layout.addWidget(self.keyboard_shortcuts_button)
-        self.support_bundle_button = QPushButton("Create Support Bundle…")
-        self.support_bundle_button.setObjectName("createSupportBundleButton")
-        self.support_bundle_button.setToolTip("Create a local sanitized ZIP for a support request")
-        self.support_bundle_button.clicked.connect(self.create_support_bundle)
-        header_layout.addWidget(self.support_bundle_button)
-        root_layout.addLayout(header_layout)
-        root_layout.addLayout(device_controls)
-
-        self.connection_banner = QLabel("Waiting for an unlocked and trusted iPhone or iPad over USB…")
-        self.connection_banner.setObjectName("connectionBanner")
-        self.connection_banner.setWordWrap(True)
-        root_layout.addWidget(self.connection_banner)
-
-        workspace = QSplitter(Qt.Orientation.Horizontal)
-        workspace.setObjectName("workspaceSplitter")
-        sidebar = QFrame()
-        sidebar.setObjectName("workspaceSidebar")
-        sidebar.setMinimumWidth(205)
-        sidebar.setMaximumWidth(250)
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(10, 12, 10, 12)
-        section_label = QLabel("WORKSPACE")
-        section_label.setObjectName("sidebarSectionLabel")
-        sidebar_layout.addWidget(section_label)
+        brand.addLayout(title_block)
+        sidebar_layout.addLayout(brand)
         self.navigation_list = QListWidget()
         self.navigation_list.setObjectName("workspaceNavigation")
-        self.navigation_list.setSpacing(2)
+        self.navigation_list.setSpacing(1)
+        self.navigation_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sidebar_layout.addWidget(self.navigation_list, 1)
-        self.action_palette_button = QPushButton("Action Palette (⌘K)")
+        self.action_palette_button = QPushButton("Action Palette   ⌘K")
         self.action_palette_button.setObjectName("actionPaletteButton")
+        self.action_palette_button.setProperty("primaryAction", True)
         self.action_palette_button.setToolTip("Search workspaces, guided commands, and currently eligible actions")
         self.action_palette_button.clicked.connect(self.show_action_palette)
         sidebar_layout.addWidget(self.action_palette_button)
         self.session_activity_button = QPushButton("Session Activity (0)")
         self.session_activity_button.setObjectName("sessionActivityButton")
-        self.session_activity_button.setToolTip(
-            "Review completed typed operations from this session and explicitly export a structured manifest"
-        )
+        self.session_activity_button.setToolTip("Review this session and export a structured operation manifest")
         self.session_activity_button.clicked.connect(self.show_session_activity)
         sidebar_layout.addWidget(self.session_activity_button)
-        self.export_workspace_profile_button = QPushButton("Export Workspace…")
+        profiles = QHBoxLayout()
+        self.export_workspace_profile_button = QPushButton("Export…")
         self.export_workspace_profile_button.setObjectName("exportWorkspaceProfileButton")
-        self.export_workspace_profile_button.setToolTip(
-            "Export reviewed control defaults without device identity, paths, credentials, coordinates, or output"
-        )
+        self.export_workspace_profile_button.setAccessibleName("Export Workspace")
+        self.export_workspace_profile_button.setToolTip("Export reviewed controls without targets, paths, credentials, or output")
         self.export_workspace_profile_button.clicked.connect(self.export_workspace_profile)
-        sidebar_layout.addWidget(self.export_workspace_profile_button)
-        self.import_workspace_profile_button = QPushButton("Import Workspace…")
+        profiles.addWidget(self.export_workspace_profile_button)
+        self.import_workspace_profile_button = QPushButton("Import…")
         self.import_workspace_profile_button.setObjectName("importWorkspaceProfileButton")
-        self.import_workspace_profile_button.setToolTip(
-            "Preview and apply a local workspace profile without running any command"
-        )
+        self.import_workspace_profile_button.setAccessibleName("Import Workspace")
+        self.import_workspace_profile_button.setToolTip("Preview a local workspace profile without running a command")
         self.import_workspace_profile_button.clicked.connect(self.import_workspace_profile)
-        sidebar_layout.addWidget(self.import_workspace_profile_button)
-        version_note = QLabel(f"Toolkit {APP_VERSION}\npymobiledevice3 11.15.1")
+        profiles.addWidget(self.import_workspace_profile_button)
+        sidebar_layout.addLayout(profiles)
+        utilities = QHBoxLayout()
+        version_note = QLabel(f"Toolkit {APP_VERSION}")
         version_note.setObjectName("sidebarVersion")
-        version_note.setWordWrap(True)
-        sidebar_layout.addWidget(version_note)
+        utilities.addWidget(version_note, 1)
+        self.keyboard_shortcuts_button = QPushButton()
+        self.keyboard_shortcuts_button.setObjectName("keyboardShortcutsButton")
+        self.keyboard_shortcuts_button.setFixedWidth(34)
+        self.keyboard_shortcuts_button.setToolTip("Keyboard shortcuts (⌘/)")
+        self.keyboard_shortcuts_button.clicked.connect(self.show_keyboard_shortcuts)
+        utilities.addWidget(self.keyboard_shortcuts_button)
+        self.support_bundle_button = QPushButton()
+        self.support_bundle_button.setObjectName("createSupportBundleButton")
+        self.support_bundle_button.setFixedWidth(34)
+        self.support_bundle_button.setToolTip("Create a local sanitized support bundle")
+        self.support_bundle_button.clicked.connect(self.create_support_bundle)
+        utilities.addWidget(self.support_bundle_button)
+        sidebar_layout.addLayout(utilities)
         workspace.addWidget(sidebar)
         self.workspace_sidebar = sidebar
-
+        detail = QWidget()
+        detail.setObjectName("workspaceDetail")
+        detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(0)
+        toolbar = QFrame()
+        toolbar.setObjectName("deviceToolbar")
+        device_controls = QHBoxLayout(toolbar)
+        device_controls.setContentsMargins(20, 10, 20, 10)
+        self.device_combo = QComboBox()
+        self.device_combo.setObjectName("devicePicker")
+        self.device_combo.setMinimumWidth(250)
+        self.device_combo.setMaximumWidth(420)
+        self.device_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.device_combo.currentIndexChanged.connect(self._device_selected)
+        device_controls.addWidget(self.device_combo, 1)
+        device_controls.addStretch()
+        self.demo_mode_button = QPushButton("Demo Mode")
+        self.demo_mode_button.setObjectName("demoModeButton")
+        self.demo_mode_button.setToolTip("Explore a simulated device without running device actions")
+        self.demo_mode_button.clicked.connect(self.toggle_demo_mode)
+        device_controls.addWidget(self.demo_mode_button)
+        self.refresh_devices_button = QPushButton()
+        self.refresh_devices_button.setObjectName("refreshDevicesButton")
+        self.refresh_devices_button.setFixedWidth(36)
+        self.refresh_devices_button.setToolTip("Refresh device discovery (⌘R)")
+        self.refresh_devices_button.clicked.connect(self._scanner_scan)
+        device_controls.addWidget(self.refresh_devices_button)
+        self.reconnect_device_button = QPushButton()
+        self.reconnect_device_button.setObjectName("reconnectDeviceButton")
+        self.reconnect_device_button.setFixedWidth(36)
+        self.reconnect_device_button.setToolTip("Reconnect a device and retry discovery")
+        self.reconnect_device_button.clicked.connect(self._reconnect_device)
+        device_controls.addWidget(self.reconnect_device_button)
+        detail_layout.addWidget(toolbar)
+        self.connection_banner = QLabel("Waiting for an unlocked and trusted iPhone or iPad over USB…")
+        self.connection_banner.setObjectName("connectionBanner")
+        self.connection_banner.setWordWrap(True)
+        banner_layout = QVBoxLayout()
+        banner_layout.setContentsMargins(20, 10, 20, 0)
+        banner_layout.addWidget(self.connection_banner)
+        detail_layout.addLayout(banner_layout)
+        heading = QFrame()
+        heading.setObjectName("workspaceHeader")
+        heading_layout = QVBoxLayout(heading)
+        heading_layout.setContentsMargins(24, 14, 24, 12)
+        heading_layout.setSpacing(3)
+        self.workspace_title = QLabel("Home")
+        self.workspace_title.setObjectName("workspaceTitle")
+        self.workspace_title.setAccessibleName("Current workspace")
+        heading_layout.addWidget(self.workspace_title)
+        self.workspace_subtitle = QLabel("Start")
+        self.workspace_subtitle.setObjectName("workspaceSubtitle")
+        heading_layout.addWidget(self.workspace_subtitle)
+        detail_layout.addWidget(heading)
         self.page_stack = QStackedWidget()
         self.page_stack.setObjectName("workspacePages")
         self.simulator_page = SimulatorToolsPage(self)
@@ -945,7 +935,6 @@ class MainWindow(QMainWindow):
             ("Backup", self._build_backup_tab()),
             ("Sideload IPA", self._build_sideload_tab()),
             ("Evidence Capture", self._build_collection_tab()),
-            ("Ecosystem Tools", self._build_external_tools_page()),
             ("Man Pages", self._build_manpages_page()),
             ("Scope & Safety", self._build_safety_tab()),
             ("Simulators", self.simulator_page),
@@ -955,6 +944,14 @@ class MainWindow(QMainWindow):
         )
         self._page_indices: dict[str, int] = {}
         for name, page in pages:
+            page_layout = page.layout()
+            if page_layout is not None:
+                page_layout.setContentsMargins(24, 18, 24, 24)
+                page_layout.setSpacing(14)
+            if name != "Home":
+                for identifier in ("pageTitle", "firmwareHeading", "securityTitle"):
+                    for heading in page.findChildren(QLabel, identifier):
+                        heading.hide()
             scroll = QScrollArea()
             scroll.setObjectName(f"workspaceScroll{len(self._page_indices)}")
             scroll.setWidgetResizable(True)
@@ -977,9 +974,11 @@ class MainWindow(QMainWindow):
                     self.navigation_list.addItem(item)
         self.navigation_list.currentRowChanged.connect(self._workspace_row_changed)
         self.navigation_list.setCurrentRow(self._navigation_rows["Home"])
-        workspace.addWidget(self.page_stack)
+        detail_layout.addWidget(self.page_stack, 1)
+        workspace.addWidget(detail)
         workspace.setStretchFactor(0, 0)
         workspace.setStretchFactor(1, 1)
+        workspace.setSizes((240, 1040))
         root_layout.addWidget(workspace, 1)
         self.setCentralWidget(root)
         self._apply_style()
@@ -1063,23 +1062,16 @@ class MainWindow(QMainWindow):
             "Offline mouse coordinate picker. For keyboard-first location entry, use the coordinate importer, latitude, and longitude fields."
         )
         self.location_map.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        for spec in external_tool_specs():
-            self._external_tool_fields[spec.identifier].setAccessibleName(f"{spec.title} executable path")
-            self._external_tool_fields[spec.identifier].setAccessibleDescription(
-                f"Absolute path to the separately installed {spec.executable_name} executable."
-            )
-            self._external_tool_outputs[spec.identifier].setAccessibleName(f"{spec.title} adapter output")
-            self._external_tool_outputs[spec.identifier].setAccessibleDescription(
-                "Session-local raw version validation or read-only probe output from the external tool."
-            )
         QWidget.setTabOrder(self.device_combo, self.demo_mode_button)
         QWidget.setTabOrder(self.demo_mode_button, self.refresh_devices_button)
         QWidget.setTabOrder(self.refresh_devices_button, self.reconnect_device_button)
-        QWidget.setTabOrder(self.reconnect_device_button, self.keyboard_shortcuts_button)
-        QWidget.setTabOrder(self.keyboard_shortcuts_button, self.support_bundle_button)
-        QWidget.setTabOrder(self.support_bundle_button, self.navigation_list)
+        QWidget.setTabOrder(self.reconnect_device_button, self.navigation_list)
         QWidget.setTabOrder(self.navigation_list, self.action_palette_button)
         QWidget.setTabOrder(self.action_palette_button, self.session_activity_button)
+        QWidget.setTabOrder(self.session_activity_button, self.export_workspace_profile_button)
+        QWidget.setTabOrder(self.export_workspace_profile_button, self.import_workspace_profile_button)
+        QWidget.setTabOrder(self.import_workspace_profile_button, self.keyboard_shortcuts_button)
+        QWidget.setTabOrder(self.keyboard_shortcuts_button, self.support_bundle_button)
 
     def _configure_keyboard_shortcuts(self) -> None:
         self._add_application_shortcut("Meta+R", self._scanner_scan, "shortcutRetryDeviceScan")
@@ -1102,7 +1094,6 @@ class MainWindow(QMainWindow):
             ("Meta+8", "Backup"),
             ("Meta+9", "Sideload IPA"),
             ("Meta+0", "Evidence Capture"),
-            ("Meta+Shift+E", "Ecosystem Tools"),
             ("Meta+Shift+M", "Man Pages"),
             ("Meta+Shift+S", "Scope & Safety"),
         )
@@ -1140,7 +1131,6 @@ class MainWindow(QMainWindow):
             "Backup": self.backup_destination_field,
             "Sideload IPA": self.ipa_path_field,
             "Evidence Capture": self.case_title_field,
-            "Ecosystem Tools": self._external_tool_fields["go-ios"],
             "Man Pages": self.manpage_search_field,
             "Scope & Safety": self.navigation_list,
             "Simulators": self.simulator_page.target_combo,
@@ -1216,7 +1206,6 @@ class MainWindow(QMainWindow):
             "<tr><td>⌘ F</td><td>Focus search in Command Center, Man Pages, Installed Apps, or Location Lab</td></tr>"
             "<tr><td>⌘ ⌥ ← / ⌘ ⌥ →</td><td>Previous / next workspace</td></tr>"
             "<tr><td>⌘ 1–0</td><td>Home through Evidence Capture</td></tr>"
-            "<tr><td>⌘ ⇧ E</td><td>Ecosystem Tools</td></tr>"
             "<tr><td>⌘ ⇧ M</td><td>Man Pages</td></tr>"
             "<tr><td>⌘ ⇧ S</td><td>Scope &amp; Safety</td></tr>"
             "<tr><td>⌘ /</td><td>Open this reference</td></tr>"
@@ -1253,7 +1242,6 @@ class MainWindow(QMainWindow):
             "Backup": "Prepare MobileBackup2, external UFADE acquisition, or consented MVT analysis.",
             "Sideload IPA": "Inspect a local IPA before an eligible installation attempt.",
             "Evidence Capture": "Prepare a scoped case and bounded evidence collection.",
-            "Ecosystem Tools": "Validate optional go-ios, idb, and ipsw adapters and run bounded read-only probes.",
             "Man Pages": "Browse version-matched command routes and live help.",
             "Scope & Safety": "Review authorization, privacy, and interpretation boundaries.",
             "Firmware": "Manage IPSWs, inspect signing and bind an explicit Update or Restore to one target.",
@@ -1397,17 +1385,6 @@ class MainWindow(QMainWindow):
             for identifier, title, summary, keywords, eligible in eligible_actions
             if eligible
         )
-        entries.extend(
-            action_palette_entry(
-                f"action:external-tool:{spec.identifier}",
-                spec.probe_title,
-                "Eligible external read action",
-                f"Run the validated {spec.title} adapter probe after reviewing its independent target boundary.",
-                ("external", "adapter", spec.identifier, "inventory", "provenance"),
-            )
-            for spec in external_tool_specs()
-            if self._external_tool_probe_buttons[spec.identifier].isEnabled()
-        )
         if not self._console_controller.is_running():
             device_available = self.selected_device() is not None
             entries.extend(
@@ -1429,21 +1406,6 @@ class MainWindow(QMainWindow):
             return
         if identifier.startswith("preset:"):
             self._select_palette_preset(identifier.removeprefix("preset:"))
-            return
-        if identifier.startswith("action:external-tool:"):
-            current_identifiers = {entry.identifier for entry in self._eligible_action_palette_entries()}
-            if identifier not in current_identifiers:
-                QMessageBox.information(
-                    self,
-                    "Action No Longer Eligible",
-                    "The validated external tool or process state changed while the palette was open.",
-                )
-                return
-            tool_identifier = identifier.removeprefix("action:external-tool:")
-            matching = tuple(spec.identifier for spec in external_tool_specs() if spec.identifier == tool_identifier)
-            if len(matching) != 1:
-                raise KeyError(f"Unknown external-tool action palette entry: {identifier}")
-            self.run_external_tool_probe(matching[0])
             return
         actions: Mapping[str, Callable[[], None]] = {
             "utility:session-activity": self.show_session_activity,
@@ -1660,7 +1622,6 @@ class MainWindow(QMainWindow):
             self._ipa_inspection_controller,
             self._sideload_controller,
             self._apps_controller,
-            self._external_tool_controller,
             self._manpage_controller,
             self._command_drift_controller,
         )
@@ -1889,13 +1850,6 @@ class MainWindow(QMainWindow):
             SupportStatus("developer_mode", self.developer_mode_status.text()),
             SupportStatus("capability_matrix", self.capability_status.text()),
             SupportStatus("command_drift", self.command_drift_status.text()),
-            *(
-                SupportStatus(
-                    f"external_tool_{spec.identifier.replace('-', '_')}",
-                    self._external_tool_statuses[spec.identifier].text(),
-                )
-                for spec in external_tool_specs()
-            ),
         )
         redactions = tuple(
             value
@@ -1931,6 +1885,10 @@ class MainWindow(QMainWindow):
         index = item.data(Qt.ItemDataRole.UserRole)
         if isinstance(index, int):
             self.page_stack.setCurrentIndex(index)
+            self.workspace_title.setText(item.text())
+            group = next(group for group, names in WORKSPACE_GROUPS if item.text() in names)
+            self.workspace_subtitle.setText(group)
+            self.setWindowTitle(f"{item.text()} · iOS Developer Toolkit")
 
     def _page_operation_completed(self, context: object, result: object) -> None:
         if not isinstance(context, OperationContext) or not isinstance(result, OperationResult):
@@ -2223,24 +2181,23 @@ class MainWindow(QMainWindow):
         )
         compatibility_explanation.setWordWrap(True)
         compatibility_layout.addWidget(compatibility_explanation)
-        compatibility_controls = QHBoxLayout()
+        compatibility_controls = QGridLayout()
         refresh_history_button = QPushButton("Refresh History")
         refresh_history_button.setObjectName("refreshCompatibilityHistoryButton")
         refresh_history_button.clicked.connect(self.refresh_compatibility_history)
-        compatibility_controls.addWidget(refresh_history_button)
+        compatibility_controls.addWidget(refresh_history_button, 0, 0)
         copy_history_button = QPushButton("Copy Compatibility Matrix")
         copy_history_button.setObjectName("copyCompatibilityMatrixButton")
         copy_history_button.clicked.connect(self.copy_compatibility_matrix)
-        compatibility_controls.addWidget(copy_history_button)
+        compatibility_controls.addWidget(copy_history_button, 0, 1)
         export_json_button = QPushButton("Export Sanitized JSON…")
         export_json_button.setObjectName("exportCompatibilityJsonButton")
         export_json_button.clicked.connect(self.export_compatibility_json)
-        compatibility_controls.addWidget(export_json_button)
+        compatibility_controls.addWidget(export_json_button, 1, 0)
         export_markdown_button = QPushButton("Export Sanitized Markdown…")
         export_markdown_button.setObjectName("exportCompatibilityMarkdownButton")
         export_markdown_button.clicked.connect(self.export_compatibility_markdown)
-        compatibility_controls.addWidget(export_markdown_button)
-        compatibility_controls.addStretch()
+        compatibility_controls.addWidget(export_markdown_button, 1, 1)
         compatibility_layout.addLayout(compatibility_controls)
         self.compatibility_history_status = QLabel()
         self.compatibility_history_status.setObjectName("compatibilityHistoryStatus")
@@ -3290,13 +3247,16 @@ class MainWindow(QMainWindow):
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
 
-        browser_splitter = QSplitter(Qt.Orientation.Horizontal)
-        browser_splitter.setObjectName("commandBrowserSplitter")
-        browser_splitter.setMaximumHeight(470)
+        browser = QWidget()
+        browser.setObjectName("commandBrowser")
+        browser_layout = QHBoxLayout(browser)
+        browser_layout.setContentsMargins(0, 0, 0, 0)
+        browser_layout.setSpacing(12)
 
         preset_browser = QFrame()
         preset_browser.setObjectName("commandPresetBrowser")
         preset_browser.setMinimumWidth(300)
+        preset_browser.setMaximumWidth(360)
         preset_browser_layout = QVBoxLayout(preset_browser)
         self.command_category_combo = QComboBox()
         self.command_category_combo.setObjectName("commandCategory")
@@ -3313,7 +3273,7 @@ class MainWindow(QMainWindow):
         self.command_preset_list.setObjectName("commandPresetList")
         self.command_preset_list.currentItemChanged.connect(self._command_preset_selected)
         preset_browser_layout.addWidget(self.command_preset_list, 1)
-        browser_splitter.addWidget(preset_browser)
+        browser_layout.addWidget(preset_browser, 1)
 
         detail_frame = QFrame()
         detail_frame.setObjectName("commandPresetDetail")
@@ -3340,7 +3300,7 @@ class MainWindow(QMainWindow):
         detail_layout.addWidget(self.command_prerequisites)
 
         readiness_group = QGroupBox("Selected command readiness")
-        readiness_layout = QHBoxLayout(readiness_group)
+        readiness_layout = QVBoxLayout(readiness_group)
         self.command_readiness_status = QLabel("Choose a preset to evaluate its device requirements.")
         self.command_readiness_status.setObjectName("commandReadinessStatus")
         self.command_readiness_status.setWordWrap(True)
@@ -3377,11 +3337,8 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self.preset_help_button)
         button_row.addStretch()
         detail_layout.addLayout(button_row)
-        browser_splitter.addWidget(detail_frame)
-        browser_splitter.setSizes([330, 800])
-        browser_splitter.setStretchFactor(0, 1)
-        browser_splitter.setStretchFactor(1, 2)
-        layout.addWidget(browser_splitter)
+        browser_layout.addWidget(detail_frame, 2)
+        layout.addWidget(browser)
 
         drift_group = QGroupBox("Command-drift detection")
         drift_layout = QVBoxLayout(drift_group)
@@ -3450,386 +3407,6 @@ class MainWindow(QMainWindow):
         self._update_command_drift_controls()
         return page
 
-    def _build_external_tools_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setSpacing(12)
-
-        heading = QLabel("Ecosystem Tools")
-        heading.setObjectName("pageTitle")
-        heading.setFont(QFont(heading.font().family(), 20, QFont.Weight.Bold))
-        layout.addWidget(heading)
-        explanation = QLabel(
-            "Connect optional third-party tools without bundling or silently trusting them. Each adapter records the "
-            "resolved executable, SHA-256, and version or build identity before enabling one bounded read-only probe."
-        )
-        explanation.setWordWrap(True)
-        layout.addWidget(explanation)
-        boundary = QLabel(
-            "These tools use their own discovery, pairing, tunnel, simulator, device, network, and support models. "
-            "Their output is not merged into toolkit capability claims. Choosing an executable authorizes third-party "
-            "code to run locally only after the displayed path and hash are confirmed."
-        )
-        boundary.setObjectName("externalToolsBoundary")
-        boundary.setWordWrap(True)
-        layout.addWidget(boundary)
-
-        self.external_tool_tabs = QTabWidget()
-        self.external_tool_tabs.setObjectName("externalToolTabs")
-        for spec in external_tool_specs():
-            self.external_tool_tabs.addTab(self._build_external_tool_tab(spec), spec.title)
-        layout.addWidget(self.external_tool_tabs, 1)
-        self._update_external_tool_controls()
-        return page
-
-    def _build_external_tool_tab(self, spec: ExternalToolSpec) -> QWidget:
-        suffix = EXTERNAL_TOOL_OBJECT_SUFFIXES[spec.identifier]
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setSpacing(10)
-
-        scope = QLabel(
-            f"<b>{spec.title}</b> · {spec.license_name} · separately installed<br>{spec.scope}"
-        )
-        scope.setWordWrap(True)
-        layout.addWidget(scope)
-
-        path_layout = QHBoxLayout()
-        path_field = QLineEdit()
-        path_field.setObjectName(f"external{suffix}ExecutablePath")
-        path_field.setPlaceholderText(f"Absolute path to {spec.executable_name}")
-        path_field.textChanged.connect(self._external_tool_text_handler(spec.identifier))
-        path_layout.addWidget(path_field, 1)
-        choose_button = QPushButton("Choose…")
-        choose_button.setObjectName(f"external{suffix}ChooseButton")
-        choose_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.choose_external_tool))
-        path_layout.addWidget(choose_button)
-        find_button = QPushButton("Find Installed")
-        find_button.setObjectName(f"external{suffix}FindButton")
-        find_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.find_external_tool))
-        path_layout.addWidget(find_button)
-        layout.addLayout(path_layout)
-
-        status = QLabel("Not validated. The toolkit has not executed this optional tool.")
-        status.setObjectName(f"external{suffix}Status")
-        status.setWordWrap(True)
-        layout.addWidget(status)
-
-        actions = QHBoxLayout()
-        validate_button = QPushButton("Validate Version && SHA-256")
-        validate_button.setObjectName(f"external{suffix}ValidateButton")
-        validate_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.validate_external_tool))
-        actions.addWidget(validate_button)
-        probe_button = QPushButton(spec.probe_title)
-        probe_button.setObjectName(f"external{suffix}ProbeButton")
-        probe_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.run_external_tool_probe))
-        actions.addWidget(probe_button)
-        stop_button = QPushButton("Stop")
-        stop_button.setObjectName(f"external{suffix}StopButton")
-        stop_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.stop_external_tool))
-        actions.addWidget(stop_button)
-        actions.addStretch()
-        layout.addLayout(actions)
-
-        resources = QHBoxLayout()
-        setup_button = QPushButton("Copy Setup Command")
-        setup_button.setObjectName(f"external{suffix}SetupButton")
-        setup_button.clicked.connect(self._external_tool_button_handler(spec.identifier, self.copy_external_tool_setup))
-        resources.addWidget(setup_button)
-        documentation_button = QPushButton("Official Documentation")
-        documentation_button.setObjectName(f"external{suffix}DocumentationButton")
-        documentation_button.clicked.connect(
-            self._external_tool_button_handler(spec.identifier, self.open_external_tool_documentation)
-        )
-        resources.addWidget(documentation_button)
-        repository_button = QPushButton("Source Repository")
-        repository_button.setObjectName(f"external{suffix}RepositoryButton")
-        repository_button.clicked.connect(
-            self._external_tool_button_handler(spec.identifier, self.open_external_tool_repository)
-        )
-        resources.addWidget(repository_button)
-        resources.addStretch()
-        layout.addLayout(resources)
-
-        output = QPlainTextEdit()
-        output.setObjectName(f"external{suffix}Output")
-        output.setReadOnly(True)
-        output.setMaximumBlockCount(12000)
-        output.setPlaceholderText(
-            "Version validation and probe output appears here. It remains session-local unless you explicitly preserve it."
-        )
-        layout.addWidget(output, 1)
-
-        self._external_tool_fields[spec.identifier] = path_field
-        self._external_tool_statuses[spec.identifier] = status
-        self._external_tool_outputs[spec.identifier] = output
-        self._external_tool_validate_buttons[spec.identifier] = validate_button
-        self._external_tool_probe_buttons[spec.identifier] = probe_button
-        self._external_tool_stop_buttons[spec.identifier] = stop_button
-        self._external_tool_path_buttons[spec.identifier] = (choose_button, find_button)
-        return tab
-
-    def _external_tool_button_handler(
-        self,
-        identifier: ExternalToolIdentifier,
-        action: Callable[[ExternalToolIdentifier], None],
-    ) -> Callable[[bool], None]:
-        def handle(checked: bool) -> None:
-            del checked
-            action(identifier)
-
-        return handle
-
-    def _external_tool_text_handler(
-        self,
-        identifier: ExternalToolIdentifier,
-    ) -> Callable[[str], None]:
-        def handle(value: str) -> None:
-            self._invalidate_external_tool(identifier, value)
-
-        return handle
-
-    def _invalidate_external_tool(self, identifier: ExternalToolIdentifier, value: str) -> None:
-        del value
-        self._external_tool_installations.pop(identifier, None)
-        self._external_tool_statuses[identifier].setText(
-            "Not validated. The toolkit has not executed this optional tool."
-        )
-        self._update_external_tool_controls()
-
-    def external_tool_path(self, identifier: ExternalToolIdentifier) -> Path:
-        value = self._external_tool_fields[identifier].text().strip()
-        if not value:
-            spec = external_tool_spec(identifier)
-            raise ExternalToolValidationError(f"Choose an absolute path to {spec.executable_name}")
-        return Path(value)
-
-    def choose_external_tool(self, identifier: ExternalToolIdentifier) -> None:
-        spec = external_tool_spec(identifier)
-        selected, _ = QFileDialog.getOpenFileName(
-            self,
-            f"Choose separately installed {spec.executable_name}",
-            self._external_tool_fields[identifier].text() or str(Path.home()),
-        )
-        if selected:
-            self._external_tool_fields[identifier].setText(selected)
-
-    def find_external_tool(self, identifier: ExternalToolIdentifier) -> None:
-        spec = external_tool_spec(identifier)
-        candidates = discover_external_tool_executables(spec, Path.home(), os.environ.get("PATH", ""))
-        if not candidates:
-            QMessageBox.information(
-                self,
-                f"{spec.title} Not Found",
-                f"No executable named {spec.executable_name!r} was found in PATH, ~/.local/bin, "
-                "/opt/homebrew/bin, or /usr/local/bin. Use the official setup command or choose a reviewed path.",
-            )
-            return
-        self._external_tool_fields[identifier].setText(str(candidates[0]))
-        self._external_tool_statuses[identifier].setText(
-            f"Found {len(candidates)} candidate(s). Validate the selected executable before probing."
-        )
-
-    def copy_external_tool_setup(self, identifier: ExternalToolIdentifier) -> None:
-        spec = external_tool_spec(identifier)
-        QApplication.clipboard().setText("\n".join(spec.setup_commands))
-        self._external_tool_outputs[identifier].appendPlainText(
-            "Copied official setup command for manual review and execution in Terminal:\n"
-            + "\n".join(spec.setup_commands)
-        )
-
-    def open_external_tool_documentation(self, identifier: ExternalToolIdentifier) -> None:
-        spec = external_tool_spec(identifier)
-        if not QDesktopServices.openUrl(QUrl(spec.documentation_url)):
-            QMessageBox.critical(
-                self,
-                "Could Not Open Documentation",
-                f"macOS could not open the official {spec.title} documentation:\n{spec.documentation_url}",
-            )
-
-    def open_external_tool_repository(self, identifier: ExternalToolIdentifier) -> None:
-        spec = external_tool_spec(identifier)
-        if not QDesktopServices.openUrl(QUrl(spec.repository_url)):
-            QMessageBox.critical(
-                self,
-                "Could Not Open Repository",
-                f"macOS could not open the official {spec.title} repository:\n{spec.repository_url}",
-            )
-
-    def validate_external_tool(self, identifier: ExternalToolIdentifier) -> None:
-        if self._external_tool_controller.is_running():
-            QMessageBox.warning(self, "External Tool Running", "Stop or wait for the active external tool first.")
-            return
-        spec = external_tool_spec(identifier)
-        try:
-            executable = inspect_external_tool_executable(spec, self.external_tool_path(identifier))
-        except (ExternalToolValidationError, OSError) as error:
-            QMessageBox.critical(self, f"Invalid {spec.title} Executable", str(error))
-            self._external_tool_statuses[identifier].setText(f"Validation rejected: {error}")
-            return
-        warning = (
-            f"Run this separately installed {spec.title} executable to read its version or build identity?\n\n"
-            f"Path: {executable.path}\n"
-            f"SHA-256: {executable.sha256}\n"
-            f"Arguments: {shlex.join(spec.version_arguments)}\n\n"
-            "This executes third-party code on the Mac. The toolkit does not install, update, sandbox, endorse, or "
-            "redistribute it. Confirm only if you recognize and trust the exact path and hash."
-        )
-        if not self._confirm(f"Validate {spec.title}", warning):
-            return
-        try:
-            self._start_external_tool_process(identifier, "validate", executable, spec.version_arguments)
-        except (ExternalToolValidationError, OSError) as error:
-            QMessageBox.critical(self, f"Could Not Start {spec.title}", str(error))
-            self._external_tool_statuses[identifier].setText(f"Validation did not start: {error}")
-
-    def run_external_tool_probe(self, identifier: ExternalToolIdentifier) -> None:
-        if self._external_tool_controller.is_running():
-            QMessageBox.warning(self, "External Tool Running", "Stop or wait for the active external tool first.")
-            return
-        spec = external_tool_spec(identifier)
-        installation = self._external_tool_installations.get(identifier)
-        if installation is None:
-            QMessageBox.critical(self, f"{spec.title} Not Validated", "Validate the selected executable first.")
-            return
-        try:
-            validated = validate_external_tool_installation(spec, installation)
-        except (ExternalToolValidationError, OSError) as error:
-            self._external_tool_installations.pop(identifier, None)
-            self._external_tool_statuses[identifier].setText(f"Probe rejected: {error}")
-            self._update_external_tool_controls()
-            QMessageBox.critical(self, f"Could Not Run {spec.title}", str(error))
-            return
-        warning = (
-            f"Run the bounded read-only {spec.title} probe?\n\n"
-            f"Identity: {validated.version_or_build}\n"
-            f"Path: {validated.executable.path}\n"
-            f"SHA-256: {validated.executable.sha256}\n"
-            f"Arguments: {shlex.join(spec.probe_arguments)}\n\n"
-            f"{spec.scope}\n\n"
-            "The external tool chooses its own visible targets and does not use the toolkit's selected-device state. "
-            "Its output may contain device or simulator identifiers and remains session-local unless you preserve it."
-        )
-        if not self._confirm(f"Run {spec.probe_title}", warning):
-            return
-        try:
-            self._start_external_tool_process(identifier, "probe", validated.executable, spec.probe_arguments)
-        except (ExternalToolValidationError, OSError) as error:
-            QMessageBox.critical(self, f"Could Not Start {spec.title}", str(error))
-            self._external_tool_statuses[identifier].setText(f"Probe did not start: {error}")
-
-    def _start_external_tool_process(
-        self,
-        identifier: ExternalToolIdentifier,
-        operation: Literal["validate", "probe"],
-        executable: ExternalToolExecutable,
-        arguments: tuple[str, ...],
-    ) -> None:
-        if self._external_tool_controller.is_running():
-            raise RuntimeError("Cannot start an external tool while another adapter process is running")
-        spec = external_tool_spec(identifier)
-        current = inspect_external_tool_executable(spec, executable.path)
-        if current.sha256 != executable.sha256:
-            raise ExternalToolValidationError(
-                f"{spec.title} executable changed after review; inspect and validate it again"
-            )
-        self._external_tool_active_identifier = identifier
-        self._external_tool_operation = operation
-        self._external_tool_pending_executable = executable if operation == "validate" else None
-        output = self._external_tool_outputs[identifier]
-        output.clear()
-        output.appendPlainText(
-            f"$ {executable.path} {shlex.join(arguments)}\n"
-            f"Executable SHA-256: {executable.sha256}\n"
-            "Inherited tool-routing and secret environment variables are removed for this adapter.\n"
-        )
-        title = f"Validate {spec.title}" if operation == "validate" else spec.probe_title
-        self._begin_operation(
-            "external-tool",
-            self._host_operation_context(title, "Ecosystem Tools", f"external {spec.title} CLI", ()),
-        )
-        self._external_tool_statuses[identifier].setText(f"{title} is running with a 30-second deadline…")
-        request = finite_process_request(
-            external_tool_command(spec, executable),
-            arguments,
-            external_tool_environment(base_environment(), spec),
-            EXTERNAL_TOOL_TIMEOUT_MS,
-            PROCESS_TERMINATE_GRACE_MS,
-        )
-        self._external_tool_controller.start(request)
-        self._update_external_tool_controls()
-
-    def _external_tool_completed(self, result_object: object) -> None:
-        if not isinstance(result_object, OperationResult):
-            raise TypeError(f"Unexpected external-tool result type: {type(result_object).__name__}")
-        identifier = self._external_tool_active_identifier
-        operation = self._external_tool_operation
-        if identifier is None or operation is None:
-            raise RuntimeError("External tool completed without active adapter state")
-        spec = external_tool_spec(identifier)
-        output = self._external_tool_outputs[identifier]
-        combined = (result_object.stdout + result_object.stderr).decode("utf-8", errors="replace")
-        if combined:
-            output.appendPlainText(combined.rstrip())
-        if result_object.error_message:
-            output.appendPlainText(f"Process error: {result_object.error_message}")
-        output.appendPlainText(
-            f"Outcome: {result_object.outcome}; exit: "
-            f"{'unavailable' if result_object.exit_code is None else result_object.exit_code}"
-        )
-        self._complete_operation("external-tool", result_object)
-        if result_object.outcome == "succeeded" and operation == "validate":
-            pending = self._external_tool_pending_executable
-            if pending is None:
-                raise RuntimeError("External tool validation completed without a pending executable")
-            try:
-                identity = parse_external_tool_version(spec, combined)
-            except ExternalToolValidationError as error:
-                self._external_tool_installations.pop(identifier, None)
-                self._external_tool_statuses[identifier].setText(f"Version validation failed: {error}")
-            else:
-                self._external_tool_installations[identifier] = ExternalToolInstallation(pending, identity)
-                self._external_tool_statuses[identifier].setText(
-                    f"Validated {spec.title} {identity}; SHA-256 {pending.sha256}. Read-only probe is enabled."
-                )
-        elif result_object.outcome == "succeeded" and operation == "probe":
-            self._external_tool_statuses[identifier].setText(
-                f"{spec.probe_title} completed. Review the raw third-party output; it is not a toolkit capability verdict."
-            )
-        else:
-            self._external_tool_statuses[identifier].setText(
-                f"{spec.title} {operation} {result_object.outcome}; review the complete output."
-            )
-            if operation == "validate":
-                self._external_tool_installations.pop(identifier, None)
-        self._external_tool_active_identifier = None
-        self._external_tool_operation = None
-        self._external_tool_pending_executable = None
-        self._update_external_tool_controls()
-
-    def stop_external_tool(self, identifier: ExternalToolIdentifier) -> None:
-        if self._external_tool_active_identifier != identifier or not self._external_tool_controller.is_running():
-            return
-        spec = external_tool_spec(identifier)
-        self._external_tool_statuses[identifier].setText(f"Stopping {spec.title}…")
-        self._external_tool_controller.cancel()
-
-    def _update_external_tool_controls(self) -> None:
-        running = self._external_tool_controller.is_running()
-        active = self._external_tool_active_identifier
-        for spec in external_tool_specs():
-            identifier = spec.identifier
-            has_path = bool(self._external_tool_fields[identifier].text().strip())
-            self._external_tool_fields[identifier].setEnabled(not running)
-            choose_button, find_button = self._external_tool_path_buttons[identifier]
-            choose_button.setEnabled(not running)
-            find_button.setEnabled(not running)
-            self._external_tool_validate_buttons[identifier].setEnabled(not running and has_path)
-            self._external_tool_probe_buttons[identifier].setEnabled(
-                not running and identifier in self._external_tool_installations
-            )
-            self._external_tool_stop_buttons[identifier].setEnabled(running and active == identifier)
-
     def _build_manpages_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -3849,7 +3426,7 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setObjectName("manpageSplitter")
         index_frame = QFrame()
-        index_frame.setMinimumWidth(300)
+        index_frame.setMinimumWidth(240)
         index_layout = QVBoxLayout(index_frame)
         self.manpage_search_field = QLineEdit()
         self.manpage_search_field.setObjectName("manpageSearch")
@@ -3867,29 +3444,29 @@ class MainWindow(QMainWindow):
         self.manpage_title = QLabel("Select a help topic")
         self.manpage_title.setObjectName("manpageTitle")
         self.manpage_title.setFont(QFont(self.manpage_title.font().family(), 16, QFont.Weight.DemiBold))
+        self.manpage_title.setWordWrap(True)
         content_layout.addWidget(self.manpage_title)
         self.manpage_command = QLineEdit()
         self.manpage_command.setObjectName("manpageCommand")
         self.manpage_command.setReadOnly(True)
         content_layout.addWidget(self.manpage_command)
-        manpage_actions = QHBoxLayout()
+        manpage_actions = QGridLayout()
         self.refresh_manpage_button = QPushButton("Refresh Live Help")
         self.refresh_manpage_button.setObjectName("refreshManpageButton")
         self.refresh_manpage_button.clicked.connect(self.refresh_selected_manpage)
-        manpage_actions.addWidget(self.refresh_manpage_button)
+        manpage_actions.addWidget(self.refresh_manpage_button, 0, 0)
         self.cancel_manpage_button = QPushButton("Cancel Loading")
         self.cancel_manpage_button.setObjectName("cancelManpageButton")
         self.cancel_manpage_button.clicked.connect(self.cancel_manpage_load)
-        manpage_actions.addWidget(self.cancel_manpage_button)
+        manpage_actions.addWidget(self.cancel_manpage_button, 0, 1)
         self.copy_manpage_command_button = QPushButton("Copy Command Prefix")
         self.copy_manpage_command_button.setObjectName("copyManpageCommandButton")
         self.copy_manpage_command_button.clicked.connect(self.copy_selected_manpage_command)
-        manpage_actions.addWidget(self.copy_manpage_command_button)
+        manpage_actions.addWidget(self.copy_manpage_command_button, 1, 0)
         self.use_manpage_command_button = QPushButton("Use in Advanced Mode")
         self.use_manpage_command_button.setObjectName("useManpageCommandButton")
         self.use_manpage_command_button.clicked.connect(self.use_selected_manpage_command)
-        manpage_actions.addWidget(self.use_manpage_command_button)
-        manpage_actions.addStretch()
+        manpage_actions.addWidget(self.use_manpage_command_button, 1, 1)
         content_layout.addLayout(manpage_actions)
         self.manpage_output = QPlainTextEdit()
         self.manpage_output.setObjectName("manpageOutput")
@@ -3908,8 +3485,30 @@ class MainWindow(QMainWindow):
     def _build_safety_tab(self) -> QWidget:
         return build_safety_page(DEVELOPER_DISK_IMAGE_REPOSITORY)
 
+    def _palette_changed(self, palette: QPalette) -> None:
+        del palette
+        self._apply_style()
+
     def _apply_style(self) -> None:
-        self.setStyleSheet(toolkit_stylesheet())
+        application = QApplication.instance()
+        if not isinstance(application, QApplication):
+            raise RuntimeError("The toolkit appearance requires a QApplication")
+        palette = application.palette()
+        stylesheet = toolkit_stylesheet(palette)
+        if application.styleSheet() != stylesheet:
+            application.setStyleSheet(stylesheet)
+        for name, row in self._navigation_rows.items():
+            self.navigation_list.item(row).setIcon(interface_icon(name, palette))
+        for button, identifier in (
+            (self.refresh_devices_button, "refresh"),
+            (self.reconnect_device_button, "reconnect"),
+            (self.keyboard_shortcuts_button, "shortcuts"),
+            (self.support_bundle_button, "support"),
+            (self.session_activity_button, "activity"),
+        ):
+            button.setIcon(interface_icon(identifier, palette))
+        self._populate_capability_matrix()
+        self._populate_compatibility_history()
 
     def selected_device(self) -> IOSDevice | None:
         if self._demo_mode:
@@ -4183,13 +3782,14 @@ class MainWindow(QMainWindow):
         self._update_selected_command_readiness()
 
     def _capability_state_brush(self, state: CapabilityState) -> QBrush:
+        theme = appearance_colors(self.palette())
         colors: Mapping[CapabilityState, str] = {
-            "ready": "#dff3e4",
-            "attention": "#fff0c7",
-            "unavailable": "#ffdeda",
-            "blocked": "#eceff4",
-            "not-tested": "#f2f3f6",
-            "not-applicable": "#e8eef7",
+            "ready": theme["success"],
+            "attention": theme["warning"],
+            "unavailable": theme["danger"],
+            "blocked": theme["selection"],
+            "not-tested": theme["canvas"],
+            "not-applicable": theme["sidebar"],
         }
         color = colors.get(state)
         if color is None:
@@ -4221,6 +3821,7 @@ class MainWindow(QMainWindow):
                 item.setData(Qt.ItemDataRole.UserRole, result.identifier)
                 if column == 2:
                     item.setBackground(self._capability_state_brush(result.state))
+                    item.setForeground(QBrush(QColor(appearance_colors(self.palette())["ink"])))
                     item.setFont(QFont(item.font().family(), item.font().pointSize(), QFont.Weight.DemiBold))
                 self.capability_table.setItem(row, column, item)
             if result.identifier == selected_identifier:
@@ -4269,6 +3870,7 @@ class MainWindow(QMainWindow):
                         f"Observed: {observation.recorded_at}\n\nResult: {result.summary}\n\nEvidence: {result.evidence}"
                     )
                     item.setBackground(self._capability_state_brush(result.state))
+                item.setForeground(QBrush(QColor(appearance_colors(self.palette())["ink"])))
                 self.compatibility_history_table.setItem(row, column, item)
         header = self.compatibility_history_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -8007,7 +7609,6 @@ class MainWindow(QMainWindow):
         backup_running = self._backup_controller.is_running()
         collection_running = self._collection_controller.is_running()
         mvt_running = self._mvt_controller.is_running()
-        external_tool_running = self._external_tool_controller.is_running()
         critical_processes = tuple(
             process
             for process in (self._location_process,)
@@ -8021,7 +7622,6 @@ class MainWindow(QMainWindow):
             or backup_running
             or collection_running
             or mvt_running
-            or external_tool_running
             or self.apple_tools_page.is_running()
             or self.simulator_page.is_running()
             or self._console_controller.is_running()
@@ -8030,7 +7630,7 @@ class MainWindow(QMainWindow):
         if active_operations and not self._close_after_collection:
             should_close = self._confirm(
                 "Stop Active Operations?",
-                "A DDI, evidence, app, backup, MVT, ecosystem-tool, Location Lab, or Command Center operation is still running. "
+                "A DDI, evidence, app, backup, MVT, Location Lab, or Command Center operation is still running. "
                 "Stop it, allow cleanup/finalization, and close the app?",
             )
             if not should_close:
@@ -8064,7 +7664,6 @@ class MainWindow(QMainWindow):
         self._backup_controller.shutdown(10000, 3000)
         self._mvt_controller.shutdown(10000, 3000)
         self._clear_mvt_temporary_config()
-        self._external_tool_controller.shutdown(10000, 3000)
         self._collection_controller.shutdown(10000, 3000)
         capability_process = self._capability_process
         if capability_process is not None and capability_process.state() != QProcess.ProcessState.NotRunning:

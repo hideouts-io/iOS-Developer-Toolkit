@@ -12,6 +12,8 @@ from typing import Literal, Mapping, Sequence
 INTERNAL_PYMOBILEDEVICE3_FLAG = "--toolkit-internal-pymobiledevice3"
 INTERNAL_WORKER_FLAG = "--toolkit-internal-worker"
 INTERNAL_SMOKE_TEST_FLAG = "--toolkit-internal-smoke-test"
+INTERNAL_UI_CHECK_FLAG = "--toolkit-internal-ui-check"
+INTERNAL_DEMO_PREVIEW_FLAG = "--toolkit-internal-demo-preview"
 
 ToolkitWorker = Literal["backup", "capability", "collector", "ipa-inspector", "local-ddi", "developer-images"]
 

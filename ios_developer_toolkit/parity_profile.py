@@ -38,7 +38,7 @@ _SWIFT_WORKSPACES = {
     "firmware": "Firmware", "readiness": "Capability Matrix", "apps": "Installed Apps",
     "installApp": "Sideload IPA", "location": "Location Lab", "liveLogs": "Live Logs",
     "actions": "Command Center", "backup": "Backup", "evidence": "Evidence Capture",
-    "securityAnalysis": "Security Analysis", "externalTools": "Ecosystem Tools",
+    "securityAnalysis": "Security Analysis",
     "help": "Man Pages", "safety": "Scope & Safety",
 }
 
@@ -130,6 +130,10 @@ def _swift_import(record: Mapping[str, object]) -> ParityProfileImport:
     if not isinstance(version, int) or isinstance(version, bool) or version != 2:
         raise WorkspaceProfileError("Swift workspace profile must use schemaVersion 2")
     workspace = _string(record, "defaultWorkspace")
+    if workspace == "externalTools":
+        raise WorkspaceProfileError(
+            "Ecosystem Tools has been removed from Python. Choose another default workspace in Swift before exporting."
+        )
     mapped_workspace = _SWIFT_WORKSPACES.get(workspace)
     if mapped_workspace is None:
         raise WorkspaceProfileError(f"Swift workspace {workspace!r} has no Python profile destination; choose a supported workspace before exporting")

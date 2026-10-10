@@ -47,3 +47,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m ios_developer_toolkit --toolkit-internal-smoke-test
+      - name: Validate workspace layouts and themes
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m ios_developer_toolkit --toolkit-internal-ui-check "$RUNNER_TEMP/ui-check"

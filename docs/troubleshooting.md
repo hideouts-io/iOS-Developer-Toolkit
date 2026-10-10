@@ -9,7 +9,6 @@
 | Man Pages appears busy | Cancel the bounded request and retry from the current project environment | [Man Pages](https://github.com/hideouts-io/iOS-Developer-Toolkit#man-pages) |
 | Stream has no lines | Confirm the correct stream family, prerequisites, app activity, and raw spool state | [Live Logs](https://github.com/hideouts-io/iOS-Developer-Toolkit#live-logs) |
 | Backup fails | Encryption state, free space, destination freshness, unlock state | [Backup](https://github.com/hideouts-io/iOS-Developer-Toolkit#backup) |
-| Optional adapter fails | Exact executable path/hash, reported version/build, upstream requirements, independent target state | [Ecosystem Tools](https://github.com/hideouts-io/iOS-Developer-Toolkit#ecosystem-tools) |
 
 ## Use the built-in diagnostics
 
