@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
 import shlex
 import subprocess
 import sys
@@ -11,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Mapping
 
-from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRect, QTimer, QUrl, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QProcess, QProcessEnvironment, QRect, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QCloseEvent,
@@ -77,6 +78,18 @@ from ios_developer_toolkit.action_palette import (
     action_palette_entry,
     validate_action_palette,
 )
+from ios_developer_toolkit.apple_tools_page import AppleToolsPage
+from ios_developer_toolkit.apple_tools import AppleToolError, coredevice_mount_ddi
+from ios_developer_toolkit.parity_profile import (
+    ParityProfileImport,
+    load_parity_profile,
+    render_parity_profile_json,
+    render_parity_profile_preview,
+    write_parity_profile,
+)
+from ios_developer_toolkit.simulator_page import SimulatorToolsPage
+from ios_developer_toolkit.security_page import SecurityAnalysisPage
+from ios_developer_toolkit.firmware_page import FirmwarePage
 from ios_developer_toolkit.backup_process import BackupProcessController
 from ios_developer_toolkit.backup_protocol import BackupAction, BackupEvent, BackupRequest, BackupRequestError
 from ios_developer_toolkit.case_workflow import CaseWorkflowError, create_guided_case
@@ -122,6 +135,7 @@ from ios_developer_toolkit.device_compatibility import (
     write_compatibility_markdown_report,
 )
 from ios_developer_toolkit.demo_mode import demo_connection_banner, demo_device
+from ios_developer_toolkit.developer_images import DeveloperImageError, host_developer_images, inspect_developer_image
 from ios_developer_toolkit.external_tools import (
     ExternalToolExecutable,
     ExternalToolIdentifier,
@@ -262,17 +276,14 @@ from ios_developer_toolkit.ufade_connector import (
 )
 from ios_developer_toolkit.validation import output_indicates_failure
 from ios_developer_toolkit.workspace_profile import (
+    WORKSPACE_GROUPS,
     AppWorkflowPreferences,
     BackupWorkflowPreferences,
     EvidenceWorkflowPreferences,
     LocationWorkflowPreferences,
     WorkspaceProfile,
     WorkspaceProfileError,
-    load_workspace_profile,
-    render_workspace_profile_json,
-    render_workspace_profile_preview,
     validate_workspace_profile,
-    write_workspace_profile,
 )
 from ios_developer_toolkit.xcode_handoff import (
     XcodeHandoffError,
@@ -645,6 +656,7 @@ class MainWindow(QMainWindow):
         self._devices: tuple[IOSDevice, ...] = ()
         self._connection_diagnostic = initial_connection_diagnostic()
         self._demo_mode = False
+        self._local_developer_image_folder: Path | None = None
         self._demo_device = demo_device()
         self._active_device_identifier: str | None = None
         self._guided_udids: set[str] = set()
@@ -775,6 +787,10 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._configure_accessibility()
         self._configure_keyboard_shortcuts()
+        application = QApplication.instance()
+        if application is None:
+            raise RuntimeError("A QApplication is required before creating the toolkit window")
+        application.installEventFilter(self)
         self._scanner = DeviceScanner(self._pmd3)
         self._scanner.devices_changed.connect(self._devices_changed)
         self._scanner.scan_error.connect(self._scan_error)
@@ -810,31 +826,34 @@ class MainWindow(QMainWindow):
         title.setFont(QFont(title.font().family(), 24, QFont.Weight.Bold))
         subtitle = QLabel("iOS developer workbench • pymobiledevice3 • diagnostics • evidence")
         subtitle.setObjectName("appSubtitle")
+        subtitle.setWordWrap(True)
         title_block.addWidget(title)
         title_block.addWidget(subtitle)
         header_layout.addLayout(title_block)
         header_layout.addStretch()
+        device_controls = QHBoxLayout()
         self.device_combo = QComboBox()
         self.device_combo.setObjectName("devicePicker")
-        self.device_combo.setMinimumWidth(390)
+        self.device_combo.setMinimumWidth(320)
+        self.device_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.device_combo.currentIndexChanged.connect(self._device_selected)
-        header_layout.addWidget(self.device_combo)
+        device_controls.addWidget(self.device_combo, 1)
         self.demo_mode_button = QPushButton("Demo Mode")
         self.demo_mode_button.setObjectName("demoModeButton")
         self.demo_mode_button.setToolTip("Show a clearly simulated iPhone without connecting to a device")
         self.demo_mode_button.clicked.connect(self.toggle_demo_mode)
-        header_layout.addWidget(self.demo_mode_button)
+        device_controls.addWidget(self.demo_mode_button)
         self.refresh_devices_button = QPushButton("Retry Scan")
         self.refresh_devices_button.setObjectName("refreshDevicesButton")
         self.refresh_devices_button.clicked.connect(self._scanner_scan)
-        header_layout.addWidget(self.refresh_devices_button)
+        device_controls.addWidget(self.refresh_devices_button)
         self.reconnect_device_button = QPushButton("Reconnect & Retry…")
         self.reconnect_device_button.setObjectName("reconnectDeviceButton")
         self.reconnect_device_button.setToolTip(
             "Guide a physical reconnection and retry USB device discovery for 30 seconds."
         )
         self.reconnect_device_button.clicked.connect(self._reconnect_device)
-        header_layout.addWidget(self.reconnect_device_button)
+        device_controls.addWidget(self.reconnect_device_button)
         self.keyboard_shortcuts_button = QPushButton("Keyboard Shortcuts")
         self.keyboard_shortcuts_button.setObjectName("keyboardShortcutsButton")
         self.keyboard_shortcuts_button.setToolTip("Show keyboard shortcuts (⌘/)")
@@ -846,6 +865,7 @@ class MainWindow(QMainWindow):
         self.support_bundle_button.clicked.connect(self.create_support_bundle)
         header_layout.addWidget(self.support_bundle_button)
         root_layout.addLayout(header_layout)
+        root_layout.addLayout(device_controls)
 
         self.connection_banner = QLabel("Waiting for an unlocked and trusted iPhone or iPad over USB…")
         self.connection_banner.setObjectName("connectionBanner")
@@ -898,9 +918,22 @@ class MainWindow(QMainWindow):
         version_note.setWordWrap(True)
         sidebar_layout.addWidget(version_note)
         workspace.addWidget(sidebar)
+        self.workspace_sidebar = sidebar
 
         self.page_stack = QStackedWidget()
         self.page_stack.setObjectName("workspacePages")
+        self.simulator_page = SimulatorToolsPage(self)
+        self.apple_tools_page = AppleToolsPage(self)
+        self.security_page = SecurityAnalysisPage(self)
+        self.firmware_page = FirmwarePage(self)
+        self.simulator_page.operation_completed.connect(self._page_operation_completed)
+        self.apple_tools_page.operation_completed.connect(self._page_operation_completed)
+        self.simulator_page.live_log_opened.connect(self._register_native_log_window)
+        self.simulator_page.close_requested.connect(self.close)
+        self.apple_tools_page.live_log_opened.connect(self._register_native_log_window)
+        self.security_page.acquisitionRequested.connect(self.navigate_to_page)
+        self.security_page.becameIdle.connect(self._security_became_idle)
+        self._close_after_security = False
         pages = (
             ("Home", self._build_home_page()),
             ("Device & DDI", self._build_overview_tab()),
@@ -915,13 +948,35 @@ class MainWindow(QMainWindow):
             ("Ecosystem Tools", self._build_external_tools_page()),
             ("Man Pages", self._build_manpages_page()),
             ("Scope & Safety", self._build_safety_tab()),
+            ("Simulators", self.simulator_page),
+            ("Xcode Tools", self.apple_tools_page),
+            ("Security Analysis", self.security_page),
+            ("Firmware", self.firmware_page),
         )
         self._page_indices: dict[str, int] = {}
         for name, page in pages:
-            self._page_indices[name] = self.page_stack.addWidget(page)
-            self.navigation_list.addItem(QListWidgetItem(name))
-        self.navigation_list.currentRowChanged.connect(self.page_stack.setCurrentIndex)
-        self.navigation_list.setCurrentRow(0)
+            scroll = QScrollArea()
+            scroll.setObjectName(f"workspaceScroll{len(self._page_indices)}")
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(page)
+            self._page_indices[name] = self.page_stack.addWidget(scroll)
+        self._navigation_rows: dict[str, int] = {}
+        for group, names in WORKSPACE_GROUPS:
+            header = QListWidgetItem(group)
+            header.setFlags(Qt.ItemFlag.NoItemFlags)
+            font = header.font()
+            font.setBold(True)
+            header.setFont(font)
+            self.navigation_list.addItem(header)
+            for name in names:
+                if name in self._page_indices:
+                    item = QListWidgetItem(name)
+                    item.setData(Qt.ItemDataRole.UserRole, self._page_indices[name])
+                    self._navigation_rows[name] = self.navigation_list.count()
+                    self.navigation_list.addItem(item)
+        self.navigation_list.currentRowChanged.connect(self._workspace_row_changed)
+        self.navigation_list.setCurrentRow(self._navigation_rows["Home"])
         workspace.addWidget(self.page_stack)
         workspace.setStretchFactor(0, 0)
         workspace.setStretchFactor(1, 1)
@@ -1034,6 +1089,8 @@ class MainWindow(QMainWindow):
         self._add_application_shortcut("Meta+/", self.show_keyboard_shortcuts, "shortcutShowKeyboardReference")
         self._add_application_shortcut("Meta+Alt+Left", self.navigate_previous_workspace, "shortcutPreviousWorkspace")
         self._add_application_shortcut("Meta+Alt+Right", self.navigate_next_workspace, "shortcutNextWorkspace")
+        self._add_application_shortcut("Meta+Ctrl+S", self.toggle_workspace_sidebar, "shortcutToggleSidebar")
+        self._add_application_shortcut("Meta+Shift+R", self.refresh_capability_matrix, "shortcutRunReadiness")
         workspace_shortcuts = (
             ("Meta+1", "Home"),
             ("Meta+2", "Device & DDI"),
@@ -1086,6 +1143,10 @@ class MainWindow(QMainWindow):
             "Ecosystem Tools": self._external_tool_fields["go-ios"],
             "Man Pages": self.manpage_search_field,
             "Scope & Safety": self.navigation_list,
+            "Simulators": self.simulator_page.target_combo,
+            "Xcode Tools": self.apple_tools_page.target_combo,
+            "Security Analysis": self.security_page,
+            "Firmware": self.firmware_page,
         }
         target = focus_targets.get(name)
         if target is None:
@@ -1115,18 +1176,21 @@ class MainWindow(QMainWindow):
         target.selectAll()
 
     def navigate_previous_workspace(self) -> None:
-        count = self.navigation_list.count()
-        if count == 0:
+        rows = tuple(self._navigation_rows.values())
+        if not rows:
             raise RuntimeError("Workspace navigation contains no pages")
-        self.navigation_list.setCurrentRow((self.navigation_list.currentRow() - 1) % count)
+        self.navigation_list.setCurrentRow(rows[(rows.index(self.navigation_list.currentRow()) - 1) % len(rows)])
         self.focus_workspace_navigation()
 
     def navigate_next_workspace(self) -> None:
-        count = self.navigation_list.count()
-        if count == 0:
+        rows = tuple(self._navigation_rows.values())
+        if not rows:
             raise RuntimeError("Workspace navigation contains no pages")
-        self.navigation_list.setCurrentRow((self.navigation_list.currentRow() + 1) % count)
+        self.navigation_list.setCurrentRow(rows[(rows.index(self.navigation_list.currentRow()) + 1) % len(rows)])
         self.focus_workspace_navigation()
+
+    def toggle_workspace_sidebar(self) -> None:
+        self.workspace_sidebar.setVisible(not self.workspace_sidebar.isVisible())
 
     def show_keyboard_shortcuts(self) -> None:
         dialog = QDialog(self)
@@ -1145,6 +1209,8 @@ class MainWindow(QMainWindow):
             "<table>"
             "<tr><th align='left'>Shortcut</th><th align='left'>Action</th></tr>"
             "<tr><td>⌘ R</td><td>Retry device scan</td></tr>"
+            "<tr><td>⌘ ⇧ R</td><td>Run Capability Matrix</td></tr>"
+            "<tr><td>⌘ ⌃ S</td><td>Show or hide the sidebar</td></tr>"
             "<tr><td>⌘ K</td><td>Open the eligible Action Palette</td></tr>"
             "<tr><td>⌘ L</td><td>Focus workspace navigation</td></tr>"
             "<tr><td>⌘ F</td><td>Focus search in Command Center, Man Pages, Installed Apps, or Location Lab</td></tr>"
@@ -1190,6 +1256,10 @@ class MainWindow(QMainWindow):
             "Ecosystem Tools": "Validate optional go-ios, idb, and ipsw adapters and run bounded read-only probes.",
             "Man Pages": "Browse version-matched command routes and live help.",
             "Scope & Safety": "Review authorization, privacy, and interpretation boundaries.",
+            "Firmware": "Manage IPSWs, inspect signing and bind an explicit Update or Restore to one target.",
+            "Simulators": "Select a simulator for apps, lifecycle, location, screenshots and logs.",
+            "Xcode Tools": "Use explicit CoreDevice targets, Instruments, saved logs and sysdiagnose.",
+            "Security Analysis": "Analyze selected local evidence with attributable IOC intelligence and coverage reports.",
         }
         entries: list[ActionPaletteEntry] = [
             action_palette_entry(
@@ -1480,7 +1550,7 @@ class MainWindow(QMainWindow):
                 name=name,
                 description=description,
                 default_workspace=current_item.text(),
-                ddi_source="local-xcode" if self.local_radio.isChecked() else "personalized",
+                ddi_source="core-device" if self.coredevice_ddi_radio.isChecked() else "custom-local" if self.custom_ddi_radio.isChecked() else "local-xcode" if self.local_radio.isChecked() else "personalized",
                 command_category=self.command_category_combo.currentText(),
                 command_preset=preset.identifier,
                 app_workflow=AppWorkflowPreferences(
@@ -1543,14 +1613,20 @@ class MainWindow(QMainWindow):
         if metadata is None:
             return
         try:
-            profile = self._workspace_profile_from_controls(*metadata)
+            profile = ParityProfileImport(
+                self._workspace_profile_from_controls(*metadata),
+                self.include_system_apps_checkbox.isChecked(),
+                self.include_oslog_archive.isChecked(),
+                self.include_instruments_logging.isChecked(),
+                (),
+            )
         except WorkspaceProfileError as error:
             QMessageBox.critical(self, "Could Not Prepare Workspace Profile", str(error))
             return
         if not self._review_workspace_profile(
             "Review Workspace Profile Export",
             "Review the exact JSON before saving. The application never uploads the file.",
-            render_workspace_profile_json(profile),
+            render_parity_profile_json(profile),
             "Save Profile",
         ):
             return
@@ -1568,7 +1644,7 @@ class MainWindow(QMainWindow):
         if destination.suffix.casefold() != ".json":
             destination = destination.with_suffix(".json")
         try:
-            path = write_workspace_profile(destination, profile)
+            path = write_parity_profile(destination, profile)
         except WorkspaceProfileError as error:
             QMessageBox.critical(self, "Could Not Export Workspace Profile", str(error))
             return
@@ -1599,6 +1675,11 @@ class MainWindow(QMainWindow):
             and self._location_process is None
             and all(not controller.is_running() for controller in finite_controllers)
             and all(not controller.is_running() for controller in stream_controllers)
+            and not self.apple_tools_page.is_running()
+            and not self.simulator_page.is_running()
+            and not self.security_page.is_running()
+            and not self.firmware_page.is_running()
+            and all(not window.is_running() for window in self._live_log_windows)
         )
 
     def import_workspace_profile(self) -> None:
@@ -1618,26 +1699,32 @@ class MainWindow(QMainWindow):
         if not selected:
             return
         try:
-            profile = load_workspace_profile(Path(selected))
+            profile = load_parity_profile(Path(selected))
         except WorkspaceProfileError as error:
             QMessageBox.critical(self, "Invalid Workspace Profile", str(error))
             return
         if not self._review_workspace_profile(
             "Review Workspace Profile Import",
             "Review every control change. Applying this profile never runs a command or starts a device operation.",
-            render_workspace_profile_preview(profile),
+            render_parity_profile_preview(profile),
             "Apply Profile",
         ):
             return
         try:
-            self._apply_workspace_profile(profile)
+            self._apply_workspace_profile(profile.profile)
+            if profile.include_system_apps is not None:
+                self.include_system_apps_checkbox.setChecked(profile.include_system_apps)
+            if profile.include_oslog_archive is not None:
+                self.include_oslog_archive.setChecked(profile.include_oslog_archive)
+            if profile.include_instruments_logging is not None:
+                self.include_instruments_logging.setChecked(profile.include_instruments_logging)
         except WorkspaceProfileError as error:
             QMessageBox.critical(self, "Could Not Apply Workspace Profile", str(error))
             return
         QMessageBox.information(
             self,
             "Workspace Profile Applied",
-            f"Applied {profile.name!r}. No command or device operation was started.",
+            f"Applied {profile.profile.name!r}. No command or device operation was started.",
         )
 
     def _apply_workspace_profile(self, profile: WorkspaceProfile) -> None:
@@ -1646,6 +1733,8 @@ class MainWindow(QMainWindow):
             raise WorkspaceProfileError("An operation started while the workspace profile was being reviewed")
         self.personalized_radio.setChecked(validated.ddi_source == "personalized")
         self.local_radio.setChecked(validated.ddi_source == "local-xcode")
+        self.custom_ddi_radio.setChecked(validated.ddi_source == "custom-local")
+        self.coredevice_ddi_radio.setChecked(validated.ddi_source == "core-device")
         self.command_category_combo.setCurrentText(validated.command_category)
         self.command_search_field.clear()
         matching_rows = tuple(
@@ -1830,10 +1919,35 @@ class MainWindow(QMainWindow):
         return build_home_page(len(self._presets), len(self._manpages), self.navigate_to_page)
 
     def navigate_to_page(self, name: str) -> None:
-        index = self._page_indices.get(name)
+        index = self._navigation_rows.get(name)
         if index is None:
             raise KeyError(f"Unknown workspace page: {name}")
         self.navigation_list.setCurrentRow(index)
+
+    def _workspace_row_changed(self, row: int) -> None:
+        item = self.navigation_list.item(row)
+        if item is None:
+            return
+        index = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(index, int):
+            self.page_stack.setCurrentIndex(index)
+
+    def _page_operation_completed(self, context: object, result: object) -> None:
+        if not isinstance(context, OperationContext) or not isinstance(result, OperationResult):
+            raise TypeError("Native page completion requires typed operation context and result")
+        self._operation_records = append_operation_record(self._operation_records, operation_record(context, result), MAX_SESSION_OPERATION_RECORDS)
+        self.session_activity_button.setText(f"Session Activity ({len(self._operation_records)})")
+
+    def _register_native_log_window(self, window: object) -> None:
+        if not isinstance(window, LiveLogWindow):
+            raise TypeError("Simulator log window has an unexpected type")
+        window.closed.connect(self._live_log_window_closed)
+        self._live_log_windows.add(window)
+
+    def _security_became_idle(self) -> None:
+        if self._close_after_security:
+            self._close_after_security = False
+            QTimer.singleShot(0, self.close)
 
     def _navigation_handler(self, name: str) -> Callable[[bool], None]:
         def navigate(checked: bool) -> None:
@@ -1932,9 +2046,32 @@ class MainWindow(QMainWindow):
         self.personalized_radio.setChecked(True)
         self.local_radio = QRadioButton(f"Local Apple/Xcode DDI — {XCODE_CANDIDATE_DDI}")
         self.local_radio.setObjectName("localDDIRadio")
+        self.custom_ddi_radio = QRadioButton("Selected local image folder — exact model/version checks")
+        self.custom_ddi_radio.setObjectName("customLocalDDIRadio")
+        self.coredevice_ddi_radio = QRadioButton("CoreDevice — let Xcode prepare the selected target")
+        self.coredevice_ddi_radio.setObjectName("coreDeviceDDIRadio")
         self.personalized_radio.toggled.connect(self._ddi_source_changed)
+        self.local_radio.toggled.connect(self._ddi_source_changed)
+        self.custom_ddi_radio.toggled.connect(self._ddi_source_changed)
+        self.coredevice_ddi_radio.toggled.connect(self._ddi_source_changed)
         ddi_layout.addWidget(self.personalized_radio)
         ddi_layout.addWidget(self.local_radio)
+        ddi_layout.addWidget(self.custom_ddi_radio)
+        ddi_layout.addWidget(self.coredevice_ddi_radio)
+        local_row = QHBoxLayout()
+        self.local_image_combo = QComboBox()
+        self.local_image_combo.setObjectName("localDeveloperImageInventory")
+        self.local_image_combo.currentIndexChanged.connect(self._local_image_selected)
+        local_row.addWidget(self.local_image_combo, 1)
+        scan_local = QPushButton("Scan Xcode Images")
+        scan_local.setObjectName("scanLocalDeveloperImagesButton")
+        scan_local.clicked.connect(self.scan_local_developer_images)
+        local_row.addWidget(scan_local)
+        choose_local = QPushButton("Choose Image Folder…")
+        choose_local.setObjectName("chooseLocalDeveloperImageButton")
+        choose_local.clicked.connect(self.choose_local_developer_image)
+        local_row.addWidget(choose_local)
+        ddi_layout.addLayout(local_row)
         self.ddi_description = QTextBrowser()
         self.ddi_description.setObjectName("ddiDescription")
         self.ddi_description.setOpenExternalLinks(True)
@@ -2471,12 +2608,16 @@ class MainWindow(QMainWindow):
         self.include_pcap.setChecked(True)
         self.include_screenshot = QCheckBox("Capture current screen")
         self.include_crash_pull = QCheckBox("Pull all crash reports")
+        self.include_oslog_archive = QCheckBox("Saved OSLog archive (last hour, Apple log collect)")
+        self.include_instruments_logging = QCheckBox("Instruments Logging trace and exported os-log XML")
         for checkbox, name in (
             (self.include_syslog, "includeSyslog"),
             (self.include_oslog, "includeDVTOSLog"),
             (self.include_pcap, "includePCAP"),
             (self.include_screenshot, "includeScreenshot"),
             (self.include_crash_pull, "includeCrashPull"),
+            (self.include_oslog_archive, "includeOSLogArchive"),
+            (self.include_instruments_logging, "includeInstrumentsLogging"),
         ):
             checkbox.setObjectName(name)
         options_layout.addWidget(self.include_syslog, 0, 0)
@@ -2484,12 +2625,14 @@ class MainWindow(QMainWindow):
         options_layout.addWidget(self.include_pcap, 1, 0)
         options_layout.addWidget(self.include_screenshot, 1, 1)
         options_layout.addWidget(self.include_crash_pull, 2, 0)
+        options_layout.addWidget(self.include_oslog_archive, 2, 1)
+        options_layout.addWidget(self.include_instruments_logging, 3, 0, 1, 2)
         coverage_note = QLabel(
             "Every run also inventories lockdown, mounted images, diagnostics, MobileGestalt, IORegistry, battery, apps, "
             "processes, profiles, provisioning, AFC, crash names, DVT device data, DVT sysmon, and the DVT root listing."
         )
         coverage_note.setWordWrap(True)
-        options_layout.addWidget(coverage_note, 3, 0, 1, 2)
+        options_layout.addWidget(coverage_note, 4, 0, 1, 2)
         layout.addWidget(options_group)
 
         privacy = QLabel(
@@ -2615,6 +2758,11 @@ class MainWindow(QMainWindow):
         self.calculate_app_sizes_checkbox = QCheckBox("Calculate sizes")
         self.calculate_app_sizes_checkbox.setObjectName("calculateInstalledAppSizes")
         controls.addWidget(self.calculate_app_sizes_checkbox)
+        self.include_system_apps_checkbox = QCheckBox("Include built-in apps")
+        self.include_system_apps_checkbox.setObjectName("includeSystemApps")
+        self.include_system_apps_checkbox.setChecked(True)
+        self.include_system_apps_checkbox.toggled.connect(self._filter_installed_apps)
+        controls.addWidget(self.include_system_apps_checkbox)
         self.refresh_apps_button = QPushButton("Refresh")
         self.refresh_apps_button.setObjectName("refreshInstalledAppsButton")
         self.refresh_apps_button.clicked.connect(self.refresh_app_inventory)
@@ -2648,6 +2796,10 @@ class MainWindow(QMainWindow):
         self.copy_bundle_id_button.setObjectName("copyInstalledAppBundleID")
         self.copy_bundle_id_button.clicked.connect(self.copy_selected_bundle_identifier)
         action_row.addWidget(self.copy_bundle_id_button)
+        self.launch_app_button = QPushButton("Launch Selected…")
+        self.launch_app_button.setObjectName("launchSelectedAppButton")
+        self.launch_app_button.clicked.connect(self.launch_selected_application)
+        action_row.addWidget(self.launch_app_button)
         self.uninstall_app_button = QPushButton("Uninstall Selected…")
         self.uninstall_app_button.setObjectName("uninstallSelectedAppButton")
         self.uninstall_app_button.clicked.connect(self.uninstall_selected_application)
@@ -3950,6 +4102,10 @@ class MainWindow(QMainWindow):
         return self.selected_device()
 
     def _update_device_fields(self, device: IOSDevice | None) -> None:
+        self.apple_tools_page.set_device(device, self._demo_mode)
+        self.firmware_page.set_device(device, self._demo_mode)
+        self.simulator_page.set_demo_mode(self._demo_mode)
+        self.security_page.set_device(None if device is None else device.identifier)
         identifier = device.identifier if device is not None else None
         if identifier != self._active_device_identifier:
             if self._active_case_path is not None and not self._collection_controller.is_running():
@@ -4546,6 +4702,22 @@ class MainWindow(QMainWindow):
                 "<code>~/.pymobiledevice3/Xcode_iOS_DDI_Personalized</code>, requests an Apple TSS ticket, and mounts "
                 "the result at <code>/System/Developer</code>. This is the simplest current path."
             )
+        elif self.coredevice_ddi_radio.isChecked():
+            self.mount_button.setText("Prepare CoreDevice DDI")
+            self.remove_button.setText("Unmount Personalized DDI")
+            self.ddi_description.setPlainText(
+                "Xcode's devicectl prepares and mounts its preferred developer image on the exact selected target. "
+                "This may download and personalize an image. Inspect preferred images and update host DDIs in Xcode Tools."
+            )
+        elif self.custom_ddi_radio.isChecked():
+            self.mount_button.setText("Mount Selected Local Image")
+            self.remove_button.setText("Unmount Selected Local Image")
+            self.ddi_description.setPlainText(
+                "Choose a complete personalized Restore folder or a version-named legacy DeveloperDiskImage folder. "
+                "The worker rechecks the selected USB target, exact legacy version/build or personalized model/chip/board, "
+                "and sends personalization to Apple over verified HTTPS. No image is downloaded. "
+                f"Selected folder: {self._local_developer_image_folder or 'Choose a folder first'}"
+            )
         else:
             exists_text = "available" if XCODE_CANDIDATE_DDI.is_file() else "not found"
             self.mount_button.setText("Install Local Xcode DDI Cryptex")
@@ -4557,12 +4729,62 @@ class MainWindow(QMainWindow):
                 "The outer DMG itself is never sent directly to iOS."
             )
 
+    def scan_local_developer_images(self) -> None:
+        try:
+            sources = host_developer_images(Path("/Applications"), Path("/Library/Developer/DeveloperDiskImages/iOS_DDI/Restore"))
+        except (DeveloperImageError, OSError, plistlib.InvalidFileException) as error:
+            QMessageBox.critical(self, "Local Image Inventory Failed", str(error))
+            return
+        self.local_image_combo.clear()
+        self.local_image_combo.addItem("Choose a local Xcode image…", None)
+        for source in sources:
+            self.local_image_combo.addItem(f"{source.kind} · {source.version} ({source.build or 'build unspecified'})", str(source.folder))
+        self.action_output.appendPlainText(f"Found {len(sources)} complete local developer image folders.")
+
+    def _local_image_selected(self, index: int) -> None:
+        value = self.local_image_combo.itemData(index)
+        if isinstance(value, str):
+            self._local_developer_image_folder = Path(value)
+            self.custom_ddi_radio.setChecked(True)
+            self._ddi_source_changed()
+
+    def choose_local_developer_image(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "Choose Developer Image Folder", str(Path.home()))
+        if not selected:
+            return
+        try:
+            source = inspect_developer_image(Path(selected))
+        except (DeveloperImageError, OSError, plistlib.InvalidFileException) as error:
+            QMessageBox.critical(self, "Invalid Developer Image Folder", str(error))
+            return
+        self._local_developer_image_folder = source.folder
+        self.custom_ddi_radio.setChecked(True)
+        self._ddi_source_changed()
+
     def mount_selected_ddi(self) -> None:
         device = self.selected_device()
         if device is None:
             self._show_no_device()
             return
         profile = guided_action_safety("device-change")
+        if self.coredevice_ddi_radio.isChecked():
+            try:
+                operation = coredevice_mount_ddi(device.identifier)
+            except AppleToolError as error:
+                QMessageBox.critical(self, "CoreDevice DDI Unavailable", str(error))
+                return
+            if self._confirm_action("Prepare CoreDevice DDI", "Allow Xcode to download, personalize and mount its preferred image on the selected target?", profile, device.identifier):
+                self._start_action(operation.command, operation.arguments, base_environment(), "mount-coredevice", operation.timeout_seconds * 1000, self._device_operation_context(operation.title, "Device & DDI", "Xcode CoreDevice", device, ()))
+            return
+        if self.custom_ddi_radio.isChecked():
+            folder = self._local_developer_image_folder
+            if folder is None:
+                QMessageBox.information(self, "Choose a Local Image", "Scan Xcode images or choose an image folder first.")
+                return
+            if not self._confirm_action("Mount Local Developer Image", "Mount the selected local image? Personalized images send the target ECID, chip, board and nonce to Apple's HTTPS signing server. The device's mounted image state changes.", profile, device.identifier):
+                return
+            self._start_action(worker_command("developer-images"), ("--folder", str(folder), "--udid", device.identifier), base_environment(), "mount-custom-local", DDI_ACTION_TIMEOUT_MS, self._device_operation_context("Mount Selected Local Developer Image", "Device & DDI", "local image mounter with HTTPS personalization", device, ()))
+            return
         if self.personalized_radio.isChecked():
             prompt = (
                 "Mount the downloaded personalized Developer Disk Image?\n\n"
@@ -4606,13 +4828,33 @@ class MainWindow(QMainWindow):
             self._show_no_device()
             return
         profile = guided_action_safety("device-change")
-        if self.personalized_radio.isChecked():
+        if self.custom_ddi_radio.isChecked():
+            folder = self._local_developer_image_folder
+            if folder is None:
+                QMessageBox.information(self, "Choose a Local Image", "Choose the image folder to identify the mounted image type.")
+                return
+            try:
+                source = inspect_developer_image(folder)
+            except (DeveloperImageError, OSError, plistlib.InvalidFileException) as error:
+                QMessageBox.critical(self, "Invalid Developer Image Folder", str(error))
+                return
+            if self._confirm_action("Unmount Local Developer Image", "Unmount the selected local developer image from the selected device?", profile, device.identifier):
+                if self.selected_device() != device:
+                    QMessageBox.warning(self, "Selection Changed", "The selected device changed during confirmation. Select and review the intended target again.")
+                    return
+                route = "umount-developer" if source.kind == "legacy" else "umount-personalized"
+                self._run_pmd3_action(("mounter", route), "unmount-personalized")
+            return
+        if self.personalized_radio.isChecked() or self.coredevice_ddi_radio.isChecked():
             if self._confirm_action(
                 "Unmount Personalized DDI",
                 "Unmount the personalized image from /System/Developer?",
                 profile,
                 device.identifier,
             ):
+                if self.selected_device() != device:
+                    QMessageBox.warning(self, "Selection Changed", "The selected device changed during confirmation. Select and review the intended target again.")
+                    return
                 self._record_action_approval(self.action_output, "Unmount Personalized DDI", profile)
                 self._run_pmd3_action(("mounter", "umount-personalized"), "unmount-personalized")
             return
@@ -4626,7 +4868,7 @@ class MainWindow(QMainWindow):
             self._run_pmd3_action(("cryptex", "uninstall", "com.apple.MobileAsset.DDI"), "uninstall-local-cryptex")
 
     def list_mounted_images(self) -> None:
-        arguments = ("mounter", "list") if self.personalized_radio.isChecked() else ("cryptex", "list")
+        arguments = ("cryptex", "list") if self.local_radio.isChecked() else ("mounter", "list")
         self._run_pmd3_action(arguments, "list-images")
 
     def show_coredevice_details(self) -> None:
@@ -5551,6 +5793,8 @@ class MainWindow(QMainWindow):
             (self.include_pcap.isChecked(), "--include-pcap"),
             (self.include_screenshot.isChecked(), "--include-screenshot"),
             (self.include_crash_pull.isChecked(), "--include-crash-pull"),
+            (self.include_oslog_archive.isChecked(), "--include-oslog-archive"),
+            (self.include_instruments_logging.isChecked(), "--include-instruments-logging"),
         ):
             if enabled:
                 arguments.append(flag)
@@ -5862,7 +6106,7 @@ class MainWindow(QMainWindow):
         self._apps_context = context
         self.apps_output.appendPlainText(f"\n$ pymobiledevice3 {shlex.join(arguments)}\n")
         self.apps_status.setText(f"Running {context} operation on {device.display_name()}…")
-        titles = {"inventory": "Refresh Installed Apps", "uninstall": "Uninstall Application"}
+        titles = {"inventory": "Refresh Installed Apps", "uninstall": "Uninstall Application", "launch": "Launch Application"}
         title = titles.get(context)
         if title is None:
             raise KeyError(f"Unknown Installed Apps operation context: {context}")
@@ -5908,6 +6152,8 @@ class MainWindow(QMainWindow):
                 self._installed_apps = apps
                 self._populate_installed_apps(apps)
                 self.apps_status.setText(f"Loaded {len(apps)} installed applications.")
+        elif succeeded and context == "launch":
+            self.apps_status.setText("Application launch completed.")
         elif succeeded and context == "uninstall":
             self.apps_status.setText("Application uninstalled successfully. Refreshing inventory…")
         if not succeeded:
@@ -5948,21 +6194,27 @@ class MainWindow(QMainWindow):
                 self.installed_apps_table.setItem(row, column, item)
         self.installed_apps_table.setSortingEnabled(True)
         self._filter_installed_apps(self.app_filter_field.text())
-        self._update_apps_controls()
 
-    def _filter_installed_apps(self, value: str) -> None:
-        needle = value.strip().casefold()
+    def _filter_installed_apps(self, value: str | bool) -> None:
+        del value
+        needle = self.app_filter_field.text().strip().casefold()
         for row in range(self.installed_apps_table.rowCount()):
             searchable = " ".join(
                 self.installed_apps_table.item(row, column).text()
                 for column in range(self.installed_apps_table.columnCount())
                 if self.installed_apps_table.item(row, column) is not None
             ).casefold()
-            self.installed_apps_table.setRowHidden(row, bool(needle) and needle not in searchable)
+            type_item = self.installed_apps_table.item(row, 4)
+            is_system = type_item is not None and type_item.text().casefold() == "system"
+            hidden = (bool(needle) and needle not in searchable) or (is_system and not self.include_system_apps_checkbox.isChecked())
+            self.installed_apps_table.setRowHidden(row, hidden)
+        if any(self.installed_apps_table.isRowHidden(index.row()) for index in self.installed_apps_table.selectionModel().selectedRows()):
+            self.installed_apps_table.clearSelection()
+        self._update_apps_controls()
 
     def selected_installed_bundle_identifier(self) -> str | None:
         selected_rows = self.installed_apps_table.selectionModel().selectedRows()
-        if len(selected_rows) != 1:
+        if len(selected_rows) != 1 or self.installed_apps_table.isRowHidden(selected_rows[0].row()):
             return None
         item = self.installed_apps_table.item(selected_rows[0].row(), 1)
         return item.text() if item is not None else None
@@ -5976,7 +6228,9 @@ class MainWindow(QMainWindow):
         selected = self.selected_installed_bundle_identifier() is not None
         self.refresh_apps_button.setEnabled(device_available and not running)
         self.calculate_app_sizes_checkbox.setEnabled(not running)
+        self.include_system_apps_checkbox.setEnabled(not running)
         self.copy_bundle_id_button.setEnabled(selected and not running)
+        self.launch_app_button.setEnabled(device_available and selected and not running)
         self.uninstall_app_button.setEnabled(device_available and selected and not running)
         self.stop_apps_button.setEnabled(running)
 
@@ -5987,6 +6241,28 @@ class MainWindow(QMainWindow):
             return
         QApplication.clipboard().setText(bundle_identifier)
         self.apps_status.setText(f"Copied {bundle_identifier} to the clipboard.")
+
+    def launch_selected_application(self) -> None:
+        device = self.selected_device()
+        selected_identifier = self.selected_installed_bundle_identifier()
+        if device is None:
+            self._show_no_device()
+            return
+        if selected_identifier is None:
+            QMessageBox.information(self, "No App Selected", "Select one application row first.")
+            return
+        try:
+            bundle_identifier = validate_bundle_identifier(selected_identifier)
+        except IPAInspectionError as error:
+            QMessageBox.critical(self, "Invalid Bundle Identifier", str(error))
+            return
+        profile = guided_action_safety("device-change")
+        if self._confirm_action("Launch Application", f"Launch {bundle_identifier} on {device.display_name()}?", profile, device.identifier):
+            if self.selected_device() != device or self.selected_installed_bundle_identifier() != bundle_identifier:
+                QMessageBox.warning(self, "Selection Changed", "The selected device or application changed during confirmation. Select and review the intended target again.")
+                return
+            self._record_action_approval(self.apps_output, "Launch Application", profile)
+            self._start_apps_action(("developer", "dvt", "launch", "--no-kill-existing", bundle_identifier), "launch")
 
     def uninstall_selected_application(self) -> None:
         device = self.selected_device()
@@ -7694,7 +7970,28 @@ class MainWindow(QMainWindow):
         )
         return False
 
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Quit:
+            if not self.firmware_page.can_close():
+                return True
+            if self.isVisible():
+                QTimer.singleShot(0, self.close)
+                return True
+        return super().eventFilter(watched, event)
+
     def closeEvent(self, event: QCloseEvent) -> None:
+        if not self.firmware_page.can_close():
+            QMessageBox.information(self, "Firmware Operation Running", "Wait for the Firmware operation to finish. Read operations and downloads can be stopped from Firmware; installation cannot be interrupted by closing the app.")
+            event.ignore()
+            return
+        if self.security_page.is_running():
+            self._close_after_security = True
+            self.security_page.shutdown()
+            event.ignore()
+            return
+        if not self.simulator_page.prepare_close():
+            event.ignore()
+            return
         if not self._prepare_location_for_close():
             event.ignore()
             return
@@ -7725,6 +8022,8 @@ class MainWindow(QMainWindow):
             or collection_running
             or mvt_running
             or external_tool_running
+            or self.apple_tools_page.is_running()
+            or self.simulator_page.is_running()
             or self._console_controller.is_running()
             or critical_processes
         )
@@ -7746,7 +8045,14 @@ class MainWindow(QMainWindow):
                 self.stop_collection()
             event.ignore()
             return
+        if not self.firmware_page.can_close():
+            QMessageBox.information(self, "Firmware Operation Running", "A Firmware read started while close was being reviewed. Wait for it to finish or stop it from Firmware before closing.")
+            event.ignore()
+            return
+        self.firmware_page.shutdown()
         self._scanner.stop()
+        self.apple_tools_page.shutdown()
+        self.simulator_page.shutdown()
         self._reconnect_timeout_timer.stop()
         self._manpage_controller.shutdown(3000, 1000)
         self._command_drift_controller.shutdown(3000, 1000)

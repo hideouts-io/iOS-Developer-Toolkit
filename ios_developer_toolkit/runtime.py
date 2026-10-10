@@ -13,7 +13,7 @@ INTERNAL_PYMOBILEDEVICE3_FLAG = "--toolkit-internal-pymobiledevice3"
 INTERNAL_WORKER_FLAG = "--toolkit-internal-worker"
 INTERNAL_SMOKE_TEST_FLAG = "--toolkit-internal-smoke-test"
 
-ToolkitWorker = Literal["backup", "capability", "collector", "ipa-inspector", "local-ddi"]
+ToolkitWorker = Literal["backup", "capability", "collector", "ipa-inspector", "local-ddi", "developer-images"]
 
 
 @dataclass(frozen=True)
@@ -131,6 +131,8 @@ def worker_module(worker: ToolkitWorker) -> str:
         return "ios_developer_toolkit.ipa_inspector"
     if worker == "local-ddi":
         return "ios_developer_toolkit.local_ddi"
+    if worker == "developer-images":
+        return "ios_developer_toolkit.developer_images"
     raise ValueError(f"Unsupported toolkit worker: {worker}")
 
 

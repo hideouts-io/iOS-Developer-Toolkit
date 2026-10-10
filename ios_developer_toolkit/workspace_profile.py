@@ -25,8 +25,20 @@ WORKSPACE_NAMES = (
     "Ecosystem Tools",
     "Man Pages",
     "Scope & Safety",
+    "Firmware",
+    "Security Analysis",
+    "Simulators",
+    "Xcode Tools",
 )
-DDI_SOURCES = ("personalized", "local-xcode")
+DDI_SOURCES = ("personalized", "local-xcode", "custom-local", "core-device")
+
+WORKSPACE_GROUPS = (
+    ("Start", ("Home",)),
+    ("Device", ("Device & DDI", "Firmware", "Capability Matrix", "Installed Apps", "Sideload IPA", "Simulators")),
+    ("Develop", ("Location Lab", "Live Logs", "Command Center", "Xcode Tools")),
+    ("Data & Evidence", ("Backup", "Evidence Capture", "Security Analysis", "Ecosystem Tools")),
+    ("Reference", ("Man Pages", "Scope & Safety")),
+)
 
 
 class WorkspaceProfileError(ValueError):
