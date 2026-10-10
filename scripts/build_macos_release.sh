@@ -149,24 +149,32 @@ if [[ ! -s "$bundle_license_directory/ThirdPartyPackages/THIRD_PARTY_PACKAGES.md
   exit 70
 fi
 /usr/bin/xattr -cr "$app_path"
+for helper_name in idevicerestore irecovery; do
+  /usr/bin/codesign --force --sign - --timestamp=none "$app_path/Contents/Helpers/$helper_name"
+done
 /usr/bin/codesign --force --deep --sign - --timestamp=none "$app_path"
-bundle_helpers="$app_path/Contents/Helpers/restore-helpers"
-# Deep signing changes helper bytes. Regenerate only this build-owned manifest, then seal the app.
-/bin/rm "$bundle_helpers/restore-helper-manifest.json"
-"$build_environment/bin/python" "$repository_root/scripts/verify_restore_helpers.py" "$bundle_helpers"
+bundle_helper_resources="$app_path/Contents/Resources/restore-helpers"
+# Bind provenance to the final signed copies without placing metadata in a code directory.
+for helper_name in idevicerestore irecovery; do
+  /bin/cp "$app_path/Contents/Helpers/$helper_name" "$restore_helper_output/bin/$helper_name"
+done
+/bin/rm "$restore_helper_output/restore-helper-manifest.json"
+"$build_environment/bin/python" "$repository_root/scripts/verify_restore_helpers.py" "$restore_helper_output"
 "$build_environment/bin/python" "$repository_root/scripts/archive_restore_helper_sources.py" \
-  --helper-root "$bundle_helpers" \
+  --helper-root "$restore_helper_output" \
   --source-root "$repository_root/build-output/restore-helpers/src" \
   --destination "$source_archive"
 "$build_environment/bin/python" "$repository_root/scripts/augment_restore_helper_sbom.py" \
   --sbom "$python_sbom_path" \
-  --helper-root "$bundle_helpers" \
+  --helper-root "$restore_helper_output" \
   --source-archive "$source_archive" \
   --destination "$sbom_path"
+/bin/cp "$restore_helper_output/restore-helper-manifest.json" "$bundle_helper_resources/restore-helper-manifest.json"
 /bin/cp "$sbom_path" "$app_path/Contents/Resources/BOM.cdx.json"
 "$build_environment/bin/python" scripts/verify_release_metadata.py "$app_path" "$sbom_path" "$release_version"
 /usr/bin/codesign --force --sign - --timestamp=none "$app_path"
-/usr/bin/codesign --verify --deep --strict --verbose=2 "$app_path"
+/usr/bin/codesign --verify --deep --strict --all-architectures --verbose=2 "$app_path"
+"$build_environment/bin/python" scripts/verify_release_metadata.py "$app_path" "$sbom_path" "$release_version"
 
 bundle_executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist_path")"
 compiled_executable="$app_path/Contents/MacOS/$bundle_executable"

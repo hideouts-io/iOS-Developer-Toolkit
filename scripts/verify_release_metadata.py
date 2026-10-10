@@ -9,10 +9,10 @@ from typing import Mapping, Sequence
 
 if __package__:
     from .augment_restore_helper_sbom import archive_metadata, native_components
-    from .restore_helper_metadata import helper_files, object_fields, source_inventory
+    from .restore_helper_metadata import object_fields, packaged_helper_files, packaged_helpers_present, source_inventory
 else:
     from augment_restore_helper_sbom import archive_metadata, native_components
-    from restore_helper_metadata import helper_files, object_fields, source_inventory
+    from restore_helper_metadata import object_fields, packaged_helper_files, packaged_helpers_present, source_inventory
 
 
 class ReleaseMetadataError(RuntimeError):
@@ -53,15 +53,17 @@ def metadata_component(sbom: Mapping[str, object]) -> Mapping[str, object]:
 
 def verify_native_metadata(application_path: Path, sbom_path: Path, release_version: str, sbom: Mapping[str, object], build_script: Path) -> None:
     """Bind optional helpers, final SBOM and adjacent corresponding-source bytes."""
-    helper_root = application_path / "Contents" / "Helpers" / "restore-helpers"
-    if not helper_root.exists() and not helper_root.is_symlink():
-        return
     try:
-        if any(path.is_symlink() for path in (application_path, application_path / "Contents", helper_root.parent, helper_root, sbom_path, sbom_path.parent)):
+        values = sbom.get("components")
+        native_entries = isinstance(values, list) and any(isinstance(value, dict) and isinstance(value.get("bom-ref"), str) and value["bom-ref"].startswith("urn:ios-developer-toolkit:native:") for value in values)
+        if not packaged_helpers_present(application_path):
+            if native_entries:
+                raise ValueError("SBOM declares native helpers but the packaged code and metadata are missing")
+            return
+        if any(path.is_symlink() for path in (application_path, application_path / "Contents", sbom_path, sbom_path.parent)):
             raise ValueError("Native helper release inputs and output directory must not be symbolic links")
         inventory = source_inventory(build_script)
-        hashes = helper_files(helper_root, inventory)
-        values = sbom.get("components")
+        hashes = packaged_helper_files(application_path, inventory)
         if not isinstance(values, list):
             raise ValueError("Native helper SBOM must contain its component array")
         components = [object_fields(value, "CycloneDX component") for value in values]

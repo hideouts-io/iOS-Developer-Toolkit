@@ -5,9 +5,11 @@ import hashlib
 import io
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -17,9 +19,12 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 from scripts.archive_restore_helper_sources import archive_sources, git_blobs
 from scripts.augment_restore_helper_sbom import augment_sbom
-from scripts.restore_helper_metadata import ARCHIVE_ROOT, SOURCE_URLS, TLS_PATCH_NAME, source_inventory, source_lines
+from scripts.embed_restore_helpers import embed_restore_helpers
+from scripts.restore_helper_metadata import ARCHIVE_ROOT, SOURCE_URLS, TLS_PATCH_NAME, helper_files, packaged_helper_files, source_inventory, source_lines
 from scripts.verify_release_metadata import ReleaseMetadataError, verify_native_metadata
 from scripts.verify_archived_restore_sources import verify_archived_sources
+from scripts.verify_macos_bundle import MacOSBundleValidationError, inspect_application_bundle, validate_application_mach_o_records
+from scripts.verify_restore_helpers import write_helper_manifest
 
 
 def git(root: Path, arguments: list[str]) -> str:
@@ -29,6 +34,24 @@ def git(root: Path, arguments: list[str]) -> str:
         env={"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"},
     )
     return result.stdout.strip()
+
+
+def copy_package(helpers: Path, application: Path) -> Path:
+    """Construct the package file contract from synthetic standalone artifacts."""
+    code = application / "Contents/Helpers"
+    code.mkdir(parents=True)
+    metadata = application / "Contents/Resources/restore-helpers"
+    metadata.mkdir(parents=True)
+    for name in ("idevicerestore", "irecovery"):
+        shutil.copy2(helpers / "bin" / name, code / name)
+    for name in ("SOURCES.txt", "STAMP", "restore-helper-manifest.json"):
+        shutil.copy2(helpers / name, metadata / name)
+    shutil.copytree(helpers / "licenses", metadata / "licenses")
+    return metadata
+
+
+def native_tool(arguments: list[str]) -> None:
+    subprocess.run(arguments, capture_output=True, check=True, timeout=60)
 
 
 def fixture(root: Path) -> tuple[Path, Path, Path, Path]:
@@ -218,12 +241,11 @@ class RestoreHelperPackagingTests(unittest.TestCase):
             root = Path(temporary)
             sources, helpers, script, sbom = fixture(root)
             application = root / "Toolkit.app"
-            packaged_helpers = application / "Contents/Helpers/restore-helpers"
-            shutil.copytree(helpers, packaged_helpers)
+            copy_package(helpers, application)
             archive = root / "iOS-Developer-Toolkit-restore-helper-sources-v0.3.4-macOS-arm64.tar.gz"
-            archive_sources(packaged_helpers, sources, archive, script, SCRIPTS / "verify_restore_helpers.py")
+            archive_sources(helpers, sources, archive, script, SCRIPTS / "verify_restore_helpers.py")
             final_sbom = root / "native.cdx.json"
-            augment_sbom(sbom, packaged_helpers, archive, final_sbom, script)
+            augment_sbom(sbom, helpers, archive, final_sbom, script)
             loaded = json.loads(final_sbom.read_bytes())
             verify_native_metadata(application, final_sbom, "0.3.4", loaded, script)
             preserved_archive = root / "preserved.tar.gz"
@@ -236,6 +258,128 @@ class RestoreHelperPackagingTests(unittest.TestCase):
             loaded["components"][-1]["hashes"][0]["content"] = "0" * 64
             with self.assertRaisesRegex(ReleaseMetadataError, "binary hash differs"):
                 verify_native_metadata(application, final_sbom, "0.3.4", loaded, script)
+
+    def test_packaged_inventory_rejects_changed_files_extra_paths_links_and_special_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, helpers, script, _ = fixture(root)
+            application = root / "Toolkit.app"
+            metadata = copy_package(helpers, application)
+            inventory = source_inventory(script)
+            self.assertEqual(packaged_helper_files(application, inventory), helper_files(helpers, inventory))
+            code = application / "Contents/Helpers/irecovery"
+            content = code.read_bytes()
+            code.write_bytes(content + b"changed")
+            with self.assertRaisesRegex(ValueError, "SHA-256"):
+                packaged_helper_files(application, inventory)
+            code.write_bytes(content)
+            extra_code = application / "Contents/Helpers/unexpected"
+            extra_code.write_bytes(b"extra code-location content")
+            with self.assertRaisesRegex(ValueError, "exactly"):
+                packaged_helper_files(application, inventory)
+            extra_code.unlink()
+            manifest = metadata / "restore-helper-manifest.json"
+            original = manifest.read_bytes()
+            for name in ("../outside", "bin/other-helper", "licenses/unknown/COPYING"):
+                with self.subTest(name=name):
+                    changed = json.loads(original)
+                    changed["files"][name] = "0" * 64
+                    manifest.write_text(json.dumps(changed), encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        packaged_helper_files(application, inventory)
+            manifest.write_bytes(original)
+            sources = metadata / "SOURCES.txt"
+            source_content = sources.read_bytes()
+            sources.unlink()
+            sources.symlink_to(helpers / "SOURCES.txt")
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                packaged_helper_files(application, inventory)
+            sources.unlink()
+            sources.write_bytes(source_content)
+            extra = metadata / "extra.txt"
+            extra.write_bytes(b"untracked resource")
+            with self.assertRaisesRegex(ValueError, "exactly"):
+                packaged_helper_files(application, inventory)
+            extra.unlink()
+            empty = metadata / "untracked"
+            empty.mkdir()
+            with self.assertRaisesRegex(ValueError, "uninventoried directory"):
+                packaged_helper_files(application, inventory)
+            empty.rmdir()
+            os.mkfifo(metadata / "pipe")
+            with self.assertRaisesRegex(ValueError, "special file"):
+                packaged_helper_files(application, inventory)
+            (metadata / "pipe").unlink()
+            self.assertEqual(packaged_helper_files(application, inventory), helper_files(helpers, inventory))
+
+    def test_partial_legacy_and_missing_packages_are_not_optional_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, helpers, script, _ = fixture(root)
+            metadata_only = root / "MetadataOnly.app"
+            shutil.copytree(helpers, metadata_only / "Contents/Resources/restore-helpers")
+            code_only = root / "CodeOnly.app"
+            (code_only / "Contents/Helpers").mkdir(parents=True)
+            shutil.copy2(helpers / "bin/irecovery", code_only / "Contents/Helpers/irecovery")
+            legacy = root / "Legacy.app"
+            shutil.copytree(helpers, legacy / "Contents/Helpers/restore-helpers")
+            declared = {"components": [{"bom-ref": "urn:ios-developer-toolkit:native:file:irecovery"}]}
+            for application in (metadata_only, code_only, legacy, root / "Absent.app"):
+                with self.subTest(application=application.name), self.assertRaises(ReleaseMetadataError):
+                    verify_native_metadata(application, root / "sbom.json", "0.3.4", declared, script)
+            complete = root / "Complete.app"
+            copy_package(helpers, complete)
+            (complete / "Contents/Helpers/irecovery").unlink()
+            with self.assertRaisesRegex(ValueError, "exactly"):
+                packaged_helper_files(complete, source_inventory(script))
+            with self.assertRaises(MacOSBundleValidationError):
+                validate_application_mach_o_records(complete, (), "arm64", "13.0", script)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Native macOS signing tools are required")
+    def test_real_universal_package_signing_and_separate_macos_floor(self) -> None:
+        """Use compiled inert code; this checks packaging, never a device command."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "main.c"
+            source.write_text("int main(void) { return 0; }\n", encoding="ascii")
+            helpers = root / "native-helpers"
+            (helpers / "bin").mkdir(parents=True)
+            script = SCRIPTS / "build_restore_helpers_vendor.sh"
+            inventory = source_inventory(script)
+            native_tool(["/usr/bin/xcrun", "clang", "-arch", "arm64", "-arch", "x86_64", "-mmacosx-version-min=14.0", str(source), "-o", str(helpers / "bin/idevicerestore")])
+            shutil.copy2(helpers / "bin/idevicerestore", helpers / "bin/irecovery")
+            (helpers / "SOURCES.txt").write_text(source_lines(inventory), encoding="utf-8")
+            (helpers / "STAMP").write_text(inventory["script_sha256"] + "\n", encoding="ascii")
+            for name in [*SOURCE_URLS, "openssl"]:
+                directory = helpers / "licenses" / name
+                directory.mkdir(parents=True)
+                (directory / "COPYING").write_text("Synthetic signing fixture license\n", encoding="ascii")
+            write_helper_manifest(helpers, script)
+            application = root / "Native.app"
+            (application / "Contents/MacOS").mkdir(parents=True)
+            (application / "Contents/Resources").mkdir()
+            (application / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "io.hideouts.packaging.fixture", "CFBundleExecutable": "Fixture", "CFBundlePackageType": "APPL"}))
+            native_tool(["/usr/bin/xcrun", "clang", "-arch", "arm64", "-arch", "x86_64", "-mmacosx-version-min=13.0", str(source), "-o", str(application / "Contents/MacOS/Fixture")])
+            metadata = embed_restore_helpers(helpers, application)
+            self.assertEqual(metadata, application / "Contents/Resources/restore-helpers")
+            for name in ("idevicerestore", "irecovery"):
+                native_tool(["/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", str(application / "Contents/Helpers" / name)])
+            native_tool(["/usr/bin/codesign", "--force", "--deep", "--sign", "-", "--timestamp=none", str(application)])
+            for name in ("idevicerestore", "irecovery"):
+                shutil.copy2(application / "Contents/Helpers" / name, helpers / "bin" / name)
+            (helpers / "restore-helper-manifest.json").unlink()
+            write_helper_manifest(helpers, script)
+            shutil.copy2(helpers / "restore-helper-manifest.json", metadata / "restore-helper-manifest.json")
+            expected = helper_files(helpers, inventory)
+            native_tool(["/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", str(application)])
+            native_tool(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--all-architectures", "--verbose=2", str(application)])
+            self.assertEqual(packaged_helper_files(application, inventory), expected)
+            records = inspect_application_bundle(application)
+            self.assertEqual(validate_application_mach_o_records(application, records, "arm64", "13.0", script), 2)
+            self.assertEqual(validate_application_mach_o_records(application, records, "x86_64", "13.0", script), 2)
+            shutil.copy2(helpers / "bin/irecovery", application / "Contents/MacOS/Unexpected")
+            with self.assertRaisesRegex(MacOSBundleValidationError, "newer than"):
+                validate_application_mach_o_records(application, inspect_application_bundle(application), "arm64", "13.0", script)
 
     def test_refuses_changed_tls_patch_and_legacy_helper_schema(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -17,10 +17,10 @@ from PySide6.QtWidgets import (
 
 from ios_developer_toolkit.firmware_models import (
     BuildIdentity, FirmwareCancelled, FirmwareError, FirmwareFile, FirmwareInstallPlan,
-    FirmwareRelease, RecoveryDevice, file_identity, firmware_library_directory,
+    FirmwareRelease, HelperBundle, RecoveryDevice, file_identity, firmware_library_directory,
     helper_environment, inspect_ipsw, integer_value, matching_install_identity, parse_catalog,
     parse_installer_device, parse_recovery_device, preflight_arguments,
-    require_current_plan, validate_helper_bundle,
+    require_current_plan, validate_helper_bundle, validate_packaged_helper_bundle,
 )
 from ios_developer_toolkit.firmware_process import FirmwareInstallController
 from ios_developer_toolkit.firmware_transport import (
@@ -95,8 +95,18 @@ class FirmwareTask(QThread):
 
 def default_helper_directory() -> Path:
     if is_frozen_runtime():
-        return active_frozen_executable().parent.parent / "Helpers" / "restore-helpers"
+        return active_frozen_executable().parent.parent / "Resources" / "restore-helpers"
     return Path(__file__).resolve().parent.parent / "build-output" / "restore-helpers" / "out"
+
+
+def selected_helper_bundle(directory: Path, cancelled: Callable[[], bool]) -> HelperBundle:
+    """Use the packaged validator only for this frozen app's exact default folder."""
+    selected = directory.expanduser().absolute()
+    if is_frozen_runtime():
+        contents = active_frozen_executable().parent.parent
+        if selected == contents / "Resources" / "restore-helpers":
+            return validate_packaged_helper_bundle(contents, cancelled)
+    return validate_helper_bundle(selected, cancelled)
 
 
 def require_helper_host() -> None:
@@ -129,7 +139,7 @@ def build_install_plan(path: Path, helpers: Path, identifier: str, product_type:
     selected_mode = "update" if mode == "update" else "restore"
     private_library(directory)
     progress("Validating the helper bundle, firmware hashes, and manifest…")
-    bundle = validate_helper_bundle(helpers, cancelled.is_set)
+    bundle = selected_helper_bundle(helpers, cancelled.is_set)
     identity = file_identity(path, cancelled.is_set)
     firmware = inspect_ipsw(path)
     if catalog_sha1 is not None and identity.sha1 != catalog_sha1:
@@ -665,7 +675,7 @@ class FirmwarePage(QWidget):
         directory = Path(self.library_field.text()).expanduser().absolute()
         def operation(cancelled: Event, progress: Callable[[str], None]) -> FirmwareTaskResult:
             require_helper_host()
-            bundle = validate_helper_bundle(helpers, cancelled.is_set)
+            bundle = selected_helper_bundle(helpers, cancelled.is_set)
             private_library(directory)
             progress("Querying recovery or DFU identity without changing device state…")
             return parse_recovery_device(run_read_command(bundle.recovery.path, ("-q",), helper_environment(directory), 20))
@@ -700,7 +710,7 @@ class FirmwarePage(QWidget):
         directory = Path(self.library_field.text()).expanduser().absolute()
         def operation(cancelled: Event, progress: Callable[[str], None]) -> FirmwareTaskResult:
             require_helper_host()
-            bundle = validate_helper_bundle(helpers, cancelled.is_set)
+            bundle = selected_helper_bundle(helpers, cancelled.is_set)
             private_library(directory)
             target = f"0x{recovery.ecid:x}"
             current = parse_recovery_device(run_read_command(bundle.recovery.path, ("-i", target, "-q"), helper_environment(directory), 20))

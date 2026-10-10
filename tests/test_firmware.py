@@ -5,6 +5,9 @@ import json
 import math
 import os
 import plistlib
+import shutil
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -19,7 +22,7 @@ from ios_developer_toolkit.firmware_models import (
     HelperBundle, InstallerDevice, file_identity, helper_environment, inspect_ipsw,
     install_arguments, matching_install_identity, parse_catalog, parse_installer_device,
     parse_recovery_device, require_current_plan, require_file_unchanged,
-    preflight_arguments, validate_helper_bundle, validated_apple_url,
+    preflight_arguments, validate_helper_bundle, validate_packaged_helper_bundle, validated_apple_url,
 )
 from ios_developer_toolkit.firmware_transport import (
     CATALOG_CACHE_MAX_AGE, MAX_CATALOG_CACHE_BYTES, import_ipsw,
@@ -47,6 +50,28 @@ def fixture_catalog() -> bytes:
     return plistlib.dumps({"MobileDeviceSoftwareVersionsByVersion": {"1": {"MobileDeviceSoftwareVersions": {
         "iPhone18,1": {"23A341": {"Restore": {"ProductVersion": "26.0", "BuildVersion": "23A341",
             "FirmwareURL": "https://updates.cdn-apple.com/firmware.ipsw", "FirmwareSHA1": "a" * 40}}}}}}})
+
+
+def fixture_packaged_helpers(contents: Path) -> Path:
+    metadata = contents / "Resources/restore-helpers"
+    (metadata / "licenses").mkdir(parents=True)
+    (contents / "Helpers").mkdir()
+    paths = {"bin/idevicerestore": contents / "Helpers/idevicerestore",
+             "bin/irecovery": contents / "Helpers/irecovery"}
+    for path in paths.values():
+        shutil.copyfile("/usr/bin/true", path)
+        path.chmod(0o755)
+    for relative, data in (("SOURCES.txt", b"pins"),
+                           ("STAMP", (PINNED_RESTORE_RECIPE_SHA256 + "\n").encode("ascii")),
+                           ("licenses/COPYING", b"license")):
+        path = metadata / relative
+        path.write_bytes(data)
+        paths[relative] = path
+    files = {relative: hashlib.sha256(path.read_bytes()).hexdigest() for relative, path in paths.items()}
+    manifest = {"schema_version": 2, "source_revision": PINNED_INSTALLER_REVISION, "minimum_macos": "14.0",
+                "security_patch_sha256": PINNED_TLS_PATCH_SHA256, "recipe_sha256": PINNED_RESTORE_RECIPE_SHA256, "files": files}
+    (metadata / "restore-helper-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return metadata
 
 
 class FirmwareTests(unittest.TestCase):
@@ -288,6 +313,131 @@ class FirmwareTests(unittest.TestCase):
         (bundle / "bin/idevicerestore").write_bytes(b"changed")
         with self.assertRaises(FirmwareError):
             validate_helper_bundle(bundle, lambda: False)
+
+    def test_packaged_helpers_bind_fixed_code_paths_and_detect_changed_signed_bytes(self) -> None:
+        contents = self.directory / "Toolkit.app/Contents"
+        metadata = fixture_packaged_helpers(contents)
+        verified = validate_packaged_helper_bundle(contents, lambda: False)
+        self.assertEqual(verified.directory, metadata)
+        self.assertEqual(verified.installer.path, contents / "Helpers/idevicerestore")
+        self.assertEqual(verified.recovery.path, contents / "Helpers/irecovery")
+        self.assertEqual(len(verified.files), 5)
+        standalone = self.directory / "standalone"
+        shutil.copytree(metadata, standalone)
+        (standalone / "bin").mkdir()
+        for name in ("idevicerestore", "irecovery"):
+            shutil.copyfile(contents / "Helpers" / name, standalone / "bin" / name)
+            (standalone / "bin" / name).chmod(0o755)
+        custom = validate_helper_bundle(standalone, lambda: False)
+        self.assertEqual(custom.installer.sha256, verified.installer.sha256)
+        self.assertEqual(custom.recovery.sha256, verified.recovery.sha256)
+        with self.assertRaises(FirmwareCancelled):
+            validate_packaged_helper_bundle(contents, lambda: True)
+        installer = verified.installer.path
+        original = installer.read_bytes()
+        installer.write_bytes(original + b"changed signed bytes")
+        with self.assertRaises(FirmwareError):
+            require_file_unchanged(verified.installer)
+        with self.assertRaises(FirmwareError):
+            validate_packaged_helper_bundle(contents, lambda: False)
+        installer.write_bytes(original)
+        installer.chmod(0o600)
+        with self.assertRaises(FirmwareError):
+            validate_packaged_helper_bundle(contents, lambda: False)
+        installer.chmod(0o755)
+        verified.recovery.path.unlink()
+        with self.assertRaisesRegex(FirmwareError, "exactly the two"):
+            validate_packaged_helper_bundle(contents, lambda: False)
+
+    def test_packaged_helpers_reject_extra_metadata_symlinks_and_manifest_path_redirection(self) -> None:
+        contents = self.directory / "Toolkit.app/Contents"
+        metadata = fixture_packaged_helpers(contents)
+        manifest_path = metadata / "restore-helper-manifest.json"
+        original = manifest_path.read_bytes()
+        manifest = json.loads(original)
+        for relative in ("../Helpers/irecovery", "bin/another-helper", "licenses/../COPYING", "licenses//COPYING", "/tmp/irecovery"):
+            manifest_path.write_text(json.dumps(dict(manifest, files=dict(manifest["files"], **{relative: "0" * 64}))), encoding="utf-8")
+            with self.subTest(relative=relative), self.assertRaises(FirmwareError):
+                validate_packaged_helper_bundle(contents, lambda: False)
+        manifest_path.write_bytes(original)
+        extra_code = contents / "Helpers/another-helper"
+        shutil.copyfile("/usr/bin/true", extra_code)
+        with self.assertRaisesRegex(FirmwareError, "exactly the two"):
+            validate_packaged_helper_bundle(contents, lambda: False)
+        extra_code.unlink()
+        legacy_code = contents / "Helpers/restore-helpers"
+        legacy_code.mkdir()
+        with self.assertRaisesRegex(FirmwareError, "exactly the two"):
+            validate_packaged_helper_bundle(contents, lambda: False)
+        legacy_code.rmdir()
+        extra = metadata / "unexpected"
+        extra.write_bytes(b"undeclared metadata")
+        with self.assertRaises(FirmwareError):
+            validate_packaged_helper_bundle(contents, lambda: False)
+        extra.unlink()
+        installer = contents / "Helpers/idevicerestore"
+        outside = self.directory / "outside-installer"
+        installer.rename(outside)
+        installer.symlink_to(outside)
+        with self.assertRaises(FirmwareError):
+            validate_packaged_helper_bundle(contents, lambda: False)
+        installer.unlink()
+        outside.rename(installer)
+        licenses = metadata / "licenses"
+        outside_licenses = self.directory / "outside-licenses"
+        licenses.rename(outside_licenses)
+        licenses.symlink_to(outside_licenses, target_is_directory=True)
+        with self.assertRaises(FirmwareError):
+            validate_packaged_helper_bundle(contents, lambda: False)
+        licenses.unlink()
+        outside_licenses.rename(licenses)
+        alias = self.directory / "Toolkit-alias.app"
+        alias.symlink_to(contents.parent, target_is_directory=True)
+        with self.assertRaises(FirmwareError):
+            validate_packaged_helper_bundle(alias / "Contents", lambda: False)
+        validate_packaged_helper_bundle(contents, lambda: False)
+
+    @unittest.skipUnless(sys.platform == "darwin", "The frozen macOS bundle route requires macOS")
+    def test_frozen_default_and_custom_helpers_take_explicit_routes_without_fallback(self) -> None:
+        contents = self.directory / "Toolkit.app/Contents"
+        metadata = fixture_packaged_helpers(contents)
+        (contents / "MacOS").mkdir()
+        executable = contents / "MacOS/Toolkit"
+        shutil.copyfile("/usr/bin/true", executable)
+        executable.chmod(0o755)
+        (contents / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Toolkit"}))
+        standalone = self.directory / "standalone"
+        shutil.copytree(metadata, standalone)
+        (standalone / "bin").mkdir()
+        for name in ("idevicerestore", "irecovery"):
+            shutil.copyfile(contents / "Helpers" / name, standalone / "bin" / name)
+            (standalone / "bin" / name).chmod(0o755)
+        code = """
+import sys
+from pathlib import Path
+from ios_developer_toolkit.firmware_models import FirmwareError
+from ios_developer_toolkit.firmware_page import default_helper_directory, selected_helper_bundle
+
+executable, standalone = (Path(value) for value in sys.argv[1:])
+sys.frozen = True
+sys.argv[0] = str(executable)
+contents = executable.parent.parent
+assert default_helper_directory() == contents / 'Resources/restore-helpers'
+assert selected_helper_bundle(default_helper_directory(), lambda: False).installer.path == contents / 'Helpers/idevicerestore'
+assert selected_helper_bundle(standalone, lambda: False).installer.path == standalone / 'bin/idevicerestore'
+(contents / 'Helpers/irecovery').unlink()
+try:
+    selected_helper_bundle(default_helper_directory(), lambda: False)
+except FirmwareError as error:
+    assert 'exactly the two' in str(error)
+else:
+    raise AssertionError('The frozen default must fail when its fixed packaged binary is missing')
+print('Frozen default, standalone selection, and missing packaged binary routes passed')
+"""
+        result = subprocess.run([sys.executable, "-c", code, str(executable), str(standalone)],
+                                capture_output=True, text=True, check=False, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("routes passed", result.stdout)
 
     def test_sdk_builder_contains_exact_image4_identity_and_synthetic_nonce(self) -> None:
         firmware = inspect_ipsw(self.ipsw)

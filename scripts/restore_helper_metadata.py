@@ -179,11 +179,9 @@ def source_lines(inventory: SourceInventory) -> str:
     return "\n".join(lines) + "\n"
 
 
-def helper_files(root: Path, inventory: SourceInventory) -> dict[str, str]:
-    """Validate closed manifest identity and every byte after final helper signing."""
-    if root.is_symlink() or not root.is_dir():
-        raise ValueError("Helper root must be a regular directory")
-    manifest = object_fields(json.loads(regular_bytes(root / "restore-helper-manifest.json", 2 * 1024 * 1024)), "Helper manifest")
+def helper_hash_inventory(payload: bytes, inventory: SourceInventory) -> dict[str, str]:
+    """Parse the shared closed schema-2 logical inventory without choosing file paths."""
+    manifest = object_fields(json.loads(payload), "Helper manifest")
     if type(manifest.get("schema_version")) is not int or manifest.get("schema_version") != 2:
         raise ValueError("Helper output requires schema 2; rebuild with the current reviewed TLS recipe")
     if set(manifest) != {"schema_version", "source_revision", "minimum_macos", "security_patch_sha256", "recipe_sha256", "files"}:
@@ -200,6 +198,14 @@ def helper_files(root: Path, inventory: SourceInventory) -> dict[str, str]:
         if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None or name == "restore-helper-manifest.json":
             raise ValueError("Helper manifest contains an invalid SHA-256 entry")
         hashes[name] = digest
+    return hashes
+
+
+def helper_files(root: Path, inventory: SourceInventory) -> dict[str, str]:
+    """Validate closed manifest identity and every byte after final helper signing."""
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Helper root must be a regular directory")
+    hashes = helper_hash_inventory(regular_bytes(root / "restore-helper-manifest.json", 2 * 1024 * 1024), inventory)
     actual: set[str] = set()
     for path in root.rglob("*"):
         if path.is_symlink():
@@ -231,6 +237,110 @@ def helper_files(root: Path, inventory: SourceInventory) -> dict[str, str]:
     for name in [pin["name"] for pin in inventory["git"]] + ["openssl"]:
         if not any(path.startswith(f"licenses/{name}/") for path in hashes):
             raise ValueError(f"Helper license inventory is missing {name}")
+    return hashes
+
+
+PACKAGED_HELPER_NAMES: dict[str, str] = {
+    "bin/idevicerestore": "idevicerestore",
+    "bin/irecovery": "irecovery",
+}
+
+
+def packaged_helpers_present(application: Path) -> bool:
+    """Detect both split-layout and unsupported legacy helper-package markers."""
+    contents = application / "Contents"
+    markers = (
+        contents / "Resources/restore-helpers",
+        contents / "Helpers/restore-helpers",
+        *(contents / "Helpers" / name for name in PACKAGED_HELPER_NAMES.values()),
+    )
+    return any(path.exists() or path.is_symlink() for path in markers)
+
+
+def packaged_metadata_names(hashes: dict[str, str], inventory: SourceInventory) -> set[str]:
+    """Limit logical package names to fixed tools and approved component metadata."""
+    required = {*PACKAGED_HELPER_NAMES, "SOURCES.txt", "STAMP"}
+    if not required.issubset(hashes) or len(hashes) > 1024:
+        raise ValueError("Packaged helper inventory must include both executables, source pins and stamp within its 1024-file bound")
+    names = {pin["name"] for pin in inventory["git"]} | {"openssl"}
+    metadata_names: set[str] = set()
+    for name in hashes:
+        if name in PACKAGED_HELPER_NAMES:
+            continue
+        parts = safe_relative(name).parts
+        if name not in {"SOURCES.txt", "STAMP"} and (len(parts) < 3 or parts[0] != "licenses" or parts[1] not in names):
+            raise ValueError("Packaged manifest contains a path outside the fixed helper/resource mapping")
+        metadata_names.add(name)
+    for name in names:
+        if not any(path.startswith(f"licenses/{name}/") for path in hashes):
+            raise ValueError(f"Packaged helper license inventory is missing {name}")
+    return metadata_names
+
+
+def packaged_helper_files(application: Path, inventory: SourceInventory) -> dict[str, str]:
+    """Bind schema-2 logical names to two flat code files and sealed resource metadata.
+
+    No manifest-controlled path can select another executable. Resources contain
+    only the exact source, stamp and license inventory; standalone layout and
+    its hash keys remain unchanged for corresponding-source/SBOM generation.
+    """
+    contents = application / "Contents"
+    code = contents / "Helpers"
+    resources = contents / "Resources"
+    metadata = resources / "restore-helpers"
+    for directory in (application, contents, code, resources, metadata):
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError("Packaged helpers require regular code and resource directories")
+    code_names: set[str] = set()
+    for path in code.iterdir():
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Packaged helper code files must be regular and must not be symbolic links")
+        code_names.add(path.name)
+        if len(code_names) > 2:
+            raise ValueError("Contents/Helpers must contain exactly the two flat native helper code files")
+    if code_names != set(PACKAGED_HELPER_NAMES.values()):
+        raise ValueError("Contents/Helpers must contain exactly the two flat native helper code files")
+    hashes = helper_hash_inventory(regular_bytes(metadata / "restore-helper-manifest.json", 1024 * 1024), inventory)
+    metadata_names = packaged_metadata_names(hashes, inventory)
+    allowed_directories = {
+        parent.as_posix()
+        for name in metadata_names
+        for parent in PurePosixPath(name).parents
+        if parent != PurePosixPath(".")
+    }
+    actual: set[str] = set()
+    for path in metadata.rglob("*"):
+        if path.is_symlink():
+            raise ValueError("Packaged helper metadata contains a symbolic link")
+        relative = path.relative_to(metadata).as_posix()
+        if path.is_dir():
+            if relative not in allowed_directories:
+                raise ValueError("Packaged helper metadata contains an uninventoried directory")
+        elif path.is_file():
+            if relative != "restore-helper-manifest.json":
+                actual.add(relative)
+                if len(actual) > 1024:
+                    raise ValueError("Packaged helper metadata exceeds its 1024-file bound")
+        else:
+            raise ValueError("Packaged helper metadata contains an unsupported special file")
+    if actual != metadata_names:
+        raise ValueError("Packaged manifest does not inventory exactly the regular resource metadata files")
+    total = 0
+    for name, digest in hashes.items():
+        path = code / PACKAGED_HELPER_NAMES[name] if name in PACKAGED_HELPER_NAMES else metadata / name
+        content = regular_bytes(path, 256 * 1024 * 1024)
+        total += len(content)
+        if total > 512 * 1024 * 1024:
+            raise ValueError("Packaged helper files exceed the 512 MiB aggregate bound")
+        if hashlib.sha256(content).hexdigest() != digest:
+            raise ValueError(f"Packaged helper differs from manifest SHA-256: {name}")
+    for name in PACKAGED_HELPER_NAMES.values():
+        if not os.access(code / name, os.X_OK):
+            raise ValueError(f"Packaged helper is not executable: {name}")
+    if regular_bytes(metadata / "SOURCES.txt", 64 * 1024).decode("utf-8") != source_lines(inventory):
+        raise ValueError("Packaged SOURCES.txt differs from all nine pinned source identities")
+    if regular_bytes(metadata / "STAMP", 128).decode("ascii") != inventory["script_sha256"] + "\n":
+        raise ValueError("Packaged STAMP differs from the current TLS-qualified vendor recipe")
     return hashes
 
 

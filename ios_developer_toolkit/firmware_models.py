@@ -304,15 +304,7 @@ def require_file_unchanged(identity: FileIdentity) -> None:
         raise FirmwareError("The firmware or helper changed after validation; run Check Before Installing again")
 
 
-def validate_helper_bundle(directory: Path, cancelled: Callable[[], bool]) -> HelperBundle:
-    """Check schema-2 local bytes against the reviewed patched recipe identity.
-
-    Recipe and patch digests are declared build records, not authentication of
-    upstream origin or proof of a binary's transport behavior.
-    """
-    selected = directory.expanduser().absolute()
-    if selected.is_symlink() or not selected.is_dir():
-        raise FirmwareError("Choose a regular firmware helper folder, not a symbolic link")
+def _read_helper_inventory(selected: Path, cancelled: Callable[[], bool]) -> tuple[FileIdentity, dict[str, str]]:
     manifest_path = selected / "restore-helper-manifest.json"
     manifest_identity = file_identity(manifest_path, cancelled)
     if manifest_identity.size > 1_048_576:
@@ -329,25 +321,32 @@ def validate_helper_bundle(directory: Path, cancelled: Callable[[], bool]) -> He
         raise FirmwareError("The helper manifest does not declare the reviewed installer source revision")
     if root.get("security_patch_sha256") != PINNED_TLS_PATCH_SHA256 or root.get("recipe_sha256") != PINNED_RESTORE_RECIPE_SHA256:
         raise FirmwareError("The helper manifest differs from the reviewed security patch or recipe; rebuild the firmware helpers into a fresh output folder")
-    files = required_mapping(root.get("files"), "helper files")
-    if not {"bin/idevicerestore", "bin/irecovery", "SOURCES.txt", "STAMP"}.issubset(files) or len(files) > 1024 or not any(name.startswith("licenses/") for name in files):
+    declared = required_mapping(root.get("files"), "helper files")
+    if not {"bin/idevicerestore", "bin/irecovery", "SOURCES.txt", "STAMP"}.issubset(declared) or len(declared) > 1024 or not any(name.startswith("licenses/") for name in declared):
         raise FirmwareError("The helper bundle must inventory both binaries, source pins, stamp, and licenses")
-    identities: list[FileIdentity] = []
-    for relative, expected in files.items():
+    files: dict[str, str] = {}
+    for relative, expected in declared.items():
         parts = PurePosixPath(relative)
         if parts.is_absolute() or ".." in parts.parts or "\\" in relative or not relative:
             raise FirmwareError("The helper manifest contains an unsafe relative path")
         if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
             raise FirmwareError("The helper manifest must contain lowercase SHA-256 digests")
-        path = selected / relative
+        files[relative] = expected
+    return manifest_identity, files
+
+
+def _validate_helper_inventory(selected: Path, manifest_identity: FileIdentity, files: dict[str, str],
+                               paths: dict[str, Path], cancelled: Callable[[], bool]) -> HelperBundle:
+    indexed: dict[str, FileIdentity] = {}
+    for relative, expected in files.items():
+        path = paths[relative]
         if any(component.is_symlink() for component in (path, *path.parents) if component != selected.parent):
             raise FirmwareError("Symbolic links are not permitted in firmware helper paths")
         identity = file_identity(path, cancelled)
         if identity.sha256 != expected:
             raise FirmwareError(f"The firmware helper inventory hash does not match {relative}")
-        identities.append(identity)
+        indexed[relative] = identity
     require_file_unchanged(manifest_identity)
-    indexed = {identity.path.relative_to(selected).as_posix(): identity for identity in identities}
     stamp = indexed["STAMP"]
     if stamp.size != 65 or stamp.path.read_bytes() != (PINNED_RESTORE_RECIPE_SHA256 + "\n").encode("ascii"):
         raise FirmwareError("The helper STAMP differs from the reviewed patched recipe; rebuild the firmware helpers into a fresh output folder")
@@ -355,7 +354,62 @@ def validate_helper_bundle(directory: Path, cancelled: Callable[[], bool]) -> He
     installer, recovery = indexed["bin/idevicerestore"], indexed["bin/irecovery"]
     if not os.access(installer.path, os.X_OK) or not os.access(recovery.path, os.X_OK):
         raise FirmwareError("Both firmware helpers must be executable")
-    return HelperBundle(selected, installer, recovery, manifest_identity, tuple(identities))
+    for identity in indexed.values():
+        require_file_unchanged(identity)
+    return HelperBundle(selected, installer, recovery, manifest_identity, tuple(indexed.values()))
+
+
+def validate_helper_bundle(directory: Path, cancelled: Callable[[], bool]) -> HelperBundle:
+    """Check schema-2 standalone bytes against the reviewed patched recipe identity.
+
+    Recipe and patch digests are declared build records, not authentication of
+    upstream origin or proof of a binary's transport behavior.
+    """
+    selected = directory.expanduser().absolute()
+    if selected.is_symlink() or not selected.is_dir():
+        raise FirmwareError("Choose a regular firmware helper folder, not a symbolic link")
+    manifest_identity, files = _read_helper_inventory(selected, cancelled)
+    paths = {relative: selected / relative for relative in files}
+    return _validate_helper_inventory(selected, manifest_identity, files, paths, cancelled)
+
+
+def validate_packaged_helper_bundle(contents: Path, cancelled: Callable[[], bool]) -> HelperBundle:
+    """Validate fixed app code/resource paths against the unchanged standalone inventory.
+
+    Only the two reviewed binary keys map outside the metadata directory. No
+    manifest entry selects a different app directory or executable location.
+    """
+    selected = contents.expanduser().absolute()
+    metadata = selected / "Resources" / "restore-helpers"
+    binaries = selected / "Helpers"
+    for directory in (selected, metadata.parent, metadata, binaries):
+        if not directory.is_dir() or any(path.is_symlink() for path in (directory, *directory.parents)):
+            raise FirmwareError("Packaged firmware helpers require regular app code and resource directories without symbolic links")
+    code_paths = tuple(binaries.iterdir())
+    if {path.name for path in code_paths} != {"idevicerestore", "irecovery"} or any(path.is_symlink() or not path.is_file() for path in code_paths):
+        raise FirmwareError("Packaged firmware helpers require exactly the two regular native helper code files")
+    manifest_identity, files = _read_helper_inventory(metadata, cancelled)
+    paths: dict[str, Path] = {
+        "bin/idevicerestore": binaries / "idevicerestore",
+        "bin/irecovery": binaries / "irecovery",
+    }
+    for relative in files:
+        if relative in paths:
+            continue
+        if PurePosixPath(relative).as_posix() != relative or not (relative in {"SOURCES.txt", "STAMP"} or relative.startswith("licenses/")):
+            raise FirmwareError("The packaged helper manifest contains an unsupported resource path")
+        paths[relative] = metadata / relative
+    actual: set[str] = {"bin/idevicerestore", "bin/irecovery"}
+    for path in metadata.rglob("*"):
+        if path.is_symlink() or not (path.is_dir() or path.is_file()):
+            raise FirmwareError("Packaged helper metadata must contain only regular files and directories")
+        if path.is_file() and path != manifest_identity.path:
+            actual.add(path.relative_to(metadata).as_posix())
+            if len(actual) > 1024:
+                raise FirmwareError("Packaged helper metadata exceeds its 1024-file inventory limit")
+    if actual != set(files):
+        raise FirmwareError("The packaged helper manifest does not inventory exactly its code and resource files")
+    return _validate_helper_inventory(metadata, manifest_identity, files, paths, cancelled)
 
 
 def parse_installer_device(output: str) -> InstallerDevice:

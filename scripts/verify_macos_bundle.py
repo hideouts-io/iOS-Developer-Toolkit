@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
 if __package__:
-    from .verify_restore_helpers import helper_manifest
+    from .restore_helper_metadata import PACKAGED_HELPER_NAMES, packaged_helper_files, packaged_helpers_present, source_inventory
 else:
-    from verify_restore_helpers import helper_manifest
+    from restore_helper_metadata import PACKAGED_HELPER_NAMES, packaged_helper_files, packaged_helpers_present, source_inventory
 
 
 MACH_O_MAGICS = frozenset(
@@ -83,11 +82,14 @@ def run_tool(arguments: Sequence[str], target: Path) -> str:
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=15,
         )
     except OSError as error:
         raise MacOSBundleValidationError(
             f"Could not execute {arguments[0]} for {target}: {error}"
         ) from error
+    except subprocess.TimeoutExpired as error:
+        raise MacOSBundleValidationError(f"{arguments[0]} exceeded its 15-second verification deadline for {target}") from error
     if completed.returncode != 0:
         raise MacOSBundleValidationError(
             f"{' '.join((*arguments, str(target)))} exited {completed.returncode}. "
@@ -143,28 +145,40 @@ def inspect_application_bundle(application_path: Path) -> tuple[MachORecord, ...
     return records
 
 
+def validate_application_mach_o_records(application_path: Path, records: Sequence[MachORecord], expected_architecture: str, maximum_macos_version: str, source_script: Path) -> int:
+    """Apply the application floor everywhere except two validated flat helpers."""
+    helper_paths = frozenset(application_path / "Contents/Helpers" / name for name in PACKAGED_HELPER_NAMES.values())
+    helper_records = tuple(record for record in records if record.path in helper_paths)
+    core_records = tuple(record for record in records if record.path not in helper_paths)
+    present = packaged_helpers_present(application_path)
+    if helper_records and not present:
+        raise MacOSBundleValidationError("Helper Mach-O records cannot receive a separate floor without the packaged code and metadata")
+    if present:
+        try:
+            packaged_helper_files(application_path, source_inventory(source_script))
+        except (ValueError, OSError, UnicodeError) as error:
+            raise MacOSBundleValidationError(f"Packaged firmware helper validation failed: {error}") from error
+        if len(helper_records) != 2 or {record.path for record in helper_records} != helper_paths or any(set(record.architectures) != {"arm64", "x86_64"} for record in helper_records):
+            raise MacOSBundleValidationError("Both packaged firmware helpers must be universal native Mach-O executables")
+        for record in helper_records:
+            libraries = run_tool(("/usr/bin/otool", "-L"), record.path)
+            if any(line.startswith("\t") and not line.strip().startswith(("/usr/lib/", "/System/Library/")) for line in libraries.splitlines()):
+                raise MacOSBundleValidationError("Packaged firmware helper has a non-system dynamic dependency")
+        validate_mach_o_records(helper_records, expected_architecture, "14.0")
+    validate_mach_o_records(core_records, expected_architecture, maximum_macos_version)
+    return len(helper_records)
+
+
 def main(arguments: Sequence[str]) -> int:
     if len(arguments) != 4:
         raise MacOSBundleValidationError(
             "Usage: verify_macos_bundle.py APPLICATION_PATH EXPECTED_ARCHITECTURE MAXIMUM_MACOS_VERSION"
         )
-    application_path = Path(arguments[1]).resolve()
+    application_path = Path(arguments[1]).absolute()
     expected_architecture = arguments[2]
     maximum_macos_version = arguments[3]
     records = inspect_application_bundle(application_path)
-    helper_root = application_path / "Contents" / "Helpers" / "restore-helpers"
-    helper_paths = frozenset(helper_root / "bin" / name for name in ("idevicerestore", "irecovery"))
-    helper_records = tuple(record for record in records if record.path in helper_paths)
-    core_records = tuple(record for record in records if record.path not in helper_paths)
-    if helper_root.exists() or helper_root.is_symlink():
-        if helper_root.is_symlink() or len(helper_records) != 2:
-            raise MacOSBundleValidationError("The optional firmware helper bundle must contain exactly both required native helpers")
-        expected_manifest = helper_manifest(helper_root, Path(__file__).with_name("build_restore_helpers_vendor.sh"))
-        observed_manifest = json.loads((helper_root / "restore-helper-manifest.json").read_text(encoding="utf-8"))
-        if observed_manifest != expected_manifest:
-            raise MacOSBundleValidationError("Firmware helper bytes differ from their bundled manifest")
-        validate_mach_o_records(helper_records, expected_architecture, "14.0")
-    validate_mach_o_records(core_records, expected_architecture, maximum_macos_version)
+    helper_count = validate_application_mach_o_records(application_path, records, expected_architecture, maximum_macos_version, Path(__file__).with_name("build_restore_helpers_vendor.sh"))
     observed_versions = sorted(
         {version for record in records for version in record.minimum_macos_versions},
         key=version_parts,
@@ -172,7 +186,7 @@ def main(arguments: Sequence[str]) -> int:
     print(
         f"Validated {len(records)} bundled Mach-O files for {expected_architecture}; "
         f"observed macOS floors: {', '.join(observed_versions)}; application floor: {maximum_macos_version}; "
-        f"separately gated optional firmware helpers: {len(helper_records)} (macOS 14.0)"
+        f"separately gated optional firmware helpers: {helper_count} (macOS 14.0)"
     )
     return 0
 
