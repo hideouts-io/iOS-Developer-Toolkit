@@ -1,6 +1,7 @@
 .venv/
 venv/
 build/
+build-output/
 dist/
 site/
 output/
@@ -46,6 +47,7 @@ nuitka-crash-report.xml
 *.cer
 *.dmg
 *.ipa
+*.ipsw
 *.mobileconfig
 *.trustcache
 BuildManifest.plist

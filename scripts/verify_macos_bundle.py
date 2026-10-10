@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
+
+if __package__:
+    from .verify_restore_helpers import helper_manifest
+else:
+    from verify_restore_helpers import helper_manifest
 
 
 MACH_O_MAGICS = frozenset(
@@ -146,14 +152,27 @@ def main(arguments: Sequence[str]) -> int:
     expected_architecture = arguments[2]
     maximum_macos_version = arguments[3]
     records = inspect_application_bundle(application_path)
-    validate_mach_o_records(records, expected_architecture, maximum_macos_version)
+    helper_root = application_path / "Contents" / "Helpers" / "restore-helpers"
+    helper_paths = frozenset(helper_root / "bin" / name for name in ("idevicerestore", "irecovery"))
+    helper_records = tuple(record for record in records if record.path in helper_paths)
+    core_records = tuple(record for record in records if record.path not in helper_paths)
+    if helper_root.exists() or helper_root.is_symlink():
+        if helper_root.is_symlink() or len(helper_records) != 2:
+            raise MacOSBundleValidationError("The optional firmware helper bundle must contain exactly both required native helpers")
+        expected_manifest = helper_manifest(helper_root, Path(__file__).with_name("build_restore_helpers_vendor.sh"))
+        observed_manifest = json.loads((helper_root / "restore-helper-manifest.json").read_text(encoding="utf-8"))
+        if observed_manifest != expected_manifest:
+            raise MacOSBundleValidationError("Firmware helper bytes differ from their bundled manifest")
+        validate_mach_o_records(helper_records, expected_architecture, "14.0")
+    validate_mach_o_records(core_records, expected_architecture, maximum_macos_version)
     observed_versions = sorted(
         {version for record in records for version in record.minimum_macos_versions},
         key=version_parts,
     )
     print(
         f"Validated {len(records)} bundled Mach-O files for {expected_architecture}; "
-        f"observed macOS floors: {', '.join(observed_versions)}; advertised floor: {maximum_macos_version}"
+        f"observed macOS floors: {', '.join(observed_versions)}; application floor: {maximum_macos_version}; "
+        f"separately gated optional firmware helpers: {len(helper_records)} (macOS 14.0)"
     )
     return 0
 

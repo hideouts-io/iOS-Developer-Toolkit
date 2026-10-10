@@ -60,13 +60,20 @@ archive_name="iOS-Developer-Toolkit-v${release_version}-macOS-${machine_architec
 archive_path="$release_root/$archive_name"
 sbom_name="iOS-Developer-Toolkit-v${release_version}-macOS-${machine_architecture}.cdx.json"
 sbom_path="$release_root/$sbom_name"
+python_sbom_path="$staging_root/python-components.cdx.json"
+source_archive="$release_root/iOS-Developer-Toolkit-restore-helper-sources-v${release_version}-macOS-${machine_architecture}.tar.gz"
 runtime_requirements="$staging_root/runtime-requirements.txt"
 post_build_requirements="$staging_root/post-build-requirements.txt"
 sbom_requirements="$staging_root/sbom-requirements.txt"
 license_directory="$staging_root/third-party-licenses"
 deployment_config="$staging_root/pysidedeploy.spec"
 
-/bin/rm -f "$archive_path" "$sbom_path"
+for output_path in "$archive_path" "$sbom_path" "$source_archive"; do
+  if [[ -e "$output_path" || -L "$output_path" ]]; then
+    echo "Refusing to overwrite existing release output: $output_path" >&2
+    exit 69
+  fi
+done
 
 "$python_executable" -m venv "$build_environment"
 "$build_environment/bin/python" -m pip install --disable-pip-version-check --upgrade pip
@@ -94,7 +101,7 @@ fi
   --mc-type application \
   --sv 1.6 \
   --of JSON \
-  -o "$sbom_path"
+  -o "$python_sbom_path"
 "$build_environment/bin/python" scripts/collect_third_party_licenses.py "$sbom_requirements" "$license_directory"
 
 cd "$repository_root"
@@ -121,6 +128,9 @@ if [[ -e "$app_path" ]]; then
 fi
 
 /bin/cp -R "$generated_app_path" "$app_path"
+restore_helper_output="$staging_root/restore-helpers"
+/bin/bash "$repository_root/scripts/build_restore_helpers.sh" "$restore_helper_output" "$build_environment/bin/python"
+"$build_environment/bin/python" "$repository_root/scripts/embed_restore_helpers.py" "$restore_helper_output" "$app_path"
 plist_path="$app_path/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.hideouts.ios-developer-toolkit" "$plist_path"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName iOS Developer Toolkit" "$plist_path"
@@ -134,16 +144,28 @@ bundle_license_directory="$app_path/Contents/Resources/Licenses"
 /bin/cp "$repository_root/THIRD_PARTY_NOTICES.md" "$bundle_license_directory/THIRD_PARTY_NOTICES.md"
 /bin/cp "$repository_root/SOURCE_AVAILABILITY.md" "$bundle_license_directory/SOURCE_AVAILABILITY.md"
 /usr/bin/ditto --norsrc "$license_directory" "$bundle_license_directory/ThirdPartyPackages"
-/bin/cp "$sbom_path" "$app_path/Contents/Resources/BOM.cdx.json"
-
-if [[ ! -s "$bundle_license_directory/ThirdPartyPackages/THIRD_PARTY_PACKAGES.md" || ! -s "$app_path/Contents/Resources/BOM.cdx.json" ]]; then
+if [[ ! -s "$bundle_license_directory/ThirdPartyPackages/THIRD_PARTY_PACKAGES.md" ]]; then
   echo "Release bundle is missing its generated license inventory or SBOM" >&2
   exit 70
 fi
-"$build_environment/bin/python" scripts/verify_release_metadata.py "$app_path" "$sbom_path" "$release_version"
-
 /usr/bin/xattr -cr "$app_path"
 /usr/bin/codesign --force --deep --sign - --timestamp=none "$app_path"
+bundle_helpers="$app_path/Contents/Helpers/restore-helpers"
+# Deep signing changes helper bytes. Regenerate only this build-owned manifest, then seal the app.
+/bin/rm "$bundle_helpers/restore-helper-manifest.json"
+"$build_environment/bin/python" "$repository_root/scripts/verify_restore_helpers.py" "$bundle_helpers"
+"$build_environment/bin/python" "$repository_root/scripts/archive_restore_helper_sources.py" \
+  --helper-root "$bundle_helpers" \
+  --source-root "$repository_root/build-output/restore-helpers/src" \
+  --destination "$source_archive"
+"$build_environment/bin/python" "$repository_root/scripts/augment_restore_helper_sbom.py" \
+  --sbom "$python_sbom_path" \
+  --helper-root "$bundle_helpers" \
+  --source-archive "$source_archive" \
+  --destination "$sbom_path"
+/bin/cp "$sbom_path" "$app_path/Contents/Resources/BOM.cdx.json"
+"$build_environment/bin/python" scripts/verify_release_metadata.py "$app_path" "$sbom_path" "$release_version"
+/usr/bin/codesign --force --sign - --timestamp=none "$app_path"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$app_path"
 
 bundle_executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist_path")"
@@ -163,6 +185,7 @@ fi
 QT_QPA_PLATFORM=offscreen "$compiled_executable" --toolkit-internal-smoke-test
 
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app_path" "$archive_path"
-/usr/bin/shasum -a 256 "$archive_path" "$sbom_path"
+/usr/bin/shasum -a 256 "$archive_path" "$sbom_path" "$source_archive"
 echo "$archive_path"
 echo "$sbom_path"
+echo "$source_archive"

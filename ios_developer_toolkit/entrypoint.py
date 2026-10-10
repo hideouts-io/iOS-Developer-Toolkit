@@ -43,6 +43,8 @@ def parsed_worker(value: str) -> ToolkitWorker:
         return "ipa-inspector"
     if value == "local-ddi":
         return "local-ddi"
+    if value == "developer-images":
+        return "developer-images"
     raise ValueError(f"Unsupported internal worker: {value}")
 
 
@@ -67,6 +69,10 @@ def run_worker(worker: ToolkitWorker, arguments: Sequence[str]) -> int:
         from ios_developer_toolkit.local_ddi import main
 
         return invoke_argv_main("ios-developer-toolkit-local-ddi", arguments, main)
+    if worker == "developer-images":
+        from ios_developer_toolkit.developer_images import main
+
+        return main(arguments)
     raise ValueError(f"Unsupported internal worker: {worker}")
 
 
