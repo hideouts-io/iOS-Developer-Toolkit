@@ -230,7 +230,16 @@ class NativeToolPageIntegrationTests(unittest.TestCase):
         self.assertIsInstance(results[0][0], OperationContext)
         self.assertIsInstance(results[0][1], OperationResult)
         result = results[0][1]
-        self.assertEqual(result.outcome, "succeeded")
+        self.assertEqual(
+            result.outcome,
+            "succeeded",
+            msg=(
+                f"argv={result.argv!r}; outcome={result.outcome!r}; exit={result.exit_code!r}; "
+                f"error={None if result.error_message is None else result.error_message[:1024]!r}; "
+                f"started={result.started_at!r}; finished={result.finished_at!r}; "
+                f"stdout_tail={result.stdout[-4096:]!r}; stderr_tail={result.stderr[-4096:]!r}"
+            ),
+        )
         self.assertIn(b"Control a device's simulated location", result.stdout + result.stderr)
         page.set_device(None, True)
         simulator.set_demo_mode(True)
