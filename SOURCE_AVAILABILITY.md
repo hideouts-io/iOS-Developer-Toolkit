@@ -1,6 +1,6 @@
 # Source availability for distributed application bundles
 
-Every published iOS Developer Toolkit release is built from a signed Git tag in [this public repository](https://github.com/hideouts-io/iOS-Developer-Toolkit). GitHub provides source archives for each release tag, and the complete project source can also be obtained with:
+Every published iOS Developer Toolkit release is built from its release Git tag in [this public repository](https://github.com/hideouts-io/iOS-Developer-Toolkit). GitHub provides source archives for each release tag, and the complete project source can also be obtained with:
 
 ```bash
 git clone --branch vVERSION --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git

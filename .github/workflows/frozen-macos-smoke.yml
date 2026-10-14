@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - ".github/workflows/frozen-macos-smoke.yml"
+      - ".github/workflows/release-macos.yml"
+      - "LICENSE"
+      - "SOURCE_AVAILABILITY.md"
+      - "THIRD_PARTY_NOTICES.md"
       - "ios_developer_toolkit/**"
       - "macos/**"
       - "packaging/**"

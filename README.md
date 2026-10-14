@@ -63,7 +63,7 @@ Use the focused [documentation site](https://hideouts-io.github.io/iOS-Developer
 
 ## Start here
 
-Start with [Clone the repository and run the app](#clone-the-repository-and-run-the-app) to launch the current source in a project-managed environment. The launcher creates the local virtual environment when needed, stages **iOS Developer Toolkit.app**, and opens it. If you prefer a portable application that does not require a repository checkout, use the architecture-specific downloads later in the Installation section. The GUI does not expose an interactive shell. IPython and Jedi remain source-installation tools, while the xonsh runtime is bundled because pymobiledevice3's AFC and backup services import it.
+Start with [Clone the repository and run the app](#clone-the-repository-and-run-the-app) to launch the current source in a dedicated environment with the verified Cocoa accessibility repair. If you prefer a portable application that does not require a repository checkout, use the architecture-specific downloads later in the Installation section. The GUI does not expose an interactive shell. IPython and Jedi remain source-installation tools, while the xonsh runtime is bundled because pymobiledevice3's AFC and backup services import it.
 
 Connect an unlocked iPhone or iPad with a data-capable USB cable, tap **Trust** on the device, and select the intended target in the top-right device picker. Developer Mode and a mounted DDI are required only for workflows that use Apple developer services; basic pairing, Lockdown, apps, backups, AFC, classic syslog, and many diagnostics can work without them.
 
@@ -354,11 +354,7 @@ Do not disable Gatekeeper globally, alter System Integrity Protection, or run br
 
 ### Use a GitHub source archive
 
-Download the source archive from the [releases page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases), extract it, open Terminal in the extracted folder, and run:
-
-```bash
-./script/build_and_run.sh
-```
+Download the source archive from the [releases page](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases), extract it, and open Terminal in the extracted folder. Follow [development setup](CONTRIBUTING.md#development-setup) to prepare the repaired source environment and launch the application.
 
 GitHub's automatically generated source ZIP and tarball are source packages. The two explicitly named macOS ZIP assets are the prebuilt applications.
 
@@ -376,15 +372,7 @@ If macOS warns about downloaded content, follow [Open the ad-hoc-signed app safe
 
 ### Launch and diagnostic modes
 
-```bash
-./script/build_and_run.sh
-./script/build_and_run.sh --verify
-./script/build_and_run.sh --debug
-./script/build_and_run.sh --logs
-./script/build_and_run.sh --telemetry
-```
-
-Re-running the launcher updates the environment from the current checkout and rebuilds the staged wrapper. The script also stops an existing toolkit Python process before launching the rebuilt copy, so finish or save active captures first.
+Use the dedicated repaired environment and direct launch command in [development setup](CONTRIBUTING.md#development-setup). The [verification guide](CONTRIBUTING.md#verification) lists the source checks; keep native launch and device validation separate from offscreen checks.
 
 ## First-device walkthrough
 
@@ -1113,7 +1101,7 @@ Install or update Xcode if the candidate is absent. The toolkit requires the exp
 ├── macos/                      # wrapper executable, Info.plist, and icon
 ├── packaging/                  # pinned PySide6 deployment configuration
 ├── scripts/                    # self-contained native release builder
-├── script/build_and_run.sh     # environment, staging, launch, verification modes
+├── script/build_and_run.sh     # legacy wrapper; use the repaired source setup
 ├── tests/                      # core, capability, and packaged-runtime tests
 ├── pyproject.toml              # package metadata and pinned dependencies
 └── LICENSE
@@ -1127,10 +1115,10 @@ venv/bin/python -m compileall -q ios_developer_toolkit
 venv/bin/python -m ios_developer_toolkit.collector --help
 venv/bin/python -m ios_developer_toolkit.local_ddi --help
 venv/bin/python -m ios_developer_toolkit.ipa_inspector --help
-./script/build_and_run.sh --verify
+QT_QPA_PLATFORM=offscreen venv/bin/python -m ios_developer_toolkit --toolkit-internal-smoke-test
 ```
 
-The final launcher check opens the application and briefly verifies the process. It stops an existing toolkit process first, so do not run it during an active capture or backup.
+The final check validates GUI actions offscreen. Follow [development setup](CONTRIBUTING.md#development-setup) for a native launch from the repaired environment; do not run launch or device checks during an active capture, collection, or backup.
 
 Build the focused documentation site with its isolated pinned dependency:
 
@@ -1139,7 +1127,7 @@ venv/bin/python -m pip install --requirement requirements/docs.txt
 venv/bin/python -m mkdocs build --strict --clean
 ```
 
-Pull requests validate the site without publishing it. A documentation change merged to `main` publishes through the dedicated GitHub Pages workflow.
+Documentation pushes and pull requests validate the site without publishing it. Publishing requires an authorized manual dispatch of the documentation workflow from `main` and human approval in the protected `github-pages` environment.
 
 Physical-device validation is opt-in and is not required for pull requests. Use the [physical-device test protocol](docs/PHYSICAL_DEVICE_TEST_PROTOCOL.md) to separate USB, usbmux, CoreDevice, Developer Mode, DDI, tunnel, DVT, and state-changing checks; publish only sanitized results.
 
