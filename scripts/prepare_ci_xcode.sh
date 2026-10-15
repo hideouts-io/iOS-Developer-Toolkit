@@ -18,3 +18,9 @@ fi
 "$xcodebuild" -version
 /usr/bin/sudo -n "$xcodebuild" -runFirstLaunch
 "$xcodebuild" -checkFirstLaunchStatus
+
+# Initialize the selected Xcode's CoreSimulator catalog before timed readiness.
+# https://github.com/actions/runner-images/issues/12862
+echo "Initializing the selected Xcode CoreSimulator inventory"
+/usr/bin/time -p /usr/bin/xcrun simctl list --json > /dev/null
+echo "CoreSimulator inventory initialization completed"
