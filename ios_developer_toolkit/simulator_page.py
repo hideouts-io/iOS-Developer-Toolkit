@@ -17,6 +17,7 @@ from ios_developer_toolkit.apple_tools_page import NativeToolPanel, tool_button
 from ios_developer_toolkit.live_logs import LiveLogError, LiveLogWindow
 from ios_developer_toolkit.location_lab import validate_coordinates
 from ios_developer_toolkit.operation_history import OperationContext
+from ios_developer_toolkit.qt_combo import replace_combo_entries
 from ios_developer_toolkit.qt_process import OperationResult
 from ios_developer_toolkit.simulator_tools import (
     SimulatorGPXRoute, SimulatorTarget, decode_simulator_apps, fixed_gpx_offsets,
@@ -244,7 +245,7 @@ class SimulatorToolsPage(NativeToolPanel):
 
     def _target_changed(self) -> None:
         if hasattr(self, "app_combo"):
-            self.app_combo.clear()
+            replace_combo_entries(self.app_combo, (), None)
         self._update_controls()
 
     def _update_controls(self) -> None:
@@ -270,16 +271,16 @@ class SimulatorToolsPage(NativeToolPanel):
 
     def _load_targets(self, payload: bytes) -> None:
         targets = parse_simulators(payload)
-        selected = self.target_combo.currentData()
+        selected: object = self.target_combo.currentData()
+        if not isinstance(selected, str):
+            raise AppleToolError("The simulator picker selection must contain a string identifier")
         self._targets = targets
-        self.target_combo.clear()
-        self.target_combo.addItem("Choose a simulator…", "")
+        entries: list[tuple[str, str]] = [("Choose a simulator…", "")]
         for target in targets:
             suffix = "" if target.available else "; unavailable"
-            self.target_combo.addItem(f"{target.name} — {target.runtime_name} ({target.state}{suffix})", target.identifier)
-        index = self.target_combo.findData(selected)
-        if index >= 0:
-            self.target_combo.setCurrentIndex(index)
+            entries.append((f"{target.name} — {target.runtime_name} ({target.state}{suffix})", target.identifier))
+        replace_combo_entries(self.target_combo, tuple(entries), selected)
+        self._target_changed()
 
     def boot(self) -> None:
         self._perform(lambda: simulator_boot(self._target()), None)
@@ -304,9 +305,7 @@ class SimulatorToolsPage(NativeToolPanel):
 
     def _load_apps(self, payload: bytes) -> None:
         apps = decode_simulator_apps(payload)
-        self.app_combo.clear()
-        for app in apps:
-            self.app_combo.addItem(f"{app.name} ({app.bundle_identifier})", app.bundle_identifier)
+        replace_combo_entries(self.app_combo, tuple((f"{app.name} ({app.bundle_identifier})", app.bundle_identifier) for app in apps), None)
 
     def _bundle(self) -> str:
         selected = self.app_combo.currentData()

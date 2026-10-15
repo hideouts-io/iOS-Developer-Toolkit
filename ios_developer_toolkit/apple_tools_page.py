@@ -23,6 +23,7 @@ from ios_developer_toolkit.apple_tools import (
 from ios_developer_toolkit.live_logs import LiveLogError, LiveLogWindow, LogStreamSpec
 from ios_developer_toolkit.models import IOSDevice
 from ios_developer_toolkit.operation_history import operation_context
+from ios_developer_toolkit.qt_combo import replace_combo_entries
 from ios_developer_toolkit.qt_process import FiniteProcessController, OperationResult, finite_process_request
 
 
@@ -295,18 +296,19 @@ class AppleToolsPage(NativeToolPanel):
     def _load_targets(self, payload: bytes) -> None:
         self._targets = parse_coredevice_targets(payload)
         self._populate_targets()
+        self._update_controls()
 
     def _populate_targets(self) -> None:
-        selected = self.target_combo.currentData()
-        self.target_combo.clear()
-        self.target_combo.addItem("Choose a CoreDevice target…", "")
+        """Replace the full inventory without invalidating Cocoa's cached row interfaces."""
+        entries: list[tuple[str, str]] = [("Choose a CoreDevice target…", "")]
         if self._device is not None and not self._demo_mode and not any(target.udid == self._device.identifier for target in self._targets):
-            self.target_combo.addItem(f"Physical picker: {self._device.display_name()}", self._device.identifier)
+            entries.append((f"Physical picker: {self._device.display_name()}", self._device.identifier))
         for target in self._targets:
-            self.target_combo.addItem(f"{target.name} — {target.version} ({target.transport}; tunnel {target.tunnel_state})", target.identifier)
-        index = self.target_combo.findData(selected)
-        if index >= 0:
-            self.target_combo.setCurrentIndex(index)
+            entries.append((f"{target.name} — {target.version} ({target.transport}; tunnel {target.tunnel_state})", target.identifier))
+        selected: object = self.target_combo.currentData()
+        if not isinstance(selected, str):
+            raise AppleToolError("The CoreDevice picker selection must contain a string identifier")
+        replace_combo_entries(self.target_combo, tuple(entries), selected)
 
     def show_details(self) -> None:
         self._perform(lambda: coredevice_details(self._target()), None)

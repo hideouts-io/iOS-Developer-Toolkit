@@ -19,6 +19,7 @@ from ios_developer_toolkit.apple_tools import (
 )
 from ios_developer_toolkit.apple_tools_page import AppleToolsPage
 from ios_developer_toolkit.location_lab import Coordinates
+from ios_developer_toolkit.models import IOSDevice
 from ios_developer_toolkit.operation_history import OperationContext
 from ios_developer_toolkit.qt_process import OperationResult
 from ios_developer_toolkit.simulator_page import SimulatorToolsPage
@@ -164,6 +165,73 @@ class NativeToolPageIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.application = QApplication.instance() or QApplication([])
+
+    def test_coredevice_picker_preserves_selection_and_denies_removed_targets(self) -> None:
+        parent = QWidget()
+        page = AppleToolsPage(parent)
+        self.addCleanup(parent.close)
+        self.addCleanup(page.shutdown)
+        device = IOSDevice(DEVICE_ID, "Test iPhone", "iPhone17,1", "26.0", "23A000", "USB")
+        page.set_device(device, False)
+        self.assertEqual(page.target_combo.currentData(), "")
+        self.assertFalse(page.details_button.isEnabled())
+        page.target_combo.setCurrentIndex(page.target_combo.findData(DEVICE_ID))
+        self.assertEqual(page._target(), DEVICE_ID)
+        model = page.target_combo.model()
+        for _ in range(4):
+            page.set_device(device, False)
+        self.assertIs(page.target_combo.model(), model)
+        self.assertEqual(page._target(), DEVICE_ID)
+        changed = IOSDevice(DEVICE_ID, "Renamed iPhone", "iPhone17,1", "26.1", "23B000", "Network")
+        page.set_device(changed, False)
+        self.assertEqual(page._target(), DEVICE_ID)
+        self.assertIn("Renamed iPhone", page.target_combo.currentText())
+        self.assertTrue(page.details_button.isEnabled())
+        page.set_device(None, False)
+        self.assertEqual(page.target_combo.currentData(), "")
+        self.assertFalse(page.details_button.isEnabled())
+        with self.assertRaises(AppleToolError):
+            page._target()
+        record = {"identifier": SIMULATOR_ID, "hardwareProperties": {"udid": DEVICE_ID}, "deviceProperties": {"name": "CoreDevice iPhone", "osVersionNumber": "26.0"}, "connectionProperties": {"transportType": "localNetwork", "tunnelState": "disconnected", "pairingState": "paired"}}
+        page._load_targets(coredevice_payload(record))
+        page.target_combo.setCurrentIndex(page.target_combo.findData(SIMULATOR_ID))
+        page._load_targets(coredevice_payload({**record, "deviceProperties": {"name": "Updated CoreDevice iPhone", "osVersionNumber": "26.1"}}))
+        self.assertEqual(page._target(), SIMULATOR_ID)
+        self.assertIn("Updated CoreDevice iPhone", page.target_combo.currentText())
+        page._load_targets(b'{"info":{"outcome":"success"},"result":{"devices":[]}}')
+        self.assertEqual(page.target_combo.currentData(), "")
+        self.assertFalse(page.details_button.isEnabled())
+        with self.assertRaises(AppleToolError):
+            page._target()
+
+    def test_simulator_inventory_retains_target_and_invalidates_app_selection(self) -> None:
+        parent = QWidget()
+        page = SimulatorToolsPage(parent)
+        self.addCleanup(parent.close)
+        self.addCleanup(page.shutdown)
+        runtime = "com.apple.CoreSimulator.SimRuntime.iOS-26-0"
+        record = {"udid": SIMULATOR_ID, "name": "Test iPhone", "state": "Shutdown", "isAvailable": True, "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17"}
+        payload = {"runtimes": [{"identifier": runtime, "name": "iOS 26.0", "version": "26.0"}], "devices": {runtime: [record]}}
+        page._load_targets(json.dumps(payload).encode())
+        page.target_combo.setCurrentIndex(page.target_combo.findData(SIMULATOR_ID))
+        self.assertEqual(page._target(), SIMULATOR_ID)
+        self.assertTrue(page.boot_button.isEnabled())
+        page._load_apps(plistlib.dumps({"com.example.test": {"CFBundleIdentifier": "com.example.test", "CFBundleName": "Test", "ApplicationType": "User"}}))
+        self.assertEqual(page._bundle(), "com.example.test")
+        page._load_targets(json.dumps(payload).encode())
+        self.assertEqual(page._target(), SIMULATOR_ID)
+        self.assertEqual(page.app_combo.count(), 0)
+        payload["devices"][runtime] = [{**record, "isAvailable": False}]
+        page._load_targets(json.dumps(payload).encode())
+        self.assertFalse(page.boot_button.isEnabled())
+        with self.assertRaises(AppleToolError):
+            page._target()
+        payload["devices"][runtime] = []
+        page._load_targets(json.dumps(payload).encode())
+        self.assertEqual(page.target_combo.currentData(), "")
+        self.assertFalse(page.boot_button.isEnabled())
+        with self.assertRaises(AppleToolError):
+            page._target()
 
     def test_simulator_close_requires_explicit_leave_and_defaults_to_cancel(self) -> None:
         self.parent = QWidget()

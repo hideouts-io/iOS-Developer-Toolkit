@@ -68,6 +68,7 @@ from PySide6.QtWidgets import (
 )
 
 from ios_developer_toolkit import APP_VERSION
+from ios_developer_toolkit.qt_combo import replace_combo_entries
 from ios_developer_toolkit.action_safety import (
     ActionSafetyProfile,
     advanced_action_safety,
@@ -324,6 +325,28 @@ def base_environment() -> Mapping[str, str]:
     environment["PYTHONUNBUFFERED"] = "1"
     environment["NO_COLOR"] = "1"
     return environment
+
+
+def activate_application_window(main_window: QWidget, state: Qt.ApplicationState) -> None:
+    """Restore an active application's main window without replacing its modal focus."""
+    if state != Qt.ApplicationState.ApplicationActive:
+        return
+    modal: QWidget | None = QApplication.activeModalWidget()
+    active: QWidget | None = QApplication.activeWindow()
+    target: QWidget
+    if modal is not None:
+        target = modal
+    elif active is not None and active.isVisible() and not active.isMinimized():
+        target = active
+    else:
+        target = main_window
+    if main_window.isMinimized():
+        main_window.setWindowState(main_window.windowState() & ~Qt.WindowState.WindowMinimized)
+        main_window.show()
+    elif main_window.isHidden():
+        main_window.show()
+    target.raise_()
+    target.activateWindow()
 
 
 class DeviceScanner(QObject):
@@ -762,11 +785,15 @@ class MainWindow(QMainWindow):
             raise RuntimeError("A QApplication is required before creating the toolkit window")
         application.installEventFilter(self)
         application.paletteChanged.connect(self._palette_changed)
+        application.applicationStateChanged.connect(self._application_state_changed)
         self._scanner = DeviceScanner(self._pmd3)
         self._scanner.devices_changed.connect(self._devices_changed)
         self._scanner.scan_error.connect(self._scan_error)
         self._scanner.diagnostic_changed.connect(self._connection_diagnostic_changed)
         self._scanner.start()
+
+    def _application_state_changed(self, state: Qt.ApplicationState) -> None:
+        activate_application_window(self, state)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -1074,28 +1101,29 @@ class MainWindow(QMainWindow):
         QWidget.setTabOrder(self.keyboard_shortcuts_button, self.support_bundle_button)
 
     def _configure_keyboard_shortcuts(self) -> None:
-        self._add_application_shortcut("Meta+R", self._scanner_scan, "shortcutRetryDeviceScan")
-        self._add_application_shortcut("Meta+K", self.show_action_palette, "shortcutShowActionPalette")
-        self._add_application_shortcut("Meta+L", self.focus_workspace_navigation, "shortcutFocusWorkspaceNavigation")
-        self._add_application_shortcut("Meta+F", self.focus_workspace_search, "shortcutFocusWorkspaceSearch")
-        self._add_application_shortcut("Meta+/", self.show_keyboard_shortcuts, "shortcutShowKeyboardReference")
-        self._add_application_shortcut("Meta+Alt+Left", self.navigate_previous_workspace, "shortcutPreviousWorkspace")
-        self._add_application_shortcut("Meta+Alt+Right", self.navigate_next_workspace, "shortcutNextWorkspace")
+        # Qt maps Control to Command on macOS; Meta represents physical Control.
+        self._add_application_shortcut("Ctrl+R", self._scanner_scan, "shortcutRetryDeviceScan")
+        self._add_application_shortcut("Ctrl+K", self.show_action_palette, "shortcutShowActionPalette")
+        self._add_application_shortcut("Ctrl+L", self.focus_workspace_navigation, "shortcutFocusWorkspaceNavigation")
+        self._add_application_shortcut("Ctrl+F", self.focus_workspace_search, "shortcutFocusWorkspaceSearch")
+        self._add_application_shortcut("Ctrl+/", self.show_keyboard_shortcuts, "shortcutShowKeyboardReference")
+        self._add_application_shortcut("Ctrl+Alt+Left", self.navigate_previous_workspace, "shortcutPreviousWorkspace")
+        self._add_application_shortcut("Ctrl+Alt+Right", self.navigate_next_workspace, "shortcutNextWorkspace")
         self._add_application_shortcut("Meta+Ctrl+S", self.toggle_workspace_sidebar, "shortcutToggleSidebar")
-        self._add_application_shortcut("Meta+Shift+R", self.refresh_capability_matrix, "shortcutRunReadiness")
+        self._add_application_shortcut("Ctrl+Shift+R", self.refresh_capability_matrix, "shortcutRunReadiness")
         workspace_shortcuts = (
-            ("Meta+1", "Home"),
-            ("Meta+2", "Device & DDI"),
-            ("Meta+3", "Capability Matrix"),
-            ("Meta+4", "Location Lab"),
-            ("Meta+5", "Live Logs"),
-            ("Meta+6", "Command Center"),
-            ("Meta+7", "Installed Apps"),
-            ("Meta+8", "Backup"),
-            ("Meta+9", "Sideload IPA"),
-            ("Meta+0", "Evidence Capture"),
-            ("Meta+Shift+M", "Man Pages"),
-            ("Meta+Shift+S", "Scope & Safety"),
+            ("Ctrl+1", "Home"),
+            ("Ctrl+2", "Device & DDI"),
+            ("Ctrl+3", "Capability Matrix"),
+            ("Ctrl+4", "Location Lab"),
+            ("Ctrl+5", "Live Logs"),
+            ("Ctrl+6", "Command Center"),
+            ("Ctrl+7", "Installed Apps"),
+            ("Ctrl+8", "Backup"),
+            ("Ctrl+9", "Sideload IPA"),
+            ("Ctrl+0", "Evidence Capture"),
+            ("Ctrl+Shift+M", "Man Pages"),
+            ("Ctrl+Shift+S", "Scope & Safety"),
         )
         for sequence, page_name in workspace_shortcuts:
             identifier = f"shortcutOpen{page_name.replace(' ', '').replace('&', 'And')}"
@@ -3655,11 +3683,11 @@ class MainWindow(QMainWindow):
         self._demo_mode = True
         self._reconnect_timeout_timer.stop()
         self._reconnect_active = False
-        self.device_combo.blockSignals(True)
-        self.device_combo.clear()
-        self.device_combo.addItem(self._demo_device.display_name(), self._demo_device.identifier)
-        self.device_combo.setCurrentIndex(0)
-        self.device_combo.blockSignals(False)
+        replace_combo_entries(
+            self.device_combo,
+            ((self._demo_device.display_name(), self._demo_device.identifier),),
+            self._demo_device.identifier,
+        )
         self.device_combo.setEnabled(False)
         self.demo_mode_button.setText("Exit Demo")
         self.refresh_devices_button.setEnabled(False)
@@ -3683,17 +3711,11 @@ class MainWindow(QMainWindow):
         devices: tuple[IOSDevice, ...],
         previous_identifier: str | None,
     ) -> None:
-        self.device_combo.blockSignals(True)
-        self.device_combo.clear()
-        for device in devices:
-            self.device_combo.addItem(device.display_name(), device.identifier)
-        if previous_identifier is not None:
-            matching_index = next(
-                (index for index, device in enumerate(devices) if device.identifier == previous_identifier),
-                0,
-            )
-            self.device_combo.setCurrentIndex(matching_index)
-        self.device_combo.blockSignals(False)
+        replace_combo_entries(
+            self.device_combo,
+            tuple((device.display_name(), device.identifier) for device in devices),
+            previous_identifier,
+        )
 
     def _displayed_device(self) -> IOSDevice | None:
         if self._demo_mode:

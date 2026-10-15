@@ -2,7 +2,8 @@
 
 Run with the dedicated PySide6 6.9.3 environment and an explicitly selected repaired
 platform plugin. Native Cocoa queries cover selected cells, converted placeholder
-cells, model changes, and dialog destruction. An offscreen run is an error.
+cells, model changes, combo inventory replacement under a modal dialog, and
+dialog destruction. An offscreen run is an error.
 """
 
 from __future__ import annotations
@@ -15,9 +16,9 @@ from pathlib import Path
 import sys
 
 import PySide6
-from PySide6.QtCore import QCoreApplication, qVersion
-from PySide6.QtGui import QAccessible, QGuiApplication
-from PySide6.QtWidgets import QApplication, QDialog, QListWidget, QTableWidget, QTableWidgetItem, QVBoxLayout
+from PySide6.QtCore import QCoreApplication, QTimer, Qt, qVersion
+from PySide6.QtGui import QAccessible, QGuiApplication, QStandardItem, QStandardItemModel
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QListWidget, QTableWidget, QTableWidgetItem, QVBoxLayout
 import shiboken6
 
 
@@ -55,6 +56,9 @@ class CocoaAccessibility:
         self._item: ctypes._CFuncPtr = ctypes.CFUNCTYPE(
             ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t
         )(("objc_msgSend", self._runtime))
+        self._text: ctypes._CFuncPtr = ctypes.CFUNCTYPE(
+            ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p
+        )(("objc_msgSend", self._runtime))
         self._class = native_pointer(self._runtime.objc_getClass(b"QMacAccessibilityElement"))
         if not self._class:
             raise RuntimeError("Qt's native Cocoa accessibility class was not loaded")
@@ -81,6 +85,18 @@ class CocoaAccessibility:
         if index < 0 or index >= self.count(array):
             raise RuntimeError("Native accessibility array index is out of bounds")
         return native_pointer(self._item(array, self.selector("objectAtIndex:"), index))
+
+    def text(self, element: int, name: str) -> str:
+        value = self.read(element, name)
+        if not value:
+            raise RuntimeError("Native accessibility element has no requested text")
+        encoded = self._text(value, self.selector("UTF8String"))
+        if not isinstance(encoded, bytes) or len(encoded) > 1024:
+            raise RuntimeError("Native accessibility text is invalid or exceeds its bound")
+        try:
+            return encoded.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise RuntimeError("Native accessibility text is not valid UTF-8") from error
 
     def begin_pool(self) -> int:
         return native_pointer(self._runtime.objc_autoreleasePoolPush())
@@ -236,6 +252,138 @@ def verify_list_teardown(application: QApplication, native: CocoaAccessibility) 
         print(f"Native list model refresh and dialog destruction cycle {cycle + 1}: passed", flush=True)
 
 
+def replace_combo_inventory(combo: QComboBox, entries: tuple[tuple[str, str], ...]) -> None:
+    """Install a populated detached model and preserve only a surviving identifier."""
+    selected = combo.currentData()
+    model = QStandardItemModel(len(entries), 1, combo)
+    for row, (label, identifier) in enumerate(entries):
+        item = QStandardItem(label)
+        item.setData(identifier, Qt.ItemDataRole.UserRole)
+        model.setItem(row, 0, item)
+    combo.setModel(model)
+    index = combo.findData(selected)
+    combo.setCurrentIndex(index if index >= 0 else 0)
+
+
+def assert_combo_inventory(
+    native: CocoaAccessibility,
+    combo: QComboBox,
+    entries: tuple[tuple[str, str], ...],
+    selected: str,
+) -> None:
+    """Materialize actual Cocoa rows and compare their labels and selected child."""
+    interface = QAccessible.queryAccessibleInterface(combo)
+    if interface is None:
+        raise RuntimeError("Qt did not provide a combo accessibility interface")
+    view_interface = interface.child(0)
+    if view_interface is None:
+        raise RuntimeError("Qt did not provide the combo popup accessibility interface")
+    identifier = QAccessible.uniqueId(view_interface)
+    element = native.element(identifier)
+    rows = native.read(element, "accessibilityRows")
+    if native.count(rows) != len(entries) or combo.count() != len(entries):
+        raise RuntimeError("Native combo rows differ from the installed target inventory")
+    for row, (label, target) in enumerate(entries):
+        row_element = native.item(rows, row)
+        cells = native.read(row_element, "accessibilityChildren")
+        if native.count(cells) != 1:
+            raise RuntimeError("Native combo target row does not contain exactly one cell")
+        cell = native.item(cells, 0)
+        if not native.read(cell, "accessibilityRole") or native.text(cell, "accessibilityTitle") != label:
+            raise RuntimeError("Native combo target cell lost its role or expected label")
+        if combo.itemText(row) != label or combo.itemData(row) != target:
+            raise RuntimeError("Combo target data differs from its expected label and identifier")
+    if combo.currentData() != selected:
+        raise RuntimeError("Combo inventory replacement selected an unexpected target")
+    assert_selected(native, element, 1, identifier)
+    children = native.read(element, "accessibilitySelectedChildren")
+    selected_label = next(label for label, target in entries if target == selected)
+    if native.text(native.item(children, 0), "accessibilityTitle") != selected_label:
+        raise RuntimeError("Native combo selected child differs from the chosen identifier")
+
+
+def verify_combo_modal_inventory(application: QApplication, native: CocoaAccessibility) -> None:
+    """Refresh cached native combo cells during a real nested modal event loop."""
+    placeholder = ("Choose a target", "")
+    alpha = ("Target alpha", "alpha")
+    beta = ("Target beta", "beta")
+    gamma = ("Target gamma", "gamma")
+    snapshots: tuple[tuple[tuple[tuple[str, str], ...], str], ...] = (
+        ((placeholder, alpha, beta), "beta"),
+        ((placeholder, alpha, beta, gamma), "beta"),
+        ((placeholder, ("Target alpha updated", "alpha"), beta, gamma), "beta"),
+        ((placeholder, beta, gamma), "beta"),
+        ((placeholder, gamma), ""),
+        ((placeholder,), ""),
+        ((placeholder, alpha, beta), ""),
+    )
+    owner = QDialog()
+    owner.setObjectName("nativeComboInventoryOwner")
+    layout = QVBoxLayout(owner)
+    combo = QComboBox(owner)
+    combo.setObjectName("nativeComboInventoryTarget")
+    replace_combo_inventory(combo, (placeholder, alpha, beta))
+    owner.resize(600, 240)
+    owner.show()
+    application.processEvents()
+    native.read(int(owner.winId()), "accessibilityChildren")
+    if not QAccessible.isActive():
+        raise RuntimeError("Native combo query did not activate accessibility notifications")
+    try:
+        for cycle in range(3):
+            combo.setCurrentIndex(combo.findData("beta"))
+            pool = native.begin_pool()
+            assert_combo_inventory(native, combo, (placeholder, alpha, beta), "beta")
+            native.drain_pool(pool)
+            modal = QDialog(owner)
+            modal.setObjectName("nativeComboInventoryModalGuide")
+            failures: list[RuntimeError] = []
+            watchdog = QTimer(modal)
+            watchdog.setSingleShot(True)
+
+            def expire() -> None:
+                failures.append(RuntimeError("Native modal combo transitions exceeded five seconds"))
+                modal.reject()
+
+            def refresh() -> None:
+                try:
+                    if QApplication.activeModalWidget() != modal:
+                        raise RuntimeError("Combo inventory refresh ran outside the active modal dialog")
+                    native.read(int(modal.winId()), "accessibilityChildren")
+                    for entries, selected in snapshots:
+                        replacement_pool = native.begin_pool()
+                        try:
+                            replace_combo_inventory(combo, entries)
+                            assert_combo_inventory(native, combo, entries, selected)
+                            application.processEvents()
+                            assert_combo_inventory(native, combo, entries, selected)
+                        finally:
+                            native.drain_pool(replacement_pool)
+                        assert_combo_inventory(native, combo, entries, selected)
+                    modal.accept()
+                except RuntimeError as error:
+                    failures.append(error)
+                    modal.reject()
+                finally:
+                    watchdog.stop()
+
+            watchdog.timeout.connect(expire)
+            watchdog.start(5000)
+            QTimer.singleShot(0, refresh)
+            outcome = modal.exec()
+            shiboken6.delete(modal)
+            if failures:
+                raise RuntimeError("Native modal combo inventory verification failed") from failures[0]
+            if outcome != QDialog.DialogCode.Accepted:
+                raise RuntimeError("Native modal combo inventory dialog did not complete its transitions")
+            application.processEvents()
+            assert_combo_inventory(native, combo, snapshots[-1][0], "")
+            print(f"Native combo model reset and modal inventory cycle {cycle + 1}: passed", flush=True)
+    finally:
+        shiboken6.delete(owner)
+        application.processEvents()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-plugin", required=True, type=Path)
@@ -257,7 +405,8 @@ def main() -> int:
     native = CocoaAccessibility()
     verify_table(application, native)
     verify_list_teardown(application, native)
-    print(json.dumps({"qt_version": qVersion(), "native_selection": "passed", "native_placeholder_teardown": "passed"}), flush=True)
+    verify_combo_modal_inventory(application, native)
+    print(json.dumps({"qt_version": qVersion(), "native_selection": "passed", "native_placeholder_teardown": "passed", "native_combo_modal_inventory": "passed"}), flush=True)
     return 0
 
 
