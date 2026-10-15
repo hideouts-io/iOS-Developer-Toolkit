@@ -13,6 +13,8 @@ from ios_developer_toolkit.runtime import (
     ExecutableCommand,
     INTERNAL_PYMOBILEDEVICE3_FLAG,
     INTERNAL_SMOKE_TEST_FLAG,
+    INTERNAL_UI_CHECK_FLAG,
+    INTERNAL_DEMO_PREVIEW_FLAG,
     INTERNAL_WORKER_FLAG,
     ToolkitWorker,
     pymobiledevice3_command,
@@ -43,6 +45,8 @@ def parsed_worker(value: str) -> ToolkitWorker:
         return "ipa-inspector"
     if value == "local-ddi":
         return "local-ddi"
+    if value == "developer-images":
+        return "developer-images"
     raise ValueError(f"Unsupported internal worker: {value}")
 
 
@@ -67,6 +71,10 @@ def run_worker(worker: ToolkitWorker, arguments: Sequence[str]) -> int:
         from ios_developer_toolkit.local_ddi import main
 
         return invoke_argv_main("ios-developer-toolkit-local-ddi", arguments, main)
+    if worker == "developer-images":
+        from ios_developer_toolkit.developer_images import main
+
+        return main(arguments)
     raise ValueError(f"Unsupported internal worker: {worker}")
 
 
@@ -81,20 +89,31 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise ValueError(f"Internal smoke test does not accept arguments: {tuple(arguments)}")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PySide6.QtCore import SIGNAL, Qt
-    from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QPushButton, QTableWidget
+    from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QPushButton, QTableWidget, QWidget
 
     from ios_developer_toolkit.action_palette import ActionPaletteDialog
     from ios_developer_toolkit.app import MainWindow
     from ios_developer_toolkit.backup_protocol import BackupRequest
-    from ios_developer_toolkit.external_tools import external_tool_spec, inspect_external_tool_executable
     from ios_developer_toolkit.mvt_connector import create_mvt_analysis_request
     from ios_developer_toolkit.operation_history import OperationHistoryDialog
+    from ios_developer_toolkit.workspace_profile import WORKSPACE_NAMES
 
     application = QApplication(["ios-developer-toolkit-smoke-test"])
     window = MainWindow()
     window._scanner.stop()
     window._devices_changed(())
     application.processEvents()
+    if set(window._page_indices) != set(WORKSPACE_NAMES):
+        raise RuntimeError("GUI destinations do not match the supported workspace profiles")
+    for destination in WORKSPACE_NAMES:
+        window.navigate_to_page(destination)
+        application.processEvents()
+        item = window.navigation_list.currentItem()
+        if item is None or item.text() != destination:
+            raise RuntimeError(f"GUI workspace navigation did not reach {destination!r}")
+    window.navigate_to_page("Home")
+    if window.findChild(QWidget, "externalToolTabs") is not None:
+        raise RuntimeError("GUI still exposes the removed Ecosystem Tools adapters")
     buttons = tuple(window.findChildren(QPushButton))
     missing_identifiers = tuple(button.text() for button in buttons if not button.objectName())
     disconnected = tuple(
@@ -126,6 +145,10 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         "homeOpenCommandCenterButton": "Command Center",
         "homeOpenEvidenceCaptureButton": "Evidence Capture",
         "homeOpenManPagesButton": "Man Pages",
+        "homeOpenFirmwareButton": "Firmware",
+        "homeOpenSimulatorsButton": "Simulators",
+        "homeOpenXcodeToolsButton": "Xcode Tools",
+        "homeOpenSecurityAnalysisButton": "Security Analysis",
         "openLogPresetsButton": "Command Center",
         "openEvidenceCaptureButton": "Evidence Capture",
     }
@@ -192,6 +215,10 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         raise RuntimeError("GUI action-palette launcher is missing")
     action_palette_entries = window._eligible_action_palette_entries()
     action_palette_identifiers = {entry.identifier for entry in action_palette_entries}
+    if "navigate:Ecosystem Tools" in action_palette_identifiers or any(
+        identifier.startswith("action:external-tool:") for identifier in action_palette_identifiers
+    ):
+        raise RuntimeError("GUI action palette still exposes removed Ecosystem Tools actions")
     if "preset:devices" not in action_palette_identifiers:
         raise RuntimeError("GUI action palette omitted the host-only devices preset")
     device_only_presets = {
@@ -275,56 +302,6 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
             raise RuntimeError(f"GUI MVT analysis did not create isolated output: {window.mvt_output.toPlainText()}")
         if "does not prove" not in window.mvt_status.text():
             raise RuntimeError("GUI MVT completion omitted the no-clean-device interpretation boundary")
-    with tempfile.TemporaryDirectory() as external_tool_temporary_directory:
-        external_root = Path(external_tool_temporary_directory)
-        go_ios_path = external_root / "ios"
-        go_ios_path.write_text(
-            "#!/bin/sh\n"
-            "if [ \"$1\" = \"--version\" ]; then\n"
-            "  printf '{\"version\":\"1.3.2-smoke\"}\\n'\n"
-            "  exit 0\n"
-            "fi\n"
-            "printf '{\"deviceList\":[{\"name\":\"Synthetic iPhone\",\"udid\":\"REDACTED\"}]}\\n'\n",
-            encoding="utf-8",
-        )
-        go_ios_path.chmod(0o700)
-        go_ios_spec = external_tool_spec("go-ios")
-        go_ios_executable = inspect_external_tool_executable(go_ios_spec, go_ios_path)
-        window._external_tool_fields["go-ios"].setText(str(go_ios_path))
-        window._start_external_tool_process(
-            "go-ios",
-            "validate",
-            go_ios_executable,
-            go_ios_spec.version_arguments,
-        )
-        external_validation_deadline = time.monotonic() + 10
-        while window._external_tool_controller.is_running() and time.monotonic() < external_validation_deadline:
-            application.processEvents()
-            time.sleep(0.001)
-        application.processEvents()
-        installation = window._external_tool_installations.get("go-ios")
-        if window._external_tool_controller.is_running() or installation is None:
-            raise RuntimeError(
-                f"GUI go-ios validation did not complete: {window._external_tool_outputs['go-ios'].toPlainText()}"
-            )
-        if installation.version_or_build != "1.3.2-smoke":
-            raise RuntimeError("GUI go-ios adapter retained an unexpected version")
-        window._start_external_tool_process(
-            "go-ios",
-            "probe",
-            installation.executable,
-            go_ios_spec.probe_arguments,
-        )
-        external_probe_deadline = time.monotonic() + 10
-        while window._external_tool_controller.is_running() and time.monotonic() < external_probe_deadline:
-            application.processEvents()
-            time.sleep(0.001)
-        application.processEvents()
-        external_output = window._external_tool_outputs["go-ios"].toPlainText()
-        if window._external_tool_controller.is_running() or "Synthetic iPhone" not in external_output:
-            raise RuntimeError(f"GUI go-ios probe did not preserve output: {external_output}")
-        if "not a toolkit capability verdict" not in window._external_tool_statuses["go-ios"].text():
-            raise RuntimeError("GUI external-tool probe omitted the interpretation boundary")
     expected_shortcuts = {
         "shortcutRetryDeviceScan",
         "shortcutShowActionPalette",
@@ -334,11 +311,12 @@ def run_smoke_test(arguments: Sequence[str]) -> int:
         "shortcutPreviousWorkspace",
         "shortcutNextWorkspace",
         "shortcutOpenCommandCenter",
-        "shortcutOpenEcosystemTools",
         "shortcutOpenManPages",
         "shortcutOpenScopeAndSafety",
     }
     actual_shortcuts = {shortcut.objectName() for shortcut in window._keyboard_shortcuts}
+    if "shortcutOpenEcosystemTools" in actual_shortcuts:
+        raise RuntimeError("GUI still exposes the removed Ecosystem Tools shortcut")
     missing_shortcuts = expected_shortcuts - actual_shortcuts
     if missing_shortcuts:
         raise RuntimeError(f"GUI keyboard shortcuts are missing: {sorted(missing_shortcuts)}")
@@ -593,6 +571,14 @@ def dispatch_internal(arguments: Sequence[str]) -> int | None:
         return run_pymobiledevice3(remaining)
     if mode == INTERNAL_SMOKE_TEST_FLAG:
         return run_smoke_test(remaining)
+    if mode == INTERNAL_UI_CHECK_FLAG:
+        from ios_developer_toolkit.ui_verification import run_ui_check
+
+        return run_ui_check(remaining)
+    if mode == INTERNAL_DEMO_PREVIEW_FLAG:
+        from ios_developer_toolkit.ui_verification import run_demo_preview
+
+        return run_demo_preview(remaining)
     if mode == INTERNAL_WORKER_FLAG:
         if not remaining:
             raise ValueError(f"{INTERNAL_WORKER_FLAG} requires a worker name")

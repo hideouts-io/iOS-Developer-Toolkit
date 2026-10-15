@@ -1,0 +1,23 @@
+--- a/src/plugins/platforms/cocoa/qcocoaaccessibilityelement.mm
++++ b/src/plugins/platforms/cocoa/qcocoaaccessibilityelement.mm
+@@ -222,7 +222,9 @@
+ + (void)removeElementsFromCache:(NSArray *)array {
+     for (uint i = 0; i < array.count; ++i) {
+         QMacAccessibilityElement *cell = [array objectAtIndex:i];
+-        if (cell->axid) { // it's a proper cell, remove from cache
++        if (cell->axid && !cell.isManagedByParent) {
++            // Proper cells own their interface. Synthesized elements use their
++            // parent table's ID and must not remove that interface.
+             QAccessibleCache::instance()->deleteInterface(cell->axid);
+         }
+     }
+@@ -266,7 +268,8 @@
+         [QMacAccessibilityElement removeElementsFromCache:columns];
+         [columns release]; // will also release all entries first
+     }
+-    QAccessibleCache::instance()->deleteInterface(axid);
++    if (axid && !self.isManagedByParent)
++        QAccessibleCache::instance()->deleteInterface(axid);
+     [super dealloc];
+ }
+ 

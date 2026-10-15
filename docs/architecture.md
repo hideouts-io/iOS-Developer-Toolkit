@@ -28,6 +28,6 @@ The key implementation surfaces are:
 
 ## External-provider boundary
 
-UFADE and MVT remain isolated external providers. go-ios, idb Companion, and ipsw are optional executable adapters with path, SHA-256, and version/build validation. Their dependencies, licenses, target selection, output semantics, and update cycles are not merged into the packaged application.
+UFADE and MVT remain isolated external providers. Their dependencies, licenses, target selection, output semantics, and update cycles are not merged into the packaged application.
 
 See the current [product audit and roadmap](PRODUCT_AUDIT_2026-09-21.md) for the evidence behind these boundaries.

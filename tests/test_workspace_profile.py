@@ -72,6 +72,12 @@ class WorkspaceProfileTests(unittest.TestCase):
         with self.assertRaises(WorkspaceProfileError):
             workspace_profile_mapping(replace(profile, location_workflow=invalid_location))
 
+    def test_import_rejects_removed_ecosystem_destination(self) -> None:
+        payload = workspace_profile_mapping(example_profile())
+        payload["default_workspace"] = "Ecosystem Tools"
+        with self.assertRaisesRegex(WorkspaceProfileError, "removed.*another default workspace"):
+            parse_workspace_profile(payload)
+
     def test_parser_ignores_unrelated_extra_fields(self) -> None:
         payload = workspace_profile_mapping(example_profile())
         payload["future_top_level"] = "ignored"

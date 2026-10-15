@@ -23,8 +23,13 @@ jobs:
             python_architecture: x64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Initialize selected Xcode
+        timeout-minutes: 5
+        run: /bin/bash scripts/prepare_ci_xcode.sh
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
@@ -36,17 +41,32 @@ jobs:
           key: nuitka-${{ runner.os }}-${{ matrix.architecture }}-${{ hashFiles('pyproject.toml', 'requirements/**', 'packaging/**') }}
           restore-keys: |
             nuitka-${{ runner.os }}-${{ matrix.architecture }}-
+      - name: Prepare native helper build tools
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          brew install autoconf automake libtool pkg-config cmake sevenzip
+          for tool in autoconf autom4te automake glibtoolize pkg-config cmake 7zz; do
+            command -v "$tool"
+          done
       - name: Build and verify native application
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.0"
           NUITKA_CACHE_DIR: ${{ runner.temp }}/nuitka-cache
         run: ./scripts/build_macos_release.sh "${GITHUB_REF_NAME#v}" release-assets python3
+      - name: Verify architecture-specific helper source archive
+        env:
+          TOOLKIT_ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          test -s "release-assets/iOS-Developer-Toolkit-restore-helper-sources-${GITHUB_REF_NAME}-macOS-${TOOLKIT_ARCHITECTURE}.tar.gz"
+          test -s "release-assets/iOS-Developer-Toolkit-qt-cocoa-sources-${GITHUB_REF_NAME}-macOS-${TOOLKIT_ARCHITECTURE}.tar.gz"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: macos-${{ matrix.architecture }}
           path: |
             release-assets/*.zip
             release-assets/*.cdx.json
+            release-assets/*.tar.gz
           if-no-files-found: error
 
   release:
@@ -68,7 +88,7 @@ jobs:
           merge-multiple: true
       - name: Create checksums
         working-directory: release-assets
-        run: sha256sum *.zip *.cdx.json > SHA256SUMS.txt
+        run: sha256sum *.zip *.cdx.json *.tar.gz > SHA256SUMS.txt
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:

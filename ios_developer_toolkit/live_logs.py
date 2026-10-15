@@ -514,6 +514,10 @@ class LiveLogWindow(QMainWindow):
         process.start()
         self._update_status("Starting")
 
+    def is_running(self) -> bool:
+        """Report whether the owned stream or archive reader is still active."""
+        return self._process is not None and self._process.state() != QProcess.ProcessState.NotRunning
+
     def _read_output(self) -> None:
         process = self._process
         if process is None:

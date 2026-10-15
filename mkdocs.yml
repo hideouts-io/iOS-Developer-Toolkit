@@ -55,6 +55,7 @@ nav:
   - Overview: index.md
   - Quick start: quick-start.md
   - Architecture: architecture.md
+  - Swift and Python comparison: swift-python-parity.md
   - Safety and privacy: safety.md
   - Troubleshooting: troubleshooting.md
   - Release verification: release-verification.md

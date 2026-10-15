@@ -148,6 +148,8 @@ The original single best next build—reliable startup and lossless device disco
 
 The repository-side P0, P1, P2, compatibility-export, and local workspace-profile work is implemented on the audit branch and recorded below. The remaining P3 items are intentionally not represented as unfinished local code: notarization is blocked by the absent signing identity, and device-lab integration is deferred until a specific optional provider and data contract exist. CI and native frozen-artifact checks remain the acceptance authority for each pushed revision.
 
+The current macOS stability follow-up retains the Swift redesign and Qt ownership repair while completing combo inventory, window reopening and Command-key behavior. Its verification boundaries are recorded in the [Swift/Python comparison](swift-python-parity.md#remaining-differences-and-validation-boundaries). Windows and Linux application integrations remain the final phase, after the current macOS TODOs and applicable source, packaged and native UI gates; a blocked macOS gate does not advance that platform work.
+
 ## Continuous improvement log
 
 | Date | Improvement | Verification | Follow-up boundary |

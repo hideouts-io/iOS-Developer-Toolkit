@@ -12,15 +12,29 @@ Use a bug report for reproducible defects, a feature request for a bounded workf
 
 ## Development setup
 
-The supported development host is macOS 13 or later with Python 3.10 or later. Create an isolated environment and install the project in editable mode:
+The application supports macOS 13 or later with Python 3.10 through 3.13. Building
+the native Cocoa accessibility repair requires Python 3.13, CMake, `7zz`, and Xcode
+command-line tools. Use Python 3.13 for this development setup:
 
 ```bash
-python3 -m venv venv
+python3.13 -m venv venv
 venv/bin/python -m pip install --disable-pip-version-check --upgrade pip
 venv/bin/python -m pip install --disable-pip-version-check --editable .
 ```
 
-Launch from source with:
+Before a native GUI launch, build and install the verified Cocoa accessibility
+repair into this environment. CMake, `7zz`, and Xcode command-line tools must be
+available. The build uses checksum-pinned Qt 6.9.3 source and SDK downloads and
+requires the native accessibility verifier to pass:
+
+```bash
+venv/bin/python scripts/build_qt_cocoa_plugin.py --output build-output/qt-cocoa-repair --python "$PWD/venv/bin/python"
+venv/bin/python -c 'from pathlib import Path; from scripts.qt_cocoa_packaging import install_qt_cocoa_plugin; print(install_qt_cocoa_plugin(Path("build-output/qt-cocoa-repair"), Path("venv")))'
+```
+
+Install once per fresh environment; the installer preserves the stock plugin and
+rejects repeated replacement. Offscreen source tests do not need this native
+repair. Launch the repaired source environment with:
 
 ```bash
 venv/bin/python -m ios_developer_toolkit

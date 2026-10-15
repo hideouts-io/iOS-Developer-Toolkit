@@ -14,7 +14,7 @@ android_packages =
 [qt]
 qml_files =
 excluded_qml_plugins =
-modules = Core,Gui,Widgets
+modules = Core,Gui,Widgets,Svg
 plugins = platforms,imageformats
 
 [android]
