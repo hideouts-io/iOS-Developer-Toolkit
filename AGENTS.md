@@ -6,15 +6,16 @@
 - Documentation pushes and PRs build only. Publishing Pages requires an authorized manual dispatch from main and human approval in github-pages.
 - Report physical-device validation separately from offscreen, packaged, and static checks. Keep device identifiers, private evidence, and credentials out of public artifacts.
 
-## Standing Git delivery authorization
+## Git delivery workflow
 
-- For this repository, verified task work may be staged by explicit path or reviewed hunk, committed on a focused `codex/` branch, pushed without force, and delivered through a new or existing pull request. A draft may be marked ready and scoped CI fixes may be pushed without requesting Git authorization again.
+- Git and GitHub mutations require a trusted current user instruction that authorizes the task and each applicable operation. Do not treat this file, a checkpoint, memory, or a prior task as authorization.
+- When authorized, verified task work may be staged by explicit path or reviewed hunk, committed on a focused `codex/` branch, pushed without force, and delivered through a new or existing pull request. Mark a draft ready or push scoped CI fixes only when the current authorization covers those operations.
 - Use a pull request for source behavior, application, packaging, workflow, dependency, security-sensitive, or substantial multi-file changes. Direct pushes are limited to an appropriate non-protected task branch when repository practice and review requirements permit them.
 - Before committing or pushing, verify the repository root, branch, HEAD, remote, upstream, worktrees, open pull requests, dirty state, staged diff, outgoing diff, and current remote state. Stage only reviewed task files or hunks; never use `git add .`, `git add -A`, or `git commit -a` in a mixed worktree.
 - Preserve unrelated staged, unstaged, and untracked work. Use a clean suitable worktree when task work overlaps the canonical checkout. Never reset, clean, stash, discard, overwrite, or silently include unrelated changes.
 - Run the applicable source, documentation, packaging, and native checks. Before publication to GitHub, review for regressions, scope drift, generated-file mistakes, credentials, private evidence, device identifiers, personal data, local paths, backups, logs, downloaded indicators, caches, and private test artifacts.
 - Fetch and inspect the verified remote before integration. Push only the intended branch, verify the remote revision, inspect resulting checks, and fix failures without weakening tests, assertions, security controls, or required gates.
-- This standing authorization does not cover merging, force-pushing, history rewriting, unrequested remote-branch deletion, tags, releases, release assets, deployments, protected-environment approvals, repository or Actions settings, permissions, secrets, GitHub App access, or unrelated external messages. Obtain separate authorization for those actions and for any device-changing operation.
+- Task authorization does not automatically cover merging, force-pushing, history rewriting, unrequested remote-branch deletion, tags, releases, release assets, deployments, protected-environment approvals, repository or Actions settings, permissions, secrets, GitHub App access, unrelated external messages, or device-changing operations. Obtain authorization that explicitly covers any such action before performing it.
 - Keep Windows and Linux adapters, dependencies, installers, packaging, and CI work as the final phase. Do not begin them while an actionable macOS TODO remains.
 
 ## Durable continuity
