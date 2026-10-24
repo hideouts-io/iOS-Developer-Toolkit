@@ -13,7 +13,7 @@
 ![Devices](https://img.shields.io/badge/device-iPhone%20%7C%20iPad-0969da)
 ![Python](https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776ab?logo=python&logoColor=white)
 ![GUI](https://img.shields.io/badge/GUI-PySide6-41cd52)
-![pymobiledevice3](https://img.shields.io/badge/pymobiledevice3-11.15.1-8250df)
+![pymobiledevice3](https://img.shields.io/badge/pymobiledevice3-11.19.4-8250df)
 [![License](https://img.shields.io/badge/license-MIT-2da44e)](LICENSE)
 
 > **Scope:** iOS Developer Toolkit is a macOS front end for authorized Apple-device development, diagnostics, testing, backup, and evidence-preservation workflows. It does not jailbreak iOS, bypass a passcode, disable the sandbox, defeat code signing, decrypt protected traffic, or provide unrestricted filesystem access.
@@ -254,7 +254,7 @@ Current pinned runtime:
 |---|---|
 | Python | `>=3.10,<3.14` |
 | PySide6 Essentials | `6.9.3` |
-| pymobiledevice3 | `11.15.1` |
+| pymobiledevice3 | `11.19.4` |
 | Local Xcode candidate | `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg` |
 | Toolkit release | `0.3.4` |
 
