@@ -6,7 +6,7 @@ Use macOS 13 or later, choose the release matching the Mac architecture, and wor
 
 !!! warning "Keep one intended device connected"
 
-    External providers such as UFADE, MVT, go-ios, idb, and ipsw use their own target-selection rules. A device selected in the toolkit does not constrain an external program.
+    External providers such as UFADE and MVT use their own target-selection rules. A device selected in the toolkit does not constrain an external program.
 
 ## First session
 

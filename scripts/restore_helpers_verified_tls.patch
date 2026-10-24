@@ -1,0 +1,348 @@
+--- a/idevicerestore/src/download.c
++++ b/idevicerestore/src/download.c
+@@ -43,6 +43,30 @@
+ 	return total;
+ }
+ 
++CURLcode download_configure_verified_https(CURL* handle)
++{
++	if (handle == NULL) {
++		return CURLE_FAILED_INIT;
++	}
++	CURLcode result = curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 1L);
++	if (result == CURLE_OK) {
++		result = curl_easy_setopt(handle, CURLOPT_SSL_VERIFYHOST, 2L);
++	}
++	if (result == CURLE_OK) {
++		result = curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "https");
++	}
++	if (result == CURLE_OK) {
++		result = curl_easy_setopt(handle, CURLOPT_REDIR_PROTOCOLS_STR, "https");
++	}
++	if (result == CURLE_OK) {
++		result = curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT, 30L);
++	}
++	if (result == CURLE_OK) {
++		result = curl_easy_setopt(handle, CURLOPT_TIMEOUT, 1800L);
++	}
++	return result;
++}
++
+ int download_to_buffer(const char* url, void** buf, size_t* length)
+ {
+ 	int res = 0;
+@@ -51,6 +75,11 @@
+ 		logger(LL_ERROR, "could not initialize CURL\n");
+ 		return -1;
+ 	}
++	if (download_configure_verified_https(handle) != CURLE_OK) {
++		logger(LL_ERROR, "Could not enforce verified HTTPS transfer policy\n");
++		curl_easy_cleanup(handle);
++		return -1;
++	}
+ 
+ 	curl_response response;
+ 	response.length = 0;
+@@ -59,9 +88,6 @@
+ 
+ 	if (log_level >= LL_DEBUG)
+ 		curl_easy_setopt(handle, CURLOPT_VERBOSE, 1);
+-
+-	/* disable SSL verification to allow download from untrusted https locations */
+-	curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 0);
+ 
+ 	curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, (curl_write_callback)&download_write_buffer_callback);
+ 	curl_easy_setopt(handle, CURLOPT_WRITEDATA, &response);
+@@ -73,13 +99,20 @@
+ 	curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1);
+ 	curl_easy_setopt(handle, CURLOPT_URL, url);
+ 
+-	curl_easy_perform(handle);
++	CURLcode transfer_result = curl_easy_perform(handle);
+ 	curl_easy_cleanup(handle);
++
++	if (transfer_result != CURLE_OK) {
++		logger(LL_ERROR, "Verified HTTPS transfer failed: %s\n", curl_easy_strerror(transfer_result));
++		free(response.content);
++		return -1;
++	}
+ 
+ 	if (response.length > 0) {
+ 		*length = response.length;
+ 		*buf = response.content;
+ 	} else {
++		free(response.content);
+ 		res = -1;
+ 	}
+ 
+@@ -112,17 +145,21 @@
+ 		return -1;
+ 	}
+ 
++	if (download_configure_verified_https(handle) != CURLE_OK) {
++		logger(LL_ERROR, "Could not enforce verified HTTPS transfer policy\n");
++		curl_easy_cleanup(handle);
++		return -1;
++	}
++
+ 	FILE* f = fopen(filename, "wb");
+ 	if (!f) {
+ 		logger(LL_ERROR, "Cannot open '%s' for writing\n", filename);
++		curl_easy_cleanup(handle);
+ 		return -1;
+ 	}
+ 
+ 	if (log_level >= LL_DEBUG)
+ 		curl_easy_setopt(handle, CURLOPT_VERBOSE, 1);
+-
+-	/* disable SSL verification to allow download from untrusted https locations */
+-	curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 0);
+ 
+ 	curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, NULL);
+ 	curl_easy_setopt(handle, CURLOPT_WRITEDATA, f);
+@@ -141,7 +178,7 @@
+ 	curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1);
+ 	curl_easy_setopt(handle, CURLOPT_URL, url);
+ 
+-	curl_easy_perform(handle);
++	CURLcode transfer_result = curl_easy_perform(handle);
+ 
+ 	if (enable_progress) {
+ 		finalize_progress('DNLD');
+@@ -157,7 +194,10 @@
+ #endif
+ 	fclose(f);
+ 
+-	if ((sz == 0) || ((int64_t)sz == (int64_t)-1)) {
++	if (transfer_result != CURLE_OK) {
++		logger(LL_ERROR, "Verified HTTPS transfer failed: %s\n", curl_easy_strerror(transfer_result));
++	}
++	if (transfer_result != CURLE_OK || (sz == 0) || ((int64_t)sz == (int64_t)-1)) {
+ 		res = -1;
+ 		remove(filename);
+ 	}
+--- a/idevicerestore/src/download.h
++++ b/idevicerestore/src/download.h
+@@ -27,6 +27,10 @@
+ #endif
+ 
+ #include <stdint.h>
++#include <curl/curl.h>
++
++/* Require trusted HTTPS and reject every redirect to another protocol. */
++CURLcode download_configure_verified_https(CURL* handle);
+ 
+ int download_to_buffer(const char* url, void** buf, size_t* length);
+ int download_to_file(const char* url, const char* filename, int enable_progress);
+--- a/idevicerestore/src/restore.c
++++ b/idevicerestore/src/restore.c
+@@ -53,6 +53,7 @@
+ #include "ipsw.h"
+ #include "restore.h"
+ #include "common.h"
++#include "download.h"
+ #include "endianness.h"
+ 
+ #define CREATE_PARTITION_MAP          11
+@@ -1289,8 +1290,11 @@
+ 
+ 	char curl_error_message[CURL_ERROR_SIZE];
+ 	CURL* handle = curl_easy_init();
+-	/* disable SSL verification to allow download from untrusted https locations */
+-	curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 0);
++	if (download_configure_verified_https(handle) != CURLE_OK) {
++		logger(LL_ERROR, "%s: Could not enforce verified HTTPS transfer policy\n", __func__);
++		if (handle) curl_easy_cleanup(handle);
++		return -1;
++	}
+ 
+ 	query_response* response = malloc(sizeof(query_response));
+ 	if (response == NULL) {
+@@ -1314,12 +1318,19 @@
+ 	}
+ 	curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1);
+ 	curl_easy_setopt(handle, CURLOPT_URL, request_url);
+-	curl_easy_perform(handle);
++	CURLcode transfer_result = curl_easy_perform(handle);
+ 
+ 	long http_response = 0;
+ 	curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &http_response);
+ 
+ 	curl_easy_cleanup(handle);
++	if (transfer_result != CURLE_OK) {
++		logger(LL_ERROR, "%s: Verified HTTPS transfer failed: %s\n", __func__, curl_easy_strerror(transfer_result));
++		plist_free(response_headers);
++		free(response->content);
++		free(response);
++		return -1;
++	}
+ 
+ 	plist_t dict = plist_new_dict();
+ 	plist_dict_set_item(dict, "ResponseBody", plist_new_data(response->content, response->length));
+@@ -1327,6 +1338,7 @@
+ 	plist_dict_set_item(dict, "ResponseHeaders", response_headers);
+ 	plist_dict_set_item(dict, "ResponseStatus", plist_new_uint(http_response));
+ 
++	free(response->content);
+ 	free(response);
+ 
+ 	restore_service_client_t service = _restore_get_service_client_for_data_request(client, message);
+@@ -1398,8 +1410,12 @@
+ 	plist_mem_free(iter);
+ 
+ 	CURL* handle = curl_easy_init();
+-	/* disable SSL verification to allow download from untrusted https locations */
+-	curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 0);
++	if (download_configure_verified_https(handle) != CURLE_OK) {
++		logger(LL_ERROR, "%s: Could not enforce verified HTTPS transfer policy\n", __func__);
++		if (handle) curl_easy_cleanup(handle);
++		curl_slist_free_all(header);
++		return -1;
++	}
+ 
+ 	query_response* response = malloc(sizeof(query_response));
+ 	if (response == NULL) {
+@@ -1425,13 +1441,20 @@
+ 	}
+ 	curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1);
+ 	curl_easy_setopt(handle, CURLOPT_URL, request_url);
+-	curl_easy_perform(handle);
++	CURLcode transfer_result = curl_easy_perform(handle);
+ 	curl_slist_free_all(header);
+ 
+ 	long http_response = 0;
+ 	curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &http_response);
+ 
+ 	curl_easy_cleanup(handle);
++	if (transfer_result != CURLE_OK) {
++		logger(LL_ERROR, "%s: Verified HTTPS transfer failed: %s\n", __func__, curl_easy_strerror(transfer_result));
++		plist_free(response_headers);
++		free(response->content);
++		free(response);
++		return -1;
++	}
+ 
+ 	plist_t dict = plist_new_dict();
+ 	plist_dict_set_item(dict, "ResponseBody", plist_new_data(response->content, response->length));
+@@ -1439,6 +1462,7 @@
+ 	plist_dict_set_item(dict, "ResponseHeaders", response_headers);
+ 	plist_dict_set_item(dict, "ResponseStatus", plist_new_uint(http_response));
+ 
++	free(response->content);
+ 	free(response);
+ 
+ 	restore_service_client_t service = _restore_get_service_client_for_data_request(client, message);
+--- a/idevicerestore/src/idevicerestore.c
++++ b/idevicerestore/src/idevicerestore.c
+@@ -214,7 +214,7 @@
+ 		strcpy(version_xml_tmp, version_xml);
+ 		strcat(version_xml_tmp, ".tmp");
+ 
+-		if (download_to_file("http://itunes.apple.com/check/version",  version_xml_tmp, 0) == 0) {
++		if (download_to_file("https://itunes.apple.com/check/version",  version_xml_tmp, 0) == 0) {
+ 			remove(version_xml);
+ 			if (rename(version_xml_tmp, version_xml) < 0) {
+ 				logger(LL_ERROR, "Could not update '%s'\n", version_xml);
+@@ -450,7 +450,7 @@
+ 			}
+ 			if (!s_wtfurl) {
+ 				logger(LL_INFO, "Using hardcoded x12220000_5_Recovery.ipsw URL\n");
+-				s_wtfurl = strdup("http://appldnld.apple.com.edgesuite.net/content.info.apple.com/iPhone/061-6618.20090617.Xse7Y/x12220000_5_Recovery.ipsw");
++				s_wtfurl = strdup("https://appldnld.apple.com.edgesuite.net/content.info.apple.com/iPhone/061-6618.20090617.Xse7Y/x12220000_5_Recovery.ipsw");
+ 			}
+ 
+ 			// make a local file name
+@@ -1863,9 +1863,7 @@
+ 				return EXIT_FAILURE;
+ 			}
+ 			char *baseurl = NULL;
+-			if (!strncmp(optarg, "http://", 7) && (strlen(optarg) > 7) && (optarg[7] != '/')) {
+-				baseurl = optarg+7;
+-			} else if (!strncmp(optarg, "https://", 8) && (strlen(optarg) > 8) && (optarg[8] != '/')) {
++			if (!strncmp(optarg, "https://", 8) && (strlen(optarg) > 8) && (optarg[8] != '/')) {
+ 				baseurl = optarg+8;
+ 			}
+ 			if (baseurl) {
+@@ -1881,7 +1879,7 @@
+ 					client->tss_url = strdup(optarg);
+ 				}
+ 			} else {
+-				logger(LL_ERROR, "URL argument for --server is invalid, must start with http:// or https://\n");
++				logger(LL_ERROR, "URL argument for --server is invalid, must start with https://\n");
+ 				usage(argc, argv, 1);
+ 				return EXIT_FAILURE;
+ 			}
+--- a/libtatsu/src/tss.c
++++ b/libtatsu/src/tss.c
+@@ -1717,13 +1717,10 @@
+ 	unsigned int size = 0;
+ 	char curl_error_message[CURL_ERROR_SIZE];
+ 
+-	const char* urls[6] = {
++	const char* urls[3] = {
+ 		"https://gs.apple.com/TSS/controller?action=2",
+ 		"https://gs.apple.com.akadns.net/TSS/controller?action=2",
+-		"https://gs.apple.com.v.aaplimg.com/TSS/controller?action=2",
+-		"http://gs.apple.com/TSS/controller?action=2",
+-		"http://gs.apple.com.akadns.net/TSS/controller?action=2",
+-		"http://gs.apple.com.v.aaplimg.com/TSS/controller?action=2"
++		"https://gs.apple.com.v.aaplimg.com/TSS/controller?action=2"
+ 	};
+ 
+ 	plist_to_xml(tss_request, &request, &size);
+@@ -1737,6 +1734,17 @@
+ 		if (handle == NULL) {
+ 			break;
+ 		}
++		if (curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 1L) != CURLE_OK
++			|| curl_easy_setopt(handle, CURLOPT_SSL_VERIFYHOST, 2L) != CURLE_OK
++			|| curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "https") != CURLE_OK
++			|| curl_easy_setopt(handle, CURLOPT_REDIR_PROTOCOLS_STR, "https") != CURLE_OK
++			|| curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT, 30L) != CURLE_OK
++			|| curl_easy_setopt(handle, CURLOPT_TIMEOUT, 90L) != CURLE_OK) {
++			snprintf(curl_error_message, sizeof(curl_error_message), "Could not enforce verified HTTPS transfer policy");
++			fprintf(stderr, "ERROR: %s\n", curl_error_message);
++			curl_easy_cleanup(handle);
++			break;
++		}
+ 		struct curl_slist* header = NULL;
+ 		header = curl_slist_append(header, "Cache-Control: no-cache");
+ 		header = curl_slist_append(header, "Content-type: text/xml; charset=\"utf-8\"");
+@@ -1751,9 +1759,6 @@
+ 		response->length = 0;
+ 		response->content = malloc(1);
+ 		response->content[0] = '\0';
+-
+-		/* disable SSL verification to allow download from untrusted https locations */
+-		curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 0);
+ 
+ 		curl_easy_setopt(handle, CURLOPT_ERRORBUFFER, curl_error_message);
+ 		curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, (curl_write_callback)&tss_write_callback);
+@@ -1766,7 +1771,7 @@
+ 			curl_easy_setopt(handle, CURLOPT_URL, server_url_string);
+ 			debug("Request URL set to %s\n", server_url_string);
+ 		} else {
+-			int url_index = (retry - 1) % 6;
++			int url_index = (retry - 1) % 3;
+ 			curl_easy_setopt(handle, CURLOPT_URL, urls[url_index]);
+ 			debug("Request URL set to %s\n", urls[url_index]);
+ 		}
+@@ -1776,9 +1781,17 @@
+ 
+ 		debug("Sending TSS request attempt %d... ", retry);
+ 
+-		curl_easy_perform(handle);
++		CURLcode transfer_result = curl_easy_perform(handle);
+ 		curl_slist_free_all(header);
+ 		curl_easy_cleanup(handle);
++		if (transfer_result != CURLE_OK) {
++			snprintf(curl_error_message, sizeof(curl_error_message), "Verified HTTPS transfer failed: %s", curl_easy_strerror(transfer_result));
++			fprintf(stderr, "ERROR: %s\n", curl_error_message);
++			free(response->content);
++			free(response);
++			response = NULL;
++			break;
++		}
+ 
+ 		if (strstr(response->content, "MESSAGE=SUCCESS")) {
+ 			status_code = 0;

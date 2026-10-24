@@ -10,12 +10,13 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Mapping, Sequence
 
 from ios_developer_toolkit import APP_VERSION
+from ios_developer_toolkit.apple_tools import AppleToolError, NativeToolOperation, device_log_archive, export_trace_logs, instruments_recording
 from ios_developer_toolkit.case_workflow import (
     CaseWorkflowError,
     create_case_directory,
@@ -350,6 +351,8 @@ def run_collection(
     include_pcap: bool,
     include_screenshot: bool,
     include_crash_pull: bool,
+    include_oslog_archive: bool,
+    include_instruments_logging: bool,
     stop_requested: threading.Event,
 ) -> Path:
     if duration_seconds < 1:
@@ -391,6 +394,10 @@ def run_collection(
                 stop_requested,
             )
         )
+        if include_oslog_archive:
+            results.extend(collect_native_archive(case_directory, udid, stop_requested))
+        if include_instruments_logging and not stop_requested.is_set():
+            results.extend(collect_instruments_logs(case_directory, udid, duration_seconds, stop_requested))
     write_manifest(case_directory, udid, duration_seconds, started_at, results)
     write_hashes(case_directory)
     failures = [result for result in results if result.status == "failed"]
@@ -414,6 +421,54 @@ def run_collection(
     return case_directory
 
 
+def run_native_artifact(operation: NativeToolOperation, case_directory: Path, stop_requested: threading.Event, udid: str) -> CommandResult:
+    spec = CommandSpec(operation.identifier, operation.title, operation.arguments, Path("snapshots") / f"{operation.identifier}.txt", False, operation.timeout_seconds)
+    result = run_snapshot(operation.command, device_environment(udid), case_directory, spec, 1, stop_requested, udid)
+    if result.status == "completed":
+        invalid = tuple(
+            path for path in operation.output_paths
+            if path.is_symlink()
+            or (path.suffix in (".trace", ".logarchive") and not path.is_dir())
+            or (path.suffix not in (".trace", ".logarchive") and not path.is_file())
+        )
+        if invalid:
+            emit("warning", "Native collection exited without the expected artifact", {"operation": operation.identifier})
+            return replace(result, status="failed", exit_code=70)
+    return result
+
+
+def native_failure(identifier: str, title: str, error: AppleToolError | OSError) -> CommandResult:
+    emit("warning", "Native collection could not start", {"operation": identifier, "detail": str(error)})
+    now = utc_now()
+    return CommandResult(identifier, title, (), "", now, now, 70, 0, "failed")
+
+
+def collect_native_archive(case_directory: Path, udid: str, stop_requested: threading.Event) -> tuple[CommandResult, ...]:
+    if stop_requested.is_set():
+        return ()
+    try:
+        operation = device_log_archive(udid, 3600, case_directory / "artifacts/device.logarchive")
+        return (run_native_artifact(operation, case_directory, stop_requested, udid),)
+    except (AppleToolError, OSError) as error:
+        return (native_failure("device-log-archive", "Device OSLog Archive", error),)
+
+
+def collect_instruments_logs(case_directory: Path, udid: str, seconds: int, stop_requested: threading.Event) -> tuple[CommandResult, ...]:
+    trace = case_directory / "artifacts/logging.trace"
+    try:
+        operation = instruments_recording(udid, "Logging", min(seconds, 900), trace)
+        recording = run_native_artifact(operation, case_directory, stop_requested, udid)
+    except (AppleToolError, OSError) as error:
+        return (native_failure("instruments-logging", "Instruments Logging", error),)
+    if recording.status != "completed" or stop_requested.is_set():
+        return (recording,)
+    try:
+        export = export_trace_logs(trace, case_directory / "artifacts/logging.xml")
+        return (recording, run_native_artifact(export, case_directory, stop_requested, udid))
+    except (AppleToolError, OSError) as error:
+        return (recording, native_failure("instruments-export", "Instruments OSLog Export", error))
+
+
 def parse_args(arguments: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect read-oriented iOS diagnostics through pymobiledevice3")
     parser.add_argument("--udid", required=True)
@@ -426,6 +481,8 @@ def parse_args(arguments: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--include-pcap", action="store_true")
     parser.add_argument("--include-screenshot", action="store_true")
     parser.add_argument("--include-crash-pull", action="store_true")
+    parser.add_argument("--include-oslog-archive", action="store_true", help="Save one hour of device log history through Apple's log collect")
+    parser.add_argument("--include-instruments-logging", action="store_true", help="Record up to 15 minutes with Xcode Instruments Logging and export os-log XML")
     return parser.parse_args(arguments)
 
 
@@ -451,6 +508,8 @@ def main() -> int:
             options.include_pcap,
             options.include_screenshot,
             options.include_crash_pull,
+            options.include_oslog_archive,
+            options.include_instruments_logging,
             stop_requested,
         )
     except PartialCollectionError as error:

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ios_developer_toolkit.live_logs import LogStreamSpec
+from ios_developer_toolkit.workspace_profile import WORKSPACE_NAMES
 
 
 Navigate = Callable[[str], None]
@@ -23,67 +24,85 @@ OpenLiveLog = Callable[[str], None]
 OpenAction = Callable[[], None]
 
 
+def navigation_handler(navigate: Navigate, destination: str) -> Callable[[bool], None]:
+    """Bind a reviewed workspace destination without executing an operation."""
+    def handle(checked: bool) -> None:
+        del checked
+        navigate(destination)
+    return handle
+
+
 def build_home_page(preset_count: int, manpage_count: int, navigate: Navigate) -> QWidget:
-    """Build the static landing workspace and delegate navigation to the main window."""
+    """Build the landing workspace with navigation-only workflow cards."""
     page = QWidget()
+    page.setObjectName("homeWorkspace")
     layout = QVBoxLayout(page)
     layout.setSpacing(16)
-
     hero = QFrame()
     hero.setObjectName("homeHero")
     hero_layout = QVBoxLayout(hero)
-    heading = QLabel("One trusted connection. Many Apple device services.")
+    hero_layout.setContentsMargins(22, 18, 22, 18)
+    eyebrow = QLabel("YOUR DEVELOPER WORKBENCH")
+    eyebrow.setObjectName("homeEyebrow")
+    hero_layout.addWidget(eyebrow)
+    heading = QLabel("Ready for your next device session.")
     heading.setObjectName("pageTitle")
-    heading.setFont(QFont(heading.font().family(), 22, QFont.Weight.Bold))
+    heading.setWordWrap(True)
     hero_layout.addWidget(heading)
-    description = QLabel(
-        "Use guided workflows for common work, Command Center for one-click pymobiledevice3 presets, "
-        "and live Man Pages when you need the exact syntax supported by the installed version."
-    )
+    description = QLabel("Start with a trusted connection. Inspect, test, and preserve device data with clear, guided workflows.")
     description.setWordWrap(True)
     hero_layout.addWidget(description)
-    stats = QLabel(
-        f"{preset_count} guided commands  •  {manpage_count} live help topics  •  direct execution without a shell"
-    )
+    stats = QLabel(f"{preset_count} guided commands   ·   {manpage_count} live help topics   ·   {len(WORKSPACE_NAMES)} workspaces")
     stats.setObjectName("homeStats")
+    stats.setWordWrap(True)
     hero_layout.addWidget(stats)
     layout.addWidget(hero)
-
     workflow_grid = QGridLayout()
+    workflow_grid.setSpacing(12)
+    workflow_grid.setColumnStretch(0, 1)
+    workflow_grid.setColumnStretch(1, 1)
     cards = (
-        ("1", "Connect && prepare", "Trust the device, enable Developer Mode, and mount the correct personalized DDI.", "Device & DDI"),
-        ("2", "Verify capabilities", "Test host tools, trust, Developer Mode, the DDI, tunnel, CoreDevice, DVT, and Web Inspector.", "Capability Matrix"),
-        ("3", "Test location", "Set a fixed coordinate or replay a validated GPX route, then explicitly clear the simulated state.", "Location Lab"),
-        ("4", "Run guided commands", "Choose a category and preset; the GUI validates any required fields and shows the exact command.", "Command Center"),
-        ("5", "Collect && preserve", "Create a bounded evidence case, encrypted backup, app inventory, PCAP, logs, and crash-report set.", "Evidence Capture"),
-        ("6", "Learn advanced services", "Browse current help for DVT, CoreDevice, RemoteXPC, Web Inspector, restore, profiles, and more.", "Man Pages"),
+        ("Connect & prepare", "Review trust, Developer Mode, and the right developer image.", "Device & DDI"),
+        ("Verify readiness", "Understand which services and tools are available before you begin.", "Capability Matrix"),
+        ("Test a location", "Set a coordinate or replay a route with explicit cleanup.", "Location Lab"),
+        ("Run guided commands", "Find an action, review its requirements, and inspect the exact command.", "Command Center"),
+        ("Capture evidence", "Keep original artifacts, coverage, and integrity records together.", "Evidence Capture"),
+        ("Explore live help", "Read the installed tool's current syntax and service reference.", "Man Pages"),
     )
-    for position, (number, title, body, destination) in enumerate(cards):
-        card = QGroupBox(f"{number}. {title}")
+    for position, (title, body, destination) in enumerate(cards):
+        card = QFrame()
+        card.setProperty("workflowCard", True)
+        card.setObjectName(f"homeCard{position}")
         card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(16, 13, 16, 13)
+        title_label = QLabel(title)
+        title_label.setProperty("cardTitle", True)
+        card_layout.addWidget(title_label)
         body_label = QLabel(body)
+        body_label.setProperty("cardDescription", True)
         body_label.setWordWrap(True)
         card_layout.addWidget(body_label, 1)
         open_button = QPushButton(f"Open {destination.replace('&', '&&')}")
         open_button.setObjectName(f"homeOpen{destination.replace(' ', '')}Button")
         open_button.setAccessibleName(f"Open {destination} workspace")
-        open_button.setAccessibleDescription(f"Navigate to the {destination} workspace.")
-        open_button.clicked.connect(lambda checked=False, name=destination: navigate(name))
+        open_button.setAccessibleDescription(f"Navigate to the {destination} workspace without running an action.")
+        open_button.clicked.connect(navigation_handler(navigate, destination))
         card_layout.addWidget(open_button)
         workflow_grid.addWidget(card, position // 2, position % 2)
     layout.addLayout(workflow_grid)
-
-    stack_group = QGroupBox("How the command families fit together")
-    stack_layout = QVBoxLayout(stack_group)
-    stack = QLabel(
-        "USB / Wi-Fi pairing → usbmuxd → lockdownd → AFC, apps, backups, diagnostics, syslog\n"
-        "iOS 17+ RemoteXPC / RSD → Developer Disk Image → CoreDevice and DVT instrumentation\n"
-        "Correlate service views: logs + packets + processes + crash reports + backups; no single command is complete evidence."
-    )
-    stack.setObjectName("protocolStackSummary")
-    stack.setWordWrap(True)
-    stack_layout.addWidget(stack)
-    layout.addWidget(stack_group)
+    additional = QGroupBox("More tools for your workflow")
+    additional_layout = QGridLayout(additional)
+    for position, destination in enumerate(("Firmware", "Simulators", "Xcode Tools", "Security Analysis")):
+        button = QPushButton(destination)
+        button.setObjectName(f"homeOpen{destination.replace(' ', '')}Button")
+        button.setAccessibleName(f"Open {destination} workspace")
+        button.clicked.connect(navigation_handler(navigate, destination))
+        additional_layout.addWidget(button, position // 2, position % 2)
+    layout.addWidget(additional)
+    boundary = QLabel("Choose a device before running device actions. Demo Mode is a safe visual walkthrough.")
+    boundary.setObjectName("protocolStackSummary")
+    boundary.setWordWrap(True)
+    layout.addWidget(boundary)
     layout.addStretch()
     return page
 
@@ -217,40 +236,3 @@ def build_safety_page(developer_disk_image_repository: str) -> QWidget:
     )
     layout.addWidget(browser)
     return tab
-
-
-def toolkit_stylesheet() -> str:
-    """Return the shared application stylesheet applied by the main window."""
-    return """
-        QWidget { color: #1d2633; }
-        QMainWindow { background: #f4f6fa; }
-        QGroupBox { background: white; border: 1px solid #d9dee8; border-radius: 10px; margin-top: 12px; padding: 12px; font-weight: 600; }
-        QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 5px; }
-        QPushButton { min-height: 30px; padding: 3px 12px; border: 1px solid #c7ceda; border-radius: 7px; background: white; }
-        QPushButton:hover { background: #eef4ff; border-color: #7aa7ef; }
-        QPushButton:disabled { color: #9299a5; background: #eef0f4; }
-        QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextBrowser, QTableWidget, QListWidget { border: 1px solid #cfd5df; border-radius: 7px; background: white; padding: 5px; }
-        #workspaceSidebar { background: #172033; border: 1px solid #25314a; border-radius: 11px; }
-        #workspaceSidebar QLabel { color: #dbe7ff; }
-        #sidebarSectionLabel { color: #89a8dc; font-size: 11px; font-weight: 700; padding: 3px 7px; }
-        #sidebarVersion { color: #91a2be; font-size: 11px; padding: 8px; }
-        #workspaceNavigation { background: transparent; border: none; color: #dce6f7; outline: none; }
-        #workspaceNavigation::item { min-height: 34px; border-radius: 7px; padding: 4px 9px; }
-        #workspaceNavigation::item:hover { background: #24324b; }
-        #workspaceNavigation::item:selected { background: #3567b7; color: white; }
-        #homeHero { background: #e8f1ff; border: 1px solid #a9c9f6; border-radius: 12px; padding: 12px; }
-        #homeStats { color: #315f9e; font-weight: 600; }
-        #commandPresetBrowser, #commandPresetDetail { background: white; border: 1px solid #d9dee8; border-radius: 10px; }
-        #commandPresetTitle, #manpageTitle { color: #162033; }
-        #commandAdvancedNotes, #commandPrerequisites { color: #566176; }
-        #commandRiskBadge { border-radius: 8px; padding: 5px 9px; font-size: 11px; font-weight: 700; }
-        #commandRiskBadge[risk="read-only"] { background: #e4f6e9; color: #236b36; }
-        #commandRiskBadge[risk="host-write"] { background: #fff1ce; color: #765400; }
-        #commandRiskBadge[risk="device-change"] { background: #ffe2df; color: #8b2d24; }
-        #protocolStackSummary { font-family: Menlo; color: #34435a; }
-        #connectionBanner { background: #e9f2ff; border: 1px solid #afcff8; border-radius: 8px; padding: 10px; }
-        #collectionPrivacyWarning { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
-        #installedAppsPrivacyWarning, #backupEncryptionWarning, #locationPrivacyWarning, #capabilityMatrixBoundary, #externalToolsBoundary { background: #fff5df; border: 1px solid #e7c36a; border-radius: 8px; padding: 10px; }
-        #capabilityMatrixStatus { background: #e9f2ff; border: 1px solid #afcff8; border-radius: 8px; padding: 9px; }
-        #appSubtitle { color: #596273; }
-    """
